@@ -1,0 +1,35 @@
+name: Agent Component
+description: Agent or provider component implementation
+body:
+  - type: textarea
+    id: background
+    attributes: {label: Background}
+    validations: {required: true}
+  - type: input
+    id: reads
+    attributes: {label: Reads Schema}
+  - type: input
+    id: output
+    attributes: {label: Output Schema}
+  - type: dropdown
+    id: evidence
+    attributes:
+      label: Requires Evidence
+      options: ["yes", "no"]
+  - type: textarea
+    id: capability
+    attributes: {label: Model Capability}
+  - type: input
+    id: prompt-version
+    attributes: {label: Prompt Version}
+  - type: input
+    id: threshold
+    attributes: {label: Quality Threshold}
+  - type: textarea
+    id: acceptance
+    attributes: {label: Acceptance}
+    validations: {required: true}
+  - type: textarea
+    id: tests
+    attributes: {label: Tests}
+    validations: {required: true}

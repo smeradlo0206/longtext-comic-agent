@@ -1,0 +1,22 @@
+name: Bug
+description: Bug report with regression requirements
+body:
+  - type: textarea
+    id: steps
+    attributes: {label: Reproduction Steps}
+    validations: {required: true}
+  - type: textarea
+    id: expected
+    attributes: {label: Expected}
+    validations: {required: true}
+  - type: textarea
+    id: actual
+    attributes: {label: Actual}
+    validations: {required: true}
+  - type: textarea
+    id: impact
+    attributes: {label: Impact Scope}
+  - type: textarea
+    id: regression
+    attributes: {label: Regression Test}
+    validations: {required: true}
