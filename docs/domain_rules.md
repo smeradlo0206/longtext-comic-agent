@@ -203,3 +203,65 @@ PanelSpec 至少需要以下信息。
 13. KnowledgeState 必须绑定 Character、StoryTime、RealityLayer、knowledge_target 和 EpistemicStatus，且不能从读者视角、旁白视角或其他角色视角泄漏信息。
 14. NarrativePerspective 必须记录叙述来源和可见性边界；受限视角、匿名消息、草稿改写和不可靠记忆不得自动覆盖正式事实。
 15. 当证据只支持“可能”“疑似”“无法判断”时，必须保留 UNKNOWN、UNCERTAIN 或 UNRESOLVED，不允许为了生成漫画连续性而补全身份事实。
+
+## 8. 关系、道具和伤势细化规则
+
+### RelationshipState 多维规则
+
+1. RelationshipState 必须按 StructuralRelation、InteractionState、TrustState 和 CommunicationAccess 等维度分别记录。
+2. COOPERATING 不等于 TRUSTS。
+3. 动作默契不等于恢复信任，也不等于 RECONCILED。
+4. 一句“我原谅你”首先是 DialogueUnit 和 Claim 或 ExpressedStance；只有额外证据支持时才能更新 TrustState。
+5. 表面合作不自动恢复 StructuralRelation。
+6. 通讯录好友权限不等于真实情感关系。
+7. 每个关系维度必须具有独立 EvidenceRef。
+8. 不允许一个维度的证据静默覆盖另一个维度。
+9. 证据不足的维度保持 UNKNOWN。
+
+示例：陆岚与陈默在谢幕时可记录为 `structural_relation=FORMER_PARTNERS`、`interaction_state=COOPERATING`、`communication_access=REMOVED`；“完成默契谢幕”只支持 COOPERATING，不支持 TRUSTS 或 RECONCILED。
+
+### ObjectState 权利和使用规则
+
+1. 交给某人不等于转移所有权。
+2. 借用不等于拥有。
+3. 佩戴不等于拥有。
+4. 保管不等于拥有。
+5. owner 证据不足时保持 UNKNOWN。
+6. holder 变化不能静默修改 owner。
+7. in_use_by 变化不能静默修改 holder。
+8. 同一物体的权利关系和物理状态可以同时变化。
+
+示例：陈默将胸针交给陆岚，支持 holder 变为陆岚；陆岚临时佩戴，支持 in_use_by 变为陆岚；归还苏闻后 holder 变为苏闻。不得仅因临时持有把 owner 改为陆岚。
+
+### InjuryState 生命周期规则
+
+1. 同一伤势可以经过多个 phase。
+2. 包扎不是新的独立伤势，而通常是原伤势的处理阶段。
+3. 后续再次受伤时，只有明确新伤害才建立新伤势事件。
+4. “伤口愈合但留下浅疤”表示活动性伤势结束。
+5. 疤痕作为持续视觉状态继续存在。
+6. 不根据治疗方式自动推断医学严重程度。
+7. 原文未说明的医学结论保持 UNKNOWN。
+
+示例：左手划伤为 ACUTE，手帕包扎为 FIRST_AID，缝三针为 MEDICALLY_TREATED，拆线并留下浅疤为 HEALED_WITH_MARK。
+
+## 9. 视觉版本与临时状态规则
+
+1. 长期年龄、基础脸部、体型、长期发型和持久疤痕阶段变化可以建立新的 CharacterVisualVariant。
+2. 单场临时服装、临时包扎、血迹、污渍、暂时持有的道具和单场首饰不应导致视觉版本组合爆炸。
+3. 反复使用且经过审核的经典服装可以保存为可复用 CostumeProfile；本阶段不要求作为 P0 顶层 Schema。
+4. 临时视觉状态不能反向修改故事事实。
+5. PanelSpec 必须同时绑定 `character_state_id` 和 `visual_variant_id`。
+6. 生成前可使用派生的 ResolvedCharacterAppearance，把基础 CharacterVisualVariant 与当前 CharacterState、ObjectState、InjuryState 和临时视觉约束合成完整外观。
+
+## 10. Observable Behavior、Expressed Stance 与 Internal State 规则
+
+1. 可观察行为可以成为 Canonical Event。
+2. 人物说出的态度首先是 DialogueUnit 和 Claim 或 ExpressedStance。
+3. 人物说“我原谅你”不自动证明真实信任已恢复。
+4. 默契合作只能直接支持 InteractionState，不能直接支持 TrustState。
+5. 哭泣可以确认可观察情绪表现，但不能证明人物对事件负有责任。
+6. 内心意图只有在可靠 NarrativePerspective 明确呈现时才能进入 Canonical CharacterState。
+7. 动作结果不能自动推断长期关系变化。
+8. 角色记忆首先是 Claim 或 NarrativeMention，除非有其他证据确认。
+9. 一项证据只能更新它直接支持的关系维度。

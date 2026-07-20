@@ -4,7 +4,7 @@
 
 本文是“长文本多 Agent 连续漫画生成系统”的领域概念唯一正式定义来源。它用于统一产品、Schema、Agent、数据库、QA 和视觉生产模块对同一名称的理解。其他文档引用本文词汇，不再重复定义。
 
-当前版本：V1.1-draft
+当前版本：V1.2-draft
 维护负责人：待团队指定
 最后更新时间：2026-07-20
 
@@ -16,6 +16,14 @@
 - 关键故事事实必须能通过 EvidenceRef（原文证据引用）追溯到 SourceChunk（原文片段）。
 - 无原文支持、证据不足或叙述不可靠的内容必须标记为 UNKNOWN 或 UNCERTAIN。
 - PanelSpec（单格分镜规范）必须与模型供应商解耦；供应商字段进入 PromptSpec（模型提示词规范）。
+
+## V1.2-draft 变更摘要
+
+- RelationshipState 多维化，区分结构关系、互动状态、信任状态和通讯权限。
+- ObjectState 明确 owner、holder、authorized_user、in_use_by、location 和 condition，避免临时持有误改所有权。
+- 新增 InjuryState 最小语义，覆盖急性受伤、包扎、医疗处理、恢复、愈合和疤痕阶段。
+- 澄清 CharacterVisualVariant 与临时服装、绷带、血迹、单场道具等临时视觉状态的边界。
+- 增加行为、对白和内心状态推断限制：可观察合作不等于信任恢复，角色说法不等于真实内心。
 
 ## V1.1-draft 变更摘要
 
@@ -68,6 +76,7 @@
 | AccountAccessRelation | 账号访问关系 | 故事世界 | P0 | 是 |
 | AuthorshipClaim | 作者身份主张 | 故事世界 | P0 | 是 |
 | Claim | 主张 | 故事世界 | P0 | 是 |
+| ExpressedStance | 表达态度 | 故事世界 | P0 | 是 |
 | Event | 标准事件 | 故事世界 | P0 | 是 |
 | NarrativeMention | 事件的一次叙述 | 故事世界 | P0 | 是 |
 | CausalRelation | 因果关系 | 故事世界 | P0 | 是 |
@@ -77,6 +86,7 @@
 | RealityLayer | 叙事现实层 | 时间、叙事层和状态 | P0 | 是 |
 | StateChange | 状态变化 | 时间、叙事层和状态 | P0 | 是 |
 | CharacterState | 人物状态 | 时间、叙事层和状态 | P0 | 是 |
+| InjuryState | 伤势状态 | 时间、叙事层和状态 | P0 | 是 |
 | KnowledgeState | 人物知识状态 | 时间、叙事层和状态 | P0 | 是 |
 | RelationshipState | 人物关系状态 | 时间、叙事层和状态 | P0 | 是 |
 | ObjectState | 道具状态 | 时间、叙事层和状态 | P0 | 是 |
@@ -533,6 +543,22 @@
 枚举约束：claim_type 必须使用 ASSERTION、DENIAL、ACCUSATION、HYPOTHESIS、MEMORY、INTERPRETATION、PREDICTION。verification_status 必须使用 UNVERIFIED、SUPPORTED、CONFIRMED、CONTRADICTED、PARTIALLY_SUPPORTED、UNRESOLVED。
 备注或待确认问题：Claim 合并和互斥判断策略需后续设计。
 
+## ExpressedStance
+
+中文名称：表达态度
+所属阶段：故事世界
+优先级：P0
+精确定义：ExpressedStance 表示 Character 通过对白、动作或书面文本表达出的态度、立场、承诺、拒绝、道歉或原谅声明。它可作为 Claim 的子类或关联对象，记录“角色表达了什么”，但不自动证明真实内心、长期信任或 Canonical RelationshipState 全维度变化。
+识别规则：原文出现“我原谅你”“我不原谅你”“不是你的错”“以后别再联系了”等态度性表达时建立，并绑定 DialogueUnit、speaker_id、target_id、stance_type、EvidenceRef 和 verification_status。
+正例：“我可以和你把这场演完，但这不等于我原谅你”表达了愿意临时合作和拒绝原谅两项态度。
+反例：角色完成默契动作不是 ExpressedStance，而是可观察 Event；它只能作为 InteractionState 证据。
+容易混淆：DialogueUnit 是原文对白单元；Claim 是可验证主张；ExpressedStance 是角色表达出的关系态度，不能直接等同 Internal State。
+产生者：对话抽取 Agent、关系抽取 Agent。
+读取者：RelationshipState、KnowledgeState、PanelSpec、QA。
+是否必须包含 EvidenceRef：是。
+候选Schema：ClaimV1、DialogueUnitV1、RelationshipStateV1.expressed_stances。
+备注或待确认问题：stance_type 枚举暂不扩展为完整情感本体。
+
 ## Event
 
 中文名称：标准事件  
@@ -669,16 +695,33 @@
 中文名称：人物状态  
 所属阶段：时间、叙事层和状态  
 优先级：P0  
-精确定义：CharacterState 表示某个 Character 在指定 StoryTime 区间和 RealityLayer 下完整有效的故事事实状态，包括外貌、身体、持有物、知识和关系引用。  
+精确定义：CharacterState 表示某个 Character 在指定 StoryTime 区间和 RealityLayer 下完整有效的故事事实状态，包括外貌、身体、伤势引用、临时服装、持有物、知识和关系引用。
 识别规则：状态编译器根据 Event、TemporalRelation 和 StateChange 计算状态查询结果时建立。  
 正例：十年后林晓为成年、短发、持有怀表。  
 反例：某张图里的短发造型资产不是 CharacterState。  
-容易混淆：CharacterVisualVariant 是视觉表现；CharacterState 是故事事实。  
+容易混淆：CharacterVisualVariant 是稳定可复用视觉版本；CharacterState 是故事事实；临时礼服、绷带和当场佩戴道具通常属于 CharacterState 或 PanelSpec 的临时视觉状态。
 产生者：状态编译器。  
 读取者：VisualBible、PanelSpec、人物连续性 QA。  
 是否必须包含 EvidenceRef：是，来源来自其 StateChange。  
 候选Schema：CharacterStateV1。  
 备注或待确认问题：完整状态快照字段需迭代。  
+
+## InjuryState
+
+中文名称：伤势状态
+所属阶段：时间、叙事层和状态
+优先级：P0
+精确定义：InjuryState 表示某个 Character 身体某一部位在指定 StoryTime 区间内的受伤、处理、恢复和后遗视觉状态。它是 CharacterState 的伤势子结构或关联状态，不是复杂医学诊断本体。
+识别规则：原文出现受伤、流血、包扎、缝针、医嘱、恢复、拆线、伤口愈合、疤痕或功能限制时建立或更新。必须记录 body_part、injury_type、phase、visible_markers、functional_limitations、treatment、effective_from、effective_until 和 evidence_refs。
+正例：左手被木板划伤为 ACUTE；手帕简单包扎为 FIRST_AID；医务室缝三针为 MEDICALLY_TREATED；拆线时伤口愈合但留浅疤为 HEALED_WITH_MARK。
+反例：角色戴手套不是 InjuryState，除非手套是治疗或遮盖伤势的证据。
+容易混淆：Event 记录“被划伤”“缝针”“拆线”等发生事项；InjuryState 记录这些事项之后伤势在时间区间内的有效阶段和视觉表现。
+产生者：状态变化 Agent、状态编译器。
+读取者：CharacterState、CharacterVisualVariant、PanelSpec、人物连续性 QA。
+是否必须包含 EvidenceRef：是。
+候选Schema：CharacterStateV1.injuries、InjuryStateV1。
+枚举约束：phase 第一版建议使用 ACUTE、FIRST_AID、MEDICALLY_TREATED、RECOVERING、HEALED、HEALED_WITH_MARK、UNKNOWN。
+备注或待确认问题：医学严重程度、诊断分类和康复概率暂不进入 MVP。
 
 ## KnowledgeState
 
@@ -702,32 +745,33 @@
 中文名称：人物关系状态  
 所属阶段：时间、叙事层和状态  
 优先级：P0  
-精确定义：RelationshipState 表示两个或多个 Character 在某个 StoryTime 区间内有效的人际关系状态，如陌生、同学、亲密、疏远、敌对。  
-识别规则：原文中关系建立、变化、破裂、误会或身份揭示时建立。  
-正例：大学时期林晓和顾远第一次见面，关系为初识。  
+精确定义：RelationshipState 表示两个 Character 在某个 StoryTime 区间内多个相互独立关系维度的有效状态集合，而不是“朋友、敌人、和解”等单一标签。第一版至少区分 StructuralRelation、InteractionState、TrustState 和 CommunicationAccess。
+识别规则：原文中出现结构关系、合作/回避/冲突行为、信任或不信任证据、通讯权限变化、关系破裂、误会、道歉、拒绝原谅或共同调查时建立或更新。每个维度必须有独立 EvidenceRef；证据不足的维度保持 UNKNOWN。
+正例：陆岚与陈默可同时是 structural_relation=FORMER_PARTNERS、interaction_state=COOPERATING、trust_state=DISTRUSTS 或 UNKNOWN、communication_access=REMOVED。
 反例：两人同框出现不自动产生关系状态。  
-容易混淆：EntityRelation 可包含组织和道具关系；RelationshipState 专注人物关系随时间变化。  
+容易混淆：EntityRelation 可包含组织和道具关系；RelationshipState 专注人物关系随时间变化。COOPERATING 不等于 TRUSTS，通讯录好友权限不等于真实情感关系，动作默契不等于恢复信任。
 产生者：关系抽取 Agent、状态编译器。  
 读取者：StoryBible、PanelSpec、QA。  
 是否必须包含 EvidenceRef：是。  
 候选Schema：RelationshipStateV1。  
-备注或待确认问题：无。  
+枚举约束：StructuralRelation 推荐 STRANGERS、ACQUAINTANCES、FRIENDS、FORMER_FRIENDS、COLLEAGUES、FORMER_PARTNERS、FAMILY、UNKNOWN。InteractionState 推荐 NONE、COOPERATING、TEMPORARY_ALLIANCE、AVOIDING、CONFLICTING、NEGOTIATING、UNKNOWN。TrustState 推荐 UNKNOWN、DISTRUSTS、PARTIAL_TRUST、TRUSTS。CommunicationAccess 推荐 OPEN、RESTRICTED、BLOCKED、REMOVED、UNKNOWN。
+备注或待确认问题：多人物群体关系和关系强度分值暂不进入 MVP。
 
 ## ObjectState
 
 中文名称：道具状态  
 所属阶段：时间、叙事层和状态  
 优先级：P0  
-精确定义：ObjectState 表示 StoryObject 在某个 StoryTime 的归属、位置、完整性、可见性或功能状态。它用于防止道具提前出现或归属错误。  
-识别规则：物件被获得、丢失、损坏、隐藏、转交或使用时建立。  
-正例：十年后怀表由林晓持有。  
+精确定义：ObjectState 表示 StoryObject 在某个 StoryTime 的权利关系、物理持有、使用、位置、完整性、可见性或功能状态。它至少区分 owner_id、holder_id、authorized_user_ids、in_use_by_id、location_id、condition、effective_from、effective_until 和 evidence_refs。
+识别规则：物件被获得、丢失、损坏、隐藏、转交、借用、佩戴、归还、保管、授权使用或改变位置/状态时建立或更新。owner、holder 和 in_use_by 必须独立更新。
+正例：陈默把胸针交给陆岚后，holder 可变为陆岚；陆岚第二幕佩戴时，in_use_by 可变为陆岚；归还苏闻后 holder 变为苏闻，但不能仅凭临时持有把 owner 改为陆岚。
 反例：画面中装饰性的未提及杯子没有 ObjectState。  
-容易混淆：StoryObject 是道具实体；ObjectState 是该道具的时间状态。  
+容易混淆：StoryObject 是道具实体；ObjectState 是该道具的时间状态。交给、借用、佩戴和保管都不等于拥有。
 产生者：状态变化 Agent、状态编译器。  
 读取者：PanelSpec、视觉资产检索、QA。  
 是否必须包含 EvidenceRef：是。  
 候选Schema：ObjectStateV1。  
-备注或待确认问题：无。  
+备注或待确认问题：复杂法律所有权和多人共有权暂不进入 MVP。
 
 ## LocationState
 
@@ -898,16 +942,17 @@
 中文名称：人物视觉版本  
 所属阶段：视觉与漫画生产  
 优先级：P0  
-精确定义：CharacterVisualVariant 表示 Character 在特定 CharacterState、StoryTime 和 RealityLayer 下应该如何被画出来。它是视觉表现，不能反向修改故事事实。  
-识别规则：人物年龄阶段、发型、服装、伤势、道具或现实层发生视觉差异时建立。  
-正例：学生时期长发林晓；十年后成年短发林晓。  
-反例：CharacterState 本身不是视觉资产。  
-容易混淆：CharacterState 是故事事实；CharacterVisualVariant 是画法和资产选择。  
+精确定义：CharacterVisualVariant 表示 Character 稳定、可复用、经过审核的人物视觉身份版本，例如年龄阶段、基础脸部、体型、长期发型、持久疤痕和主要人生时期。它是视觉表现，不能反向修改故事事实。
+识别规则：人物长期年龄阶段、基础脸部、体型、长期发型、持久疤痕或主要人生时期发生可复用视觉差异时建立。单场临时服装、绷带、血迹、污渍、暂时持有的道具、单场首饰和临时雨衣默认不创建新的永久 CharacterVisualVariant。
+正例：学生时期长发林晓；十年后成年短发林晓；拆线后长期保留浅疤的陆岚。
+反例：某一晚的银色礼服、手帕包扎、医用绷带、单场佩戴胸针不应单独创建永久 CharacterVisualVariant。
+容易混淆：CharacterState 是故事事实；CharacterVisualVariant 是稳定画法和资产选择；临时视觉状态应由 CharacterState、PanelSpec 人物绑定、临时视觉 overlay 或 ResolvedCharacterAppearance 表达。
 产生者：角色视觉规划 Agent、VisualBible 审核。  
 读取者：PanelSpec、PromptSpec、人物连续性 QA。  
 是否必须包含 EvidenceRef：视情况而定；继承对应 CharacterState 证据。  
 候选Schema：CharacterVisualVariantV1。  
-备注或待确认问题：无。  
+派生概念：ResolvedCharacterAppearance 是某一 Panel 生成前，由 CharacterVisualVariant 加当前 CharacterState、ObjectState、InjuryState 和 PanelSpec 临时视觉约束动态解析得到的完整视觉状态。它是派生结果，不作为 V1.2 的 P0 持久化对象。
+备注或待确认问题：反复使用且经过审核的经典服装可在后续作为 CostumeProfile 管理，本轮不新增正式顶层 Schema。
 
 ## VisualAsset
 
@@ -1330,6 +1375,37 @@
 - “他们”“那些人”不能默认解释为某个组织。
 - 后续证据明确成员或组织身份后，UnresolvedGroupReference 可以被解析为 Organization、多个 Character 或二者组合。
 
+### RelationshipState 多维状态
+
+- [RelationshipState](#relationshipstate) 不是单一“朋友/敌人/和解”标签。
+- StructuralRelation、InteractionState、TrustState 和 CommunicationAccess 必须独立记录。
+- COOPERATING 只说明当前协作行为，不说明 TRUSTS。
+- 通讯权限变化可以作为 CommunicationAccess 证据，但不能单独证明真实情感关系。
+- 默契动作只能支持互动状态，不能反向证明信任或原谅。
+
+### ObjectState 的 Owner、Holder 与 In Use
+
+- [ObjectState](#objectstate) 的 owner_id 表示长期归属或明确所有者。
+- holder_id 表示当前物理持有者。
+- in_use_by_id 表示当前实际使用者或佩戴者。
+- authorized_user_ids 表示被允许使用的人。
+- 交给、借用、佩戴和保管都不能静默修改 owner。
+
+### InjuryState 与 CharacterVisualVariant
+
+- [InjuryState](#injurystate) 记录伤势生命周期和可见标记。
+- [CharacterVisualVariant](#charactervisualvariant) 记录稳定可复用的人物视觉身份版本。
+- 包扎、血迹和短期绷带通常属于临时视觉状态，不应创建永久 CharacterVisualVariant。
+- 持久疤痕可以参与新 CharacterVisualVariant 或 ResolvedCharacterAppearance。
+- 视觉状态不能反向修改伤势事实。
+
+### Observable Behavior 与 Internal State
+
+- 可观察行为可以成为 [Event](#event)。
+- 人物对白可以成为 [DialogueUnit](#dialogueunit)、[Claim](#claim) 或 [ExpressedStance](#expressedstance)。
+- 内心状态只有在可靠 [NarrativePerspective](#narrativeperspective) 明确呈现时，才能进入 Canonical CharacterState。
+- 哭泣、沉默、配合、默契动作都不能自动证明责任、信任或原谅。
+
 ## 团队评审清单
 
 - [ ] Event 和 NarrativeMention 边界是否清楚
@@ -1348,6 +1424,11 @@
 - [ ] Account、AccountAccessRelation 和 AuthorshipClaim 是否区分
 - [ ] Claim、KnowledgeState 和 Canonical Data 是否区分
 - [ ] Organization 和 UnresolvedGroupReference 是否区分
+- [ ] RelationshipState 是否按多维关系独立记录
+- [ ] ObjectState 是否区分 owner、holder、authorized_user 和 in_use_by
+- [ ] InjuryState 是否覆盖受伤、处理、恢复和疤痕阶段
+- [ ] CharacterVisualVariant 是否避免临时状态组合爆炸
+- [ ] 可观察行为、表达态度和真实内心是否区分
 - [ ] QA 是否区分硬性错误和软性质量
 - [ ] 每个词是否有正例和反例
 - [ ] P0 词汇是否足以支撑 MVP 流水线
