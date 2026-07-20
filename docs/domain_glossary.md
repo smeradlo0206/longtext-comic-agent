@@ -1,12 +1,12 @@
-# 领域词汇表 V1
+﻿# 领域词汇表 V1
 
 ## 文档用途
 
 本文是“长文本多 Agent 连续漫画生成系统”的领域概念唯一正式定义来源。它用于统一产品、Schema、Agent、数据库、QA 和视觉生产模块对同一名称的理解。其他文档引用本文词汇，不再重复定义。
 
-当前版本：V1.0-draft  
-维护负责人：待团队指定  
-最后更新时间：2026-07-20  
+当前版本：V1.1-draft
+维护负责人：待团队指定
+最后更新时间：2026-07-20
 
 ## 使用规则
 
@@ -16,6 +16,15 @@
 - 关键故事事实必须能通过 EvidenceRef（原文证据引用）追溯到 SourceChunk（原文片段）。
 - 无原文支持、证据不足或叙述不可靠的内容必须标记为 UNKNOWN 或 UNCERTAIN。
 - PanelSpec（单格分镜规范）必须与模型供应商解耦；供应商字段进入 PromptSpec（模型提示词规范）。
+
+## V1.1-draft 变更摘要
+
+- 补充身份层级：区分 Character、EntityAlias、EntityMention、UnresolvedReference 和 UnresolvedGroupReference。
+- 补充账号和消息语义：新增 Account、Message、AccountAccessRelation 和 AuthorshipClaim。
+- 引入 Claim 体系，明确 claim_type 和 verification_status，防止角色说法直接升级为 Canonical Event。
+- 强化 KnowledgeState，新增 EpistemicStatus，区分角色所知、读者所知和事实层。
+- 强化 NarrativePerspective，要求记录叙事来源、可见性边界和可靠性。
+- 明确 Organization 与临时群体指代的边界，避免把“他们”等未解析群体强制归入组织。
 
 ## 目录
 
@@ -49,8 +58,16 @@
 | Location | 地点 | 故事世界 | P0 | 是 |
 | StoryObject | 剧情道具 | 故事世界 | P0 | 是 |
 | Organization | 组织 | 故事世界 | P0 | 是 |
+| UnresolvedGroupReference | 未解析群体指代 | 故事世界 | P0 | 是 |
 | EntityAlias | 实体别名 | 故事世界 | P0 | 是 |
+| EntityMention | 实体文本提及 | 故事世界 | P0 | 是 |
+| UnresolvedReference | 未解析指代 | 故事世界 | P0 | 是 |
 | EntityRelation | 实体关系 | 故事世界 | P0 | 是 |
+| Account | 账号 | 故事世界 | P0 | 是 |
+| Message | 消息 | 故事世界 | P0 | 是 |
+| AccountAccessRelation | 账号访问关系 | 故事世界 | P0 | 是 |
+| AuthorshipClaim | 作者身份主张 | 故事世界 | P0 | 是 |
+| Claim | 主张 | 故事世界 | P0 | 是 |
 | Event | 标准事件 | 故事世界 | P0 | 是 |
 | NarrativeMention | 事件的一次叙述 | 故事世界 | P0 | 是 |
 | CausalRelation | 因果关系 | 故事世界 | P0 | 是 |
@@ -341,35 +358,83 @@
 
 ## Organization
 
-中文名称：组织  
-所属阶段：故事世界  
-优先级：P0  
-精确定义：Organization 是学校、社团、公司、部门、家庭等组织型 Entity。它可参与事件、发布通知或与人物存在成员关系。  
-识别规则：原文出现组织名称、机构身份、发布主体或集体行为时建立。  
-正例：学生会、教务处、顾远所在社团。  
-反例：一群临时路人如果没有组织身份，不是 Organization。  
-容易混淆：Character 是个体人物；EntityRelation 可表达人物属于组织。  
-产生者：实体抽取 Agent、校园新闻解析器。  
-读取者：事件抽取、校园模式、StoryBible、QA。  
-是否必须包含 EvidenceRef：是。  
-候选Schema：EntityProposalV1、OrganizationV1。  
-备注或待确认问题：校园新闻机构名称审核策略需确认。  
+中文名称：组织
+所属阶段：故事世界
+优先级：P0
+精确定义：Organization 是具有相对稳定身份、边界、名称或职能的组织型 Entity，包括学校、社团、公司、部门、家庭、论坛管理组等。它可参与事件、发布通知、拥有账号或与人物存在成员关系。
+识别规则：原文出现明确组织名称、机构身份、发布主体、成员关系或可复用集体身份时建立。临时的“他们”“那些人”“几个人”只有在证据支持其稳定组织身份时才能升级为 Organization。
+正例：学生会、教务处、顾远所在社团。
+反例：一群临时路人，或身份未解析的“他们”，如果没有组织身份证据，不是 Organization。
+容易混淆：Character 是个体人物；UnresolvedGroupReference 是未解析群体指代；EntityRelation 可表达人物属于组织。
+产生者：实体抽取 Agent、校园新闻解析器。
+读取者：事件抽取、校园模式、StoryBible、QA。
+是否必须包含 EvidenceRef：是。
+候选Schema：EntityProposalV1、OrganizationV1。
+备注或待确认问题：校园新闻机构名称审核策略需确认。
+
+## UnresolvedGroupReference
+
+中文名称：未解析群体指代
+所属阶段：故事世界
+优先级：P0
+精确定义：UnresolvedGroupReference 表示原文中出现的群体性称呼尚不能确定具体成员、组织身份或稳定边界，例如“他们”“那些人”“有人不希望”。它保留群体指代本身和候选解释，但不强制合并为 Organization 或多个 Character。
+识别规则：当文本使用复数代词、模糊群体称呼或匿名集体行动主体，且证据不足以确定成员列表或组织身份时建立。
+正例：角色说“他们不希望你知道真相”，但未说明“他们”是谁。
+反例：原文明确写“学生会成员三人共同决定”，应建立 Organization 或多个 Character 及关系，而不是 UnresolvedGroupReference。
+容易混淆：Organization 需要稳定组织身份；UnresolvedReference 可以是单人或单物指代，UnresolvedGroupReference 专指群体。
+产生者：共指消解 Agent、关系抽取 Agent、知识状态 Agent。
+读取者：StoryBible、Claim 合并、QA、审核界面。
+是否必须包含 EvidenceRef：是。
+候选Schema：UnresolvedGroupReferenceV1、EntityProposalV1。
+备注或待确认问题：后续可增加 candidate_member_ids 和 group_resolution_status 字段。
 
 ## EntityAlias
 
-中文名称：实体别名  
-所属阶段：故事世界  
-优先级：P0  
-精确定义：EntityAlias 表示同一 Entity 在原文中的不同称呼、简称、代称或错别字候选。别名本身不等于新实体。  
-识别规则：多个称呼被证据支持为同一对象时建立候选别名。  
-正例：林晓、晓晓、她指向同一人物。  
-反例：两个同名学生不能仅凭名字相同合并为别名。  
-容易混淆：NarrativeMention 是一次文本提及；EntityAlias 是可复用的名称映射。  
-产生者：实体抽取 Agent、共指消解 Agent、实体合并服务。  
-读取者：事件抽取、搜索、审核界面。  
-是否必须包含 EvidenceRef：是。  
-候选Schema：EntityAliasV1、EntityProposalV1.aliases。  
-备注或待确认问题：无。  
+中文名称：实体别名
+所属阶段：故事世界
+优先级：P0
+精确定义：EntityAlias 表示同一 Entity 的稳定可复用名称映射，包括本名、昵称、职务称呼、常用简称、笔名或被证据确认的账号名。EntityAlias 不包括一次性代词提及，且别名本身不等于新实体。
+识别规则：多个称呼被证据支持为同一对象时建立，必须记录 alias_status，建议值为 CONFIRMED、PROPOSED、REJECTED。相似读音、相同首字母、同名或同款物品不能单独构成 EntityAlias。
+正例：“林乔”“乔姐”“林助教”被原文明确指向同一人时，可作为林乔的 EntityAlias。
+反例：“她”是 EntityMention，不是稳定 EntityAlias；“林乔”和“乔临”不能因读音相近合并为别名。
+容易混淆：EntityMention 是原文中的一次出现；EntityAlias 是可复用的名称映射。
+产生者：实体抽取 Agent、共指消解 Agent、实体合并服务。
+读取者：事件抽取、搜索、审核界面。
+是否必须包含 EvidenceRef：是。
+候选Schema：EntityAliasV1、EntityProposalV1.aliases。
+备注或待确认问题：别名置信度阈值需通过黄金集校准。
+
+## EntityMention
+
+中文名称：实体文本提及
+所属阶段：故事世界
+优先级：P0
+精确定义：EntityMention 表示 SourceChunk 中对某个 Entity、Account、Organization、StoryObject 或未知对象的一次文本出现，包括专名、昵称、代词、职务称呼、账号名、签名、缩写和模糊称呼。它是文本层对象，不自动表示稳定别名或正式实体。
+识别规则：只要原文出现可被指向某个对象的词语、短语或代词，就可建立 EntityMention，并记录 mention_text、source_chunk_id、candidate_entity_ids、resolution_status。
+正例：“她”“小林”“灰桥”“Q”“北岸”都可以是 EntityMention。
+反例：已经审核确认的人物“林乔”是 Character；它在某段中的一次出现才是 EntityMention。
+容易混淆：EntityAlias 跨片段复用；EntityMention 只代表一次文本位置。NarrativeMention 更偏事件或叙述内容，EntityMention 专注实体指代。
+产生者：文档解析器、共指消解 Agent、实体抽取 Agent。
+读取者：实体合并服务、Claim 抽取、KnowledgeState、QA。
+是否必须包含 EvidenceRef：是。
+候选Schema：EntityMentionV1。
+备注或待确认问题：mention 类型枚举可后续细化为 NAME、PRONOUN、TITLE、ACCOUNT_HANDLE、SIGNATURE、GROUP_PRONOUN。
+
+## UnresolvedReference
+
+中文名称：未解析指代
+所属阶段：故事世界
+优先级：P0
+精确定义：UnresolvedReference 表示一个 EntityMention 暂时无法被唯一绑定到 Character、Account、Organization、StoryObject 或 Location。它保留候选对象、排除对象和证据边界，防止系统为了完成结构化而强行合并。
+识别规则：当候选超过一个、证据不足、叙述视角受限、角色说法互相冲突或同名/近音/同首字母导致歧义时建立。
+正例：“小林”在两名姓林或近音人物同时回应时，应保持 UnresolvedReference。
+反例：原文明确写“林助教，你跟我来”且上下文唯一指向林乔时，不需要保持未解析。
+容易混淆：UNKNOWN 表示无法得知结果；UNCERTAIN 表示有候选但证据不足；UnresolvedReference 是记录这种状态的结构。
+产生者：共指消解 Agent、实体合并服务。
+读取者：事件抽取、Claim 合并、QA、审核界面。
+是否必须包含 EvidenceRef：是。
+候选Schema：UnresolvedReferenceV1、EntityMentionV1.resolution。
+备注或待确认问题：后续需定义人工解除 unresolved 的审核流程。
 
 ## EntityRelation
 
@@ -386,6 +451,87 @@
 是否必须包含 EvidenceRef：是。  
 候选Schema：EntityRelationProposalV1、EntityRelationV1。  
 备注或待确认问题：关系类型枚举需后续收敛。  
+
+## Account
+
+中文名称：账号
+所属阶段：故事世界
+优先级：P0
+精确定义：Account 表示在论坛、邮件、社交平台、系统或设备中可登录、发帖、发送消息或署名的数字身份。Account 是故事世界 Entity，但不等同于 Character；账号操作者、账号知情者和具体消息作者必须分开记录。
+识别规则：原文出现用户名、邮箱账号、论坛账号、设备登录名、署名身份或账号操作证据时建立。
+正例：校园论坛账号“灰桥”、邮件账号“北岸”。
+反例：人物乔临不是 Account；“灰桥”作为照片背面署名若无账号证据，只是 EntityMention 或 AuthorshipClaim 的署名线索。
+容易混淆：Character 是人物；Account 是数字身份；EntityAlias 只有在证据确认账号名稳定指向某实体时才建立。
+产生者：实体抽取 Agent、账号解析 Agent。
+读取者：AuthorshipClaim、AccountAccessRelation、Message、StoryBible、QA。
+是否必须包含 EvidenceRef：是。
+候选Schema：AccountV1、EntityProposalV1。
+备注或待确认问题：Account 与真实平台隐私策略需后续确认。
+
+## Message
+
+中文名称：消息
+所属阶段：故事世界
+优先级：P0
+精确定义：Message 表示由某个可见来源发布、发送、张贴或留下的一段信息载体，包括邮件、论坛帖、短信、便签、照片背面文字、公告等。Message 记录内容、渠道、发布时间、可见发送方和 EvidenceRef，但不自动确认真实作者。
+识别规则：原文出现可被引用的信息文本、发布行为或载体时建立。
+正例：论坛账号“灰桥”发布的新消息；账号“北岸”发来的邮件；照片背面的“不要相信Q”。
+反例：角色口头说出一句话通常是 DialogueUnit，不是 Message，除非它以可保存的信息载体存在。
+容易混淆：Message 是信息载体；Claim 是消息中表达的主张；AuthorshipClaim 判断谁发了这条 Message。
+产生者：消息抽取 Agent、事件抽取 Agent。
+读取者：Claim 抽取、AuthorshipClaim、KnowledgeState、QA。
+是否必须包含 EvidenceRef：是。
+候选Schema：MessageV1、MessageProposalV1。
+备注或待确认问题：消息渠道枚举需后续补充。
+
+## AccountAccessRelation
+
+中文名称：账号访问关系
+所属阶段：故事世界
+优先级：P0
+精确定义：AccountAccessRelation 表示 Character、Organization 或其他主体与 Account 之间的访问、运营、知晓密码、共享登录、被盗用或被冒用关系。它只说明访问能力或管理关系，不说明某条 Message 的真实作者。
+识别规则：原文出现登录、经营账号、知道密码、交出密码、借用账号、否认登录或账号被他人使用等证据时建立。
+正例：乔临被确认经营论坛账号“灰桥”；林乔曾知道该账号密码。
+反例：某条消息署名“灰桥”不能单独证明乔临写了这条消息。
+容易混淆：AccountAccessRelation 是账号访问能力；AuthorshipClaim 是具体消息作者判断。
+产生者：账号解析 Agent、关系抽取 Agent。
+读取者：AuthorshipClaim、StoryBible、QA、审核界面。
+是否必须包含 EvidenceRef：是。
+候选Schema：AccountAccessRelationV1。
+备注或待确认问题：关系类型建议包括 PRIMARY_OPERATOR、KNOWN_PASSWORD、SHARED_ACCESS、SUSPECTED_ACCESS、DENIED_ACCESS、COMPROMISED。
+
+## AuthorshipClaim
+
+中文名称：作者身份主张
+所属阶段：故事世界
+优先级：P0
+精确定义：AuthorshipClaim 表示关于某条 Message、照片、帖子、邮件或署名文本真实作者/发送者/发布者的结构化主张。它可引用 Account、Character、Organization 或 UnresolvedReference，并必须保留验证状态。
+识别规则：原文直接陈述、否认、暗示、质疑或留下署名线索时建立。账号可见发送方、实际登录者和真实作者不一致时，必须用 AuthorshipClaim 表达，而不能改写 Account 或 Character 身份。
+正例：“乔临否认发送第一张照片”是一条 DENIAL 类型 AuthorshipClaim；“论坛账号灰桥发新消息”只确认可见发布账号，不确认键盘前是谁。
+反例：账号经营关系本身不是 AuthorshipClaim。
+容易混淆：Claim 是通用主张；AuthorshipClaim 是作者身份领域的专门 Claim；AccountAccessRelation 只描述账号访问关系。
+产生者：Claim 抽取 Agent、账号解析 Agent、共指消解 Agent。
+读取者：StoryBible、QA、审核界面、KnowledgeState。
+是否必须包含 EvidenceRef：是。
+候选Schema：AuthorshipClaimV1、ClaimV1。
+备注或待确认问题：后续可抽象为 Claim 的 subtype。
+
+## Claim
+
+中文名称：主张
+所属阶段：故事世界
+优先级：P0
+精确定义：Claim 表示文本、角色、消息或叙述者提出的一条可被验证或暂时保留的陈述。Claim 不等于 Event，也不等于 Canonical Data；它记录“谁在何处声称了什么”，并通过 verification_status 表示证据状态。
+识别规则：原文出现断言、否认、指控、猜测、记忆、解释、预测、消息内容或角色草稿改写时建立。任何未被独立证实的角色说法、匿名消息、署名线索和推理结论都应先作为 Claim。
+正例：“灰桥不是发照片的人”是一条 Claim；“我没有贴那张照片”是一条 DENIAL Claim。
+反例：“唐宁收到邮件”是 Event；邮件中说“你问错了人”是 Claim。
+容易混淆：Event 是故事世界中发生的事；Claim 是关于事实的说法。Character Belief 可由 Claim 影响，但 Claim 本身不是 KnowledgeState。
+产生者：Claim 抽取 Agent、消息抽取 Agent、叙事结构 Agent。
+读取者：CommitService、KnowledgeState、QA、审核界面。
+是否必须包含 EvidenceRef：是。
+候选Schema：ClaimV1、AuthorshipClaimV1。
+枚举约束：claim_type 必须使用 ASSERTION、DENIAL、ACCUSATION、HYPOTHESIS、MEMORY、INTERPRETATION、PREDICTION。verification_status 必须使用 UNVERIFIED、SUPPORTED、CONFIRMED、CONTRADICTED、PARTIALLY_SUPPORTED、UNRESOLVED。
+备注或待确认问题：Claim 合并和互斥判断策略需后续设计。
 
 ## Event
 
@@ -437,19 +583,20 @@
 
 ## NarrativePerspective
 
-中文名称：叙事视角  
-所属阶段：故事世界  
-优先级：P0  
-精确定义：NarrativePerspective 表示某段文本从谁的感知、回忆、想象或叙述角度呈现。它影响可信度、信息可见性和 RealityLayer 判断。  
-识别规则：文本出现第一人称、角色心理、回忆触发、传闻来源或视角切换时建立。  
-正例：林晓“想起”大学下午，视角来源是林晓记忆。  
-反例：全知旁白直接陈述事实不一定绑定具体人物视角。  
-容易混淆：RealityLayer 是现实层级；NarrativePerspective 是叙述来源。  
-产生者：叙事层识别 Agent。  
-读取者：事件抽取、TemporalRelation、QA、StoryBible。  
-是否必须包含 EvidenceRef：是。  
-候选Schema：NarrativePerspectiveV1。  
-备注或待确认问题：不可靠叙述等级需后续枚举。  
+中文名称：叙事视角
+所属阶段：故事世界
+优先级：P0
+精确定义：NarrativePerspective 表示某段文本从谁的感知、回忆、想象、转述或叙述位置呈现。它决定信息可见性、可靠性和角色是否可据此更新 KnowledgeState，但不自动改变 Canonical Data。
+识别规则：文本出现第一人称、角色心理、回忆触发、观察限制、传闻来源、草稿改写、匿名消息或视角切换时建立，并记录 perspective_type、focal_entity_id、visible_to_character_ids、reliability_status。
+正例：唐宁听见身后有人说话时，该信息首先进入唐宁受限视角；林晓“想起”大学下午，视角来源是林晓记忆。
+反例：全知旁白直接陈述事实不一定绑定具体人物视角。
+容易混淆：RealityLayer 是现实层级；NarrativePerspective 是叙述来源；KnowledgeState 是某个角色在某个 StoryTime 的认知内容。
+产生者：叙事层识别 Agent。
+读取者：事件抽取、TemporalRelation、QA、StoryBible。
+是否必须包含 EvidenceRef：是。
+候选Schema：NarrativePerspectiveV1。
+枚举约束：perspective_type 建议使用 OMNISCIENT、EXTERNAL_OBSERVER、CHARACTER_LIMITED、FIRST_PERSON、UNKNOWN。reliability_status 建议使用 RELIABLE、LIMITED、UNRELIABLE、UNKNOWN。
+备注或待确认问题：多视角同段落的切分策略需后续黄金集校准。
 
 ## 第三组：时间、叙事层和状态
 
@@ -535,19 +682,20 @@
 
 ## KnowledgeState
 
-中文名称：人物知识状态  
-所属阶段：时间、叙事层和状态  
-优先级：P0  
-精确定义：KnowledgeState 表示某个 Character 在某个 StoryTime 已知、未知、误信或怀疑的事实集合。它防止角色提前知道未来信息。  
-识别规则：原文表达人物得知、忘记、误解、隐瞒、发现或回忆某事时建立。  
-正例：林晓在钟声响起后想起大学见顾远。  
-反例：读者知道的信息不等于角色知道。  
-容易混淆：NarrativePerspective 是叙述角度；KnowledgeState 是角色知识内容。  
-产生者：知识状态 Agent、状态编译器。  
-读取者：剧情转译、DialogueUnit 生成、QA。  
-是否必须包含 EvidenceRef：是。  
-候选Schema：KnowledgeStateV1、CharacterStateV1.knowledge_fact_ids。  
-备注或待确认问题：误信和谎言的状态枚举需后续定义。  
+中文名称：人物知识状态
+所属阶段：时间、叙事层和状态
+优先级：P0
+精确定义：KnowledgeState 表示某个 Character 在某个 StoryTime、RealityLayer 和 NarrativePerspective 下对某个 Claim、Event、EntityRelation 或身份问题的认知状态。它防止角色提前知道未来信息，也防止把读者、叙述者或其他角色知道的内容泄漏给该角色。
+识别规则：原文表达人物得知、听闻、怀疑、相信、否认、误解、隐瞒、发现、回忆、忘记或修改判断时建立，并记录 epistemic_status、knowledge_target_id、source_claim_id、evidence_refs 和 valid_story_time。
+正例：唐宁在收到邮件后 HEARD“灰桥不是发照片的人”；唐宁在看到乔临登录后 KNOWS“乔临经营论坛账号灰桥”；她仍然 UNKNOWN 第一张照片作者。
+反例：读者知道的信息不等于角色知道。
+容易混淆：NarrativePerspective 是叙述角度；KnowledgeState 是角色知识内容；Canonical Data 是系统确认的事实。角色 BELIEVES 的内容可以与 Canonical Data 冲突。
+产生者：知识状态 Agent、状态编译器。
+读取者：剧情转译、DialogueUnit 生成、QA。
+是否必须包含 EvidenceRef：是。
+候选Schema：KnowledgeStateV1、CharacterStateV1.knowledge_fact_ids。
+枚举约束：EpistemicStatus 必须使用 UNAWARE、HEARD、SUSPECTS、BELIEVES、DISBELIEVES、KNOWS。
+备注或待确认问题：从 BELIEVES 升级为 KNOWS 的证据阈值需后续通过黄金集校准。
 
 ## RelationshipState
 
@@ -1136,6 +1284,52 @@
 - Proposal 必须经过 Schema 验证、证据检查、实体合并和冲突处理。
 - 只有 [CommitService](#commitservice) 能够将结果提交为 [Canonical Data](#canonical-data)。
 
+### EntityAlias 与 EntityMention
+
+- [EntityAlias](#entityalias) 是同一 Entity 的稳定可复用名称映射。
+- [EntityMention](#entitymention) 是 SourceChunk 中的一次文本出现。
+- 代词、一次性称呼、签名和缩写默认先作为 EntityMention。
+- 只有证据支持跨片段稳定指向同一对象时，EntityMention 才能支持建立 EntityAlias。
+- 相似读音、同名、同首字母或同款物品不能单独形成 EntityAlias。
+
+### Account 与 Character
+
+- [Account](#account) 是可登录、发布或署名的数字身份。
+- [Character](#character) 是故事世界中的人物。
+- 一个 Character 可以运营多个 Account，一个 Account 也可能被多人知道密码或共同使用。
+- 账号名不能默认成为人物别名，除非有证据确认账号稳定代表该人物。
+- 账号的可见发布行为不能自动证明具体 Character 亲自发布。
+
+### Account Operator 与 Message Author
+
+- Account Operator 表示通过 [AccountAccessRelation](#accountaccessrelation) 记录的账号经营者、知晓密码者或访问者。
+- Message Author 表示通过 [AuthorshipClaim](#authorshipclaim) 记录的具体 Message 作者、发送者或发布者。
+- 经营账号可以作为作者候选证据，但不能单独确认每一条 Message 的作者。
+- 定时发布、共享密码、冒用和代发都会让 operator 与 author 分离。
+
+### Claim 与 Event
+
+- [Event](#event) 是故事世界中发生的行动、变化或信息接收。
+- [Claim](#claim) 是某个来源对事实提出的说法、否认、猜测、记忆或解释。
+- “收到邮件”是 Event；邮件里写的内容是 Claim。
+- Claim 只有在证据检查和冲突处理后，才能支持建立或修正 Canonical Event。
+- 被角色否认的事不自动变成未发生事件；它首先是一条 DENIAL Claim。
+
+### Character Belief 与 Canonical Fact
+
+- Character Belief 是 [KnowledgeState](#knowledgestate) 中 BELIEVES、SUSPECTS 或 DISBELIEVES 等认知状态。
+- Canonical Fact 是通过 [Canonical Data](#canonical-data) 提交的正式事实。
+- 角色可以相信错误内容，也可以不知道读者已经知道的事实。
+- PanelSpec 和 DialogueUnit 生成必须查询该角色当时的 KnowledgeState，不能直接使用读者视角事实。
+- 当角色草稿、内心独白或对话与 Canonical Data 冲突时，应保留 Claim 和 KnowledgeState，而不是覆盖事实。
+
+### Organization 与 UnresolvedGroupReference
+
+- [Organization](#organization) 需要稳定名称、边界、职能或成员关系证据。
+- [UnresolvedGroupReference](#unresolvedgroupreference) 只表示尚未解析的群体指代。
+- “他们”“那些人”不能默认解释为某个组织。
+- 后续证据明确成员或组织身份后，UnresolvedGroupReference 可以被解析为 Organization、多个 Character 或二者组合。
+
 ## 团队评审清单
 
 - [ ] Event 和 NarrativeMention 边界是否清楚
@@ -1150,6 +1344,10 @@
 - [ ] PanelSpec 是否与模型供应商解耦
 - [ ] Proposal 是否不能直接写正式数据库
 - [ ] 所有关键事实是否要求 EvidenceRef
+- [ ] EntityAlias 和 EntityMention 是否区分
+- [ ] Account、AccountAccessRelation 和 AuthorshipClaim 是否区分
+- [ ] Claim、KnowledgeState 和 Canonical Data 是否区分
+- [ ] Organization 和 UnresolvedGroupReference 是否区分
 - [ ] QA 是否区分硬性错误和软性质量
 - [ ] 每个词是否有正例和反例
 - [ ] P0 词汇是否足以支撑 MVP 流水线

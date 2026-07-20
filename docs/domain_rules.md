@@ -185,3 +185,21 @@ PanelSpec 至少需要以下信息。
 - `state_consistency >= 0.95`
 - `text_accuracy = 1.00`
 - `visual_quality >= 0.75`
+
+## 7. 身份、账号和认知规则
+
+1. Character、Account、Organization、StoryObject 和 Location 必须作为不同 Entity 类型处理，不能因名称相同或署名相同自动合并。
+2. EntityMention 是一次文本出现；EntityAlias 是稳定名称映射。代词、一次性称呼、签名和缩写必须先作为 EntityMention 处理。
+3. 相似读音、同名、同首字母、拼音中包含同一字母或同款物品不能单独作为身份合并证据。
+4. 当一个 EntityMention 有多个合理候选且证据不足时，必须建立 UnresolvedReference，并保留候选、排除项和 EvidenceRef。
+5. “他们”“那些人”等群体指代在成员和组织身份未明确前必须建立 UnresolvedGroupReference，不能强行升级为 Organization。
+6. Organization 只有在存在稳定名称、职能、成员边界或发布主体证据时建立。
+7. Account 是数字身份，Character 是人物；账号名不能默认作为人物别名。
+8. AccountAccessRelation 只描述谁经营账号、知道密码、共享访问或可能访问账号，不证明某条 Message 的真实作者。
+9. AuthorshipClaim 必须用于记录 Message、照片、帖子、邮件或署名文本的作者/发送者/发布者判断。
+10. 可见发送账号、账号经营者、账号密码知情者和具体 Message Author 必须分开记录。
+11. Message 中表达的内容必须抽取为 Claim；收到、看到或发布 Message 的行为才是 Event。
+12. Claim 必须标记 claim_type 和 verification_status；角色的 ASSERTION、DENIAL、ACCUSATION、HYPOTHESIS、MEMORY、INTERPRETATION、PREDICTION 不能直接升级为 Canonical Data。
+13. KnowledgeState 必须绑定 Character、StoryTime、RealityLayer、knowledge_target 和 EpistemicStatus，且不能从读者视角、旁白视角或其他角色视角泄漏信息。
+14. NarrativePerspective 必须记录叙述来源和可见性边界；受限视角、匿名消息、草稿改写和不可靠记忆不得自动覆盖正式事实。
+15. 当证据只支持“可能”“疑似”“无法判断”时，必须保留 UNKNOWN、UNCERTAIN 或 UNRESOLVED，不允许为了生成漫画连续性而补全身份事实。
