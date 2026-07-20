@@ -24,6 +24,13 @@ LLM_TIMEOUT_SECONDS=120
 
 为减小 LLM 调用延迟，关闭 VPN 通常可以直接连接。
 
+## 项目文档
+
+- [文档索引](docs/README.md)
+- [领域词汇表 V1](docs/domain_glossary.md)
+- [领域业务规则 V1](docs/domain_rules.md)
+- [完整流水线示例](docs/examples/story_pipeline_example.md)
+
 ## 启动服务
 
 ### 本地开发（SQLite）
