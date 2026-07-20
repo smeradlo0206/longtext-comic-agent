@@ -4,7 +4,7 @@
 
 本文是“长文本多 Agent 连续漫画生成系统”的领域概念唯一正式定义来源。它用于统一产品、Schema、Agent、数据库、QA 和视觉生产模块对同一名称的理解。其他文档引用本文词汇，不再重复定义。
 
-当前版本：V1.2-draft
+当前版本：V1.3-draft
 维护负责人：待团队指定
 最后更新时间：2026-07-20
 
@@ -16,6 +16,14 @@
 - 关键故事事实必须能通过 EvidenceRef（原文证据引用）追溯到 SourceChunk（原文片段）。
 - 无原文支持、证据不足或叙述不可靠的内容必须标记为 UNKNOWN 或 UNCERTAIN。
 - PanelSpec（单格分镜规范）必须与模型供应商解耦；供应商字段进入 PromptSpec（模型提示词规范）。
+
+## V1.3-draft 变更摘要
+
+- 细化 StoryTime 的时间精度、相对时间锚点和解析状态说明。
+- 明确 TemporalRelation 中 SIMULTANEOUS 与 OVERLAPS 的边界。
+- 补充同一历史事件多次叙述、事件簇和 NarrativeMention 的处理规则。
+- 补充 ObjectState 未知区间与 actor UNKNOWN 状态变化事件的表达方式。
+- 强化 BEFORE 不自动支持 CausalRelation，避免把时间先后误判为因果。
 
 ## V1.2-draft 变更摘要
 
@@ -564,42 +572,42 @@
 中文名称：标准事件  
 所属阶段：故事世界  
 优先级：P0  
-精确定义：Event 表示故事世界中实际发生的一次标准事件，与它在原文中被叙述、回忆或转述多少次无关。Event 必须带 RealityLayer，梦境内部 Event 不能默认成为现实主线 Event。  
-识别规则：当文本表达一次行动、变化、信息揭示、决定或关系变化，并可定位到证据时建立候选 Event。  
-正例：林晓剪去长发；林晓回到旧车站；大学时期第一次见到顾远。  
+精确定义：Event 表示故事世界中实际发生的一次标准事件，与它在原文中被叙述、回忆或转述多少次无关。Event 必须带 RealityLayer，梦境内部 Event 不能默认成为现实主线 Event。参与者未知但结果由原文确认时，可以建立 actor=UNKNOWN 或 actor_ref=UnresolvedReference 的 Event 候选。
+识别规则：当文本表达一次行动、变化、信息揭示、决定或关系变化，并可定位到证据时建立候选 Event。同一历史夜晚可根据粒度建立事件簇，事件簇内包含受伤、交付、离开、失踪等多个 Event。
+正例：林晓剪去长发；林晓回到旧车站；大学时期第一次见到顾远；某物被未知人物放回原处。
 反例：“她想起那天下午”是 NarrativeMention 或触发回忆的 Event，不能直接等同于被回忆事件本身。  
 容易混淆：NarrativeMention 是对 Event 的一次叙述；StateChange 是 Event 导致的属性变化。  
 产生者：事件抽取 Agent、事件去重服务。  
 读取者：TemporalRelation Agent、状态编译器、Scene、StoryBible、QA。  
 是否必须包含 EvidenceRef：是。  
 候选Schema：EventProposalV1、EventV1。  
-备注或待确认问题：事件粒度需通过黄金样例校准。  
+备注或待确认问题：事件粒度和事件簇边界需通过黄金样例校准。
 
 ## NarrativeMention
 
 中文名称：事件的一次叙述  
 所属阶段：故事世界  
 优先级：P0  
-精确定义：NarrativeMention 表示原文对某个 Event、Entity 或状态的一次描述、回忆、转述、暗示或提及。它属于文本表达层，不自动成为故事世界事实。  
-识别规则：当一个 SourceChunk 中出现事件描述、回忆句、传闻、梦境描述或代词提及时建立。  
-正例：`她想起大学时期第一次见到顾远的下午` 是对过去事件的一次 NarrativeMention。  
+精确定义：NarrativeMention 表示原文对某个 Event、EventCluster、Entity 或状态的一次描述、回忆、转述、暗示或提及。它属于文本表达层，不自动成为故事世界事实。
+识别规则：当一个 SourceChunk 中出现事件描述、回忆句、传闻、梦境描述或代词提及时建立。同一历史夜晚被病历、回忆、客观叙述、角色讲述多次提及时，应建立多个 NarrativeMention、Claim 或相关 Event，并回指同一 Event 或事件簇。
+正例：`她想起大学时期第一次见到顾远的下午` 是对过去事件的一次 NarrativeMention；病历提到某夜受伤、角色讲述同一夜晚、客观叙述同一夜晚行动，都是不同 NarrativeMention 或 Claim。
 反例：正式去重后的“第一次见到顾远” Event 不是 NarrativeMention。  
 容易混淆：Event 是故事世界事实；NarrativeMention 是文本叙述。  
 产生者：叙事结构 Agent、事件抽取 Agent。  
 读取者：TemporalRelation Agent、RealityLayer Agent、QA。  
 是否必须包含 EvidenceRef：是。  
 候选Schema：NarrativeMentionV1。  
-备注或待确认问题：无。  
+备注或待确认问题：EventCluster 可作为事件组织粒度使用，本轮不新增顶层持久 Schema。
 
 ## CausalRelation
 
 中文名称：因果关系  
 所属阶段：故事世界  
 优先级：P0  
-精确定义：CausalRelation 表示一个 Event、StateChange 或信息揭示对另一个事件产生原因、动机、结果或触发作用。它不能仅凭文本相邻强行建立。  
-识别规则：原文出现“因为、导致、于是、为了、使得”等因果线索，或上下文明确支持时建立。  
+精确定义：CausalRelation 表示一个 Event、StateChange 或信息揭示对另一个事件产生原因、动机、结果或触发作用。它不能仅凭文本相邻、时间先后、视觉暗示或相隔很短时间强行建立。
+识别规则：原文出现“因为、导致、于是、为了、使得”等因果线索，或上下文明确支持时建立。TemporalRelation BEFORE 只能证明先后，不能单独支持 CausalRelation。
 正例：钟声响起触发林晓想起顾远。  
-反例：两件事连续出现但没有因果证据，不是 CausalRelation。  
+反例：两件事连续出现、相隔八分钟或在画面上被并置，但没有因果证据，不是 CausalRelation。
 容易混淆：TemporalRelation 表示时间先后，不等于因果。  
 产生者：因果关系 Agent、故事编译服务。  
 读取者：StoryBible、QA、修复规划。  
@@ -631,25 +639,26 @@
 中文名称：故事时间  
 所属阶段：时间、叙事层和状态  
 优先级：P0  
-精确定义：StoryTime 表示事件在故事世界中真实发生的时间位置，可以是绝对日期、相对时间、时间区间或 UNKNOWN。它不强制推断精确日期。  
-识别规则：当 Event、Scene、CharacterState 或 PanelSpec 需要按故事时间排序或查询状态时建立。  
-正例：“大学时期第一次见面”早于“十年后回到旧车站”。  
+精确定义：StoryTime 表示事件在故事世界中真实发生的时间位置，可以是 absolute_datetime、date_only、time_point、time_interval、relative_time、fuzzy_time 或 UNKNOWN。它不强制推断精确日期。
+识别规则：当 Event、Scene、CharacterState、ObjectState 或 PanelSpec 需要按故事时间排序或查询状态时建立。相对时间必须记录 precision、anchor_event、anchor_story_time、candidate_anchors 和 resolution_status；锚点不足时保留多个候选或 UNKNOWN。
+正例：“大学时期第一次见面”早于“十年后回到旧车站”；“三天前”可解析到某个叙述锚点前 3 天；“前一天”在锚点不明时保留候选。
 反例：文本中先写“十年后”不代表它在 StoryTime 中最早发生。  
 容易混淆：NarrativeOrder 是文本出现顺序；StoryTime 是故事发生顺序。  
 产生者：TemporalRelation Agent、时间求解器。  
 读取者：状态编译器、PanelSpec、QA。  
 是否必须包含 EvidenceRef：视情况而定；由原文直接给出的时间需要证据。  
 候选Schema：StoryTimeRefV1、TemporalRelationProposalV1。  
-备注或待确认问题：时间表达的精度等级需后续设计。  
+字段建议：time_kind、absolute_datetime、date_only、time_point、time_interval、relative_time、fuzzy_time、precision、anchor_event、anchor_story_time、candidate_anchors、resolution_status、evidence_refs。
+备注或待确认问题：时间表达字段本轮只作领域语义说明，暂不实现 Schema。
 
 ## TemporalRelation
 
 中文名称：时间关系  
 所属阶段：时间、叙事层和状态  
 优先级：P0  
-精确定义：TemporalRelation 表示两个 Event、Scene 或状态区间之间的时间关系，如 BEFORE、AFTER、DURING、OVERLAPS、SIMULTANEOUS、UNKNOWN。  
-识别规则：原文或推理规则能支持两个对象的先后、包含或重叠关系时建立。  
-正例：大学见顾远 BEFORE 十年后回旧车站。  
+精确定义：TemporalRelation 表示两个 Event、Scene 或状态区间之间的时间关系，如 BEFORE、AFTER、DURING、OVERLAPS、SIMULTANEOUS、UNKNOWN。SIMULTANEOUS 表示两个事件或状态在同一明确时间点、同一叙述锚点或同一同步声明下发生；OVERLAPS 表示两个时间区间存在交集，但起止不完全相同，或只能确认区间重叠。
+识别规则：原文或推理规则能支持两个对象的先后、包含、同时或重叠关系时建立。时间区间覆盖某个时间点时，不要强行改成完全同时；可用 AT_TIME 或 SAME_ANCHOR 作为派生说明，不必新增正式枚举。
+正例：大学见顾远 BEFORE 十年后回旧车站；“同一时刻”支持 SIMULTANEOUS；20:58-21:12 的监控区间与 21:00 事件支持 OVERLAPS 或 AT_TIME 覆盖。
 反例：因果关系不自动等于 TemporalRelation，虽然常有关联。  
 容易混淆：CausalRelation 表示原因结果；TemporalRelation 表示时间位置。  
 产生者：时间关系 Agent、时间求解器。  
@@ -762,8 +771,8 @@
 中文名称：道具状态  
 所属阶段：时间、叙事层和状态  
 优先级：P0  
-精确定义：ObjectState 表示 StoryObject 在某个 StoryTime 的权利关系、物理持有、使用、位置、完整性、可见性或功能状态。它至少区分 owner_id、holder_id、authorized_user_ids、in_use_by_id、location_id、condition、effective_from、effective_until 和 evidence_refs。
-识别规则：物件被获得、丢失、损坏、隐藏、转交、借用、佩戴、归还、保管、授权使用或改变位置/状态时建立或更新。owner、holder 和 in_use_by 必须独立更新。
+精确定义：ObjectState 表示 StoryObject 在某个 StoryTime 的权利关系、物理持有、使用、位置、完整性、可见性或功能状态。它至少区分 owner_id、holder_id、authorized_user_ids、in_use_by_id、location_id、condition、effective_from、effective_until 和 evidence_refs。已知离散状态点之间可以存在 UNKNOWN interval，不得为了连续性自动填补 holder、location 或 owner。
+识别规则：物件被获得、丢失、损坏、隐藏、转交、借用、佩戴、归还、保管、授权使用、观察到位于某地或改变位置/状态时建立或更新。owner、holder 和 in_use_by 必须独立更新。观察到某物在某地，可确认 observation/state，不一定确认是谁移动它。
 正例：陈默把胸针交给陆岚后，holder 可变为陆岚；陆岚第二幕佩戴时，in_use_by 可变为陆岚；归还苏闻后 holder 变为苏闻，但不能仅凭临时持有把 owner 改为陆岚。
 反例：画面中装饰性的未提及杯子没有 ObjectState。  
 容易混淆：StoryObject 是道具实体；ObjectState 是该道具的时间状态。交给、借用、佩戴和保管都不等于拥有。
@@ -771,7 +780,7 @@
 读取者：PanelSpec、视觉资产检索、QA。  
 是否必须包含 EvidenceRef：是。  
 候选Schema：ObjectStateV1。  
-备注或待确认问题：复杂法律所有权和多人共有权暂不进入 MVP。
+备注或待确认问题：复杂法律所有权、多人共有权和完整物流轨迹推断暂不进入 MVP。
 
 ## LocationState
 

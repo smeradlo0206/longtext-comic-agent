@@ -265,3 +265,19 @@ PanelSpec 至少需要以下信息。
 7. 动作结果不能自动推断长期关系变化。
 8. 角色记忆首先是 Claim 或 NarrativeMention，除非有其他证据确认。
 9. 一项证据只能更新它直接支持的关系维度。
+
+## 11. 复杂时间线规则
+
+1. NarrativeOrder 只能表示文本出现顺序，不能替代 StoryTime。
+2. 相对时间必须绑定 anchor_event 或 anchor_story_time；锚点不唯一时保留 candidate_anchors，并将 resolution_status 标记为 UNCERTAIN 或 UNKNOWN。
+3. “三天前”“明晚以前”“前一天”等表达不得脱离叙述锚点单独解析。
+4. SIMULTANEOUS 用于两个事件或状态共享同一明确时间点、同一叙述锚点或原文同步声明。
+5. OVERLAPS 用于两个时间区间存在交集，但起止不完全相同，或只能确认区间重叠。
+6. 时间区间覆盖某个时间点时，可记录 AT_TIME 或 SAME_ANCHOR 派生说明，但不要强行改写为完全 SIMULTANEOUS。
+7. 同一历史夜晚被多次回忆、转述、病历记录或客观叙述时，应建立多个 NarrativeMention、Claim 或相关 Event，并回指同一 Event 或事件簇。
+8. 角色记忆和讲述中的时间信息先作为 Claim 或 NarrativeMention；只有证据支持时才提交为 Canonical StoryTime。
+9. 观察到某物在某地，可以确认该时间点的 ObjectState 或 observation Event；不能自动确认移动者、完整移动路径或中间持有者。
+10. 已知离散 ObjectState 之间允许存在 UNKNOWN interval，不得为了连续性自动填补 owner、holder 或 location。
+11. 结果由原文确认但参与者未知的状态变化，可以建立 actor=UNKNOWN 或 actor_ref=UnresolvedReference 的 Event 候选；角色对参与者的解释仍是 Claim。
+12. TemporalRelation BEFORE、文本相邻、短时间间隔或视觉并置都不能单独支持 CausalRelation。
+13. 时间图中缺失的区间应显式保留 UNKNOWN，不得用最邻近状态静默延展到无证据范围。
