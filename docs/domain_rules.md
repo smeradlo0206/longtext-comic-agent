@@ -295,3 +295,17 @@ PanelSpec 至少需要以下信息。
 9. 梦中、回忆中、想象中或模拟中的道具，不能仅因颜色、形状、名称相近或角色确信自动合并为现实 StoryObject。
 10. 相似现实事件不能反向证明梦境、污染记忆或预测模拟为准确预见，也不能单独建立 CausalRelation。
 11. RealityLayer 不确定时保留候选层、证据来源和不确定原因，不得为了生成连续性强行选择唯一层。
+
+## 13. Claim、KnowledgeState 与 CommitService 规则
+
+1. 指控、否认、猜测、暗示、调查推论和 Agent 推理首先是 Claim 或 Proposal，不能直接升级为 Canonical Data。
+2. “甲说乙拿了某物”只支持一条 ACCUSATION Claim，不支持“乙拿了某物”的 Canonical Event。
+3. 读者通过全知旁白、客观画面或叙述机关看到的信息，可以作为 Canonical Data 的证据来源，但 visible_to_character_ids 为空时不得进入人物 KnowledgeState。
+4. 后续监控、调查、旁白或证据确认事实后，不能反向把角色在过去 StoryTime 的 SUSPECTS、BELIEVES、HEARD 或 UNAWARE 改成 KNOWS。
+5. 角色猜中真实事实时，历史 KnowledgeState 仍按其当时证据记录，直到角色获得足够证据才升级。
+6. 物体出现在某人衣袋、房间或手边，只能确认该时间点的 ObjectState；不能自动推出偷窃、栽赃、动机、责任或完整移动路径。
+7. 从一个离散 ObjectState 到另一个离散 ObjectState 之间缺少证据时，应显式保留 UNKNOWN 移动链。
+8. 未知行动者使用 actor=UNKNOWN 或 actor_ref=UnresolvedReference；不得为身体局部、衣服颜色或模糊剪影强行新建 Character。
+9. 相似手套、钥匙、衣物或其他道具只能建立 candidate_link 或 UNCERTAIN object_identity，不能仅凭外观相似自动合并 StoryObject。
+10. 两个 Agent 输出互斥 Proposal 时，CommitService 不得任选其一；应保留冲突 Proposal/Claim，只提交证据支持的中性事实。
+11. 冲突需要人工判断时，CommitService 应生成审核项或冲突状态，而不是为了叙事闭合写入未经证实的 Canonical 结论。
