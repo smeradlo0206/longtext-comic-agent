@@ -6,6 +6,7 @@
 - [领域业务规则 V1](domain_rules.md)：状态、时间线、RealityLayer、Scene、StoryBeat、PanelSpec 和 QA 判定规则。
 - [完整流水线示例](examples/story_pipeline_example.md)：从示例原文到 RepairPlan 的端到端语义示例。
 - [复杂时间线示例](examples/complex_timeline_example.md)：NarrativeOrder、StoryTime、相对时间、ObjectState 未知区间和因果边界示例。
+- [RealityLayer 示例](examples/reality_layer_example.md)：设备画面、梦境、想象、预测模拟、Claim 和现实主线隔离示例。
 
 ## 架构与流程
 

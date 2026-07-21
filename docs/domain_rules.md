@@ -281,3 +281,17 @@ PanelSpec 至少需要以下信息。
 11. 结果由原文确认但参与者未知的状态变化，可以建立 actor=UNKNOWN 或 actor_ref=UnresolvedReference 的 Event 候选；角色对参与者的解释仍是 Claim。
 12. TemporalRelation BEFORE、文本相邻、短时间间隔或视觉并置都不能单独支持 CausalRelation。
 13. 时间图中缺失的区间应显式保留 UNKNOWN，不得用最邻近状态静默延展到无证据范围。
+
+## 12. RealityLayer 判定与隔离规则
+
+1. `PRIMARY` 是现实主线标准命名；`MAIN_REALITY` 仅作为旧称或说明性同义词。
+2. 非 `PRIMARY` 层的外貌、伤势、道具状态不默认写入 `PRIMARY`。
+3. 梦醒后的恐惧、回避、创伤反应或现实行动可以作为 `PRIMARY` 的后续 Event、StateChange 或 CharacterState。
+4. 角色主动想象的交付、伤害、移动或对话不改变现实 ObjectState、CharacterState 或 Event 图。
+5. 预测、预言、系统预测模拟和可能性画面不进入已发生 StoryTime；除非文本明确确认其为未来真实片段，否则不能标记为 `FLASH_FORWARD`。
+6. 设备重放画面若存在污染、冲突、否认证据或来源不可靠，应标记为 `UNRELIABLE_MEMORY` 或保留 candidate_layers，并使用 `UNKNOWN`/`UNCERTAIN` 说明原因。
+7. 画面内容、角色说法、系统日志标签和 Canonical Data 必须分离：画面可生成 NarrativeMention，角色说法进入 Claim/KnowledgeState，系统标签是 Evidence 线索或 Claim，Canonical Data 只能由证据检查后提交。
+8. 系统日志标签被质疑时，应保留互斥 Claim；签名、时间戳或日志完整性证据只支持其直接证明的范围。
+9. 梦中、回忆中、想象中或模拟中的道具，不能仅因颜色、形状、名称相近或角色确信自动合并为现实 StoryObject。
+10. 相似现实事件不能反向证明梦境、污染记忆或预测模拟为准确预见，也不能单独建立 CausalRelation。
+11. RealityLayer 不确定时保留候选层、证据来源和不确定原因，不得为了生成连续性强行选择唯一层。
