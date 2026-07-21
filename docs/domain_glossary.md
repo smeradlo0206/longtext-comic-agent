@@ -4,9 +4,9 @@
 
 本文是“长文本多 Agent 连续漫画生成系统”的领域概念唯一正式定义来源。它用于统一产品、Schema、Agent、数据库、QA 和视觉生产模块对同一名称的理解。其他文档引用本文词汇，不再重复定义。
 
-当前版本：V1.3-draft
+当前版本：V1.4-draft
 维护负责人：待团队指定
-最后更新时间：2026-07-20
+最后更新时间：2026-07-21
 
 ## 使用规则
 
@@ -16,6 +16,14 @@
 - 关键故事事实必须能通过 EvidenceRef（原文证据引用）追溯到 SourceChunk（原文片段）。
 - 无原文支持、证据不足或叙述不可靠的内容必须标记为 UNKNOWN 或 UNCERTAIN。
 - PanelSpec（单格分镜规范）必须与模型供应商解耦；供应商字段进入 PromptSpec（模型提示词规范）。
+
+## V1.4-draft 变更摘要
+
+- 澄清 RealityLayer 判定矩阵，统一 `PRIMARY` 作为现实主线命名，`MAIN_REALITY` 仅作为旧称或说明性同义词。
+- 明确设备重放、污染记忆、预测模拟和未来片段的边界。
+- 强化跨 RealityLayer 状态隔离，非 PRIMARY 层状态不默认写入 PRIMARY。
+- 明确角色 Claim、系统标签、画面内容和 Canonical Data 不能混用。
+- 补充相似道具不能仅凭颜色、外观或角色确信自动合并为同一 StoryObject。
 
 ## V1.3-draft 变更摘要
 
@@ -363,9 +371,9 @@
 中文名称：剧情道具  
 所属阶段：故事世界  
 优先级：P0  
-精确定义：StoryObject 是对剧情、状态或视觉连续性有意义的物件型 Entity。普通背景杂物只有影响剧情或被视觉约束引用时才升级为 StoryObject。  
-识别规则：物件被持有、转移、损坏、寻找、作为线索或必须出现在画面中时建立。  
-正例：父亲留下的怀表、蓝色雨伞、折过的地图。  
+精确定义：StoryObject 是对剧情、状态或视觉连续性有意义的物件型 Entity。普通背景杂物只有影响剧情或被视觉约束引用时才升级为 StoryObject。相似外观、相同颜色、角色确信或同类名称不能单独证明两个物件是同一 StoryObject。
+识别规则：物件被持有、转移、损坏、寻找、作为线索或必须出现在画面中时建立。跨 RealityLayer 或跨时间的相似物体只能建立 candidate_link、Claim 或 UNCERTAIN object_identity，直到有证据确认合并。
+正例：父亲留下的怀表、蓝色雨伞、折过的地图；梦中的红钥匙、童年红色塑料钥匙挂件和现实红色金属钥匙默认是三个候选对象或候选关联，不自动合并。
 反例：背景里未被原文提及的一把椅子不是 StoryObject。  
 容易混淆：ObjectState 描述道具状态；VisualAsset 是道具图像资产。  
 产生者：实体抽取 Agent、状态变化 Agent。  
@@ -539,9 +547,9 @@
 中文名称：主张
 所属阶段：故事世界
 优先级：P0
-精确定义：Claim 表示文本、角色、消息或叙述者提出的一条可被验证或暂时保留的陈述。Claim 不等于 Event，也不等于 Canonical Data；它记录“谁在何处声称了什么”，并通过 verification_status 表示证据状态。
-识别规则：原文出现断言、否认、指控、猜测、记忆、解释、预测、消息内容或角色草稿改写时建立。任何未被独立证实的角色说法、匿名消息、署名线索和推理结论都应先作为 Claim。
-正例：“灰桥不是发照片的人”是一条 Claim；“我没有贴那张照片”是一条 DENIAL Claim。
+精确定义：Claim 表示文本、角色、消息、设备日志标签或叙述者提出的一条可被验证或暂时保留的陈述。Claim 不等于 Event，也不等于 Canonical Data；它记录“谁在何处声称了什么”，并通过 verification_status 表示证据状态。
+识别规则：原文出现断言、否认、指控、猜测、记忆、解释、预测、消息内容、系统标签、实验记录或角色草稿改写时建立。任何未被独立证实的角色说法、匿名消息、署名线索、系统日志标签和推理结论都应先作为 Claim 或 Evidence 线索。
+正例：“灰桥不是发照片的人”是一条 Claim；“我没有贴那张照片”是一条 DENIAL Claim；角色说“我在未来见过它”是 Claim/KnowledgeState，不是对象身份 Canonical 证明；研究员说“也许读取到未来记忆”是 HYPOTHESIS Claim，不是 FLASH_FORWARD Event。
 反例：“唐宁收到邮件”是 Event；邮件中说“你问错了人”是 Claim。
 容易混淆：Event 是故事世界中发生的事；Claim 是关于事实的说法。Character Belief 可由 Claim 影响，但 Claim 本身不是 KnowledgeState。
 产生者：Claim 抽取 Agent、消息抽取 Agent、叙事结构 Agent。
@@ -672,16 +680,26 @@
 中文名称：叙事现实层  
 所属阶段：时间、叙事层和状态  
 优先级：P0  
-精确定义：RealityLayer 表示事实或画面属于现实主线、回忆、梦境、想象、假设、未来片段或不可靠记忆等哪一层。不同 RealityLayer 的状态不能默认互相继承。  
-识别规则：文本出现回忆、梦、想象、假设、预言、插叙或现实主线切换时标记。  
-正例：大学时期第一次见面在 FLASHBACK；十年后旧车站在 PRIMARY。  
+精确定义：RealityLayer 表示事实或画面属于现实主线、回忆、梦境、想象、假设、未来片段或不可靠记忆等哪一层。不同 RealityLayer 的状态不能默认互相继承。`PRIMARY` 是现实主线的标准命名；`MAIN_REALITY` 仅作为旧称或解释性同义词，不作为新增层级。
+识别规则：文本出现回忆、梦、想象、假设、预言、插叙、设备重放、系统预测模拟或现实主线切换时标记。画面内容、角色说法、系统日志标签和 Canonical Data 必须分层处理，不能互相替代。
+判定矩阵：
+- `PRIMARY`：现实主线中实际发生或被可靠证据确认的事件/状态。
+- `DREAM`：角色睡眠、惊醒、梦境语境明确，且无独立证据确认其为现实。
+- `IMAGINATION`：角色主动构造或想象的场景。
+- `HYPOTHETICAL`：假设、推演、预测模拟、可能性画面；不进入已发生 StoryTime。
+- `FLASHBACK`：可靠回忆或明确过去事件的叙述。
+- `UNRELIABLE_MEMORY`：来源是记忆或设备重放，但存在污染、冲突、否认证据或可靠性不足。
+- `FLASH_FORWARD`：只有当文本明确给出未来真实片段，且不是预测、想象、梦或模拟时才使用。
+- `UNKNOWN`：多个层级候选都合理，且证据不足以选择。
+正例：大学时期第一次见面在 FLASHBACK；十年后旧车站在 PRIMARY；设备日志标为“预测模拟”的未来画面可用 `reality_layer=HYPOTHETICAL`、`source_medium=DEVICE_LOG`、`source_label=预测模拟`、`verification_status=UNVERIFIED` 表达。
 反例：把梦里的受伤直接写入 PRIMARY CharacterState。  
 容易混淆：NarrativePerspective 是叙述来源；RealityLayer 是事实所在层级。  
 产生者：叙事层识别 Agent、Scene 切分服务。  
 读取者：状态编译器、PanelSpec、QA。  
 是否必须包含 EvidenceRef：是。  
 候选Schema：RealityLayer enum、SceneSpecV1.reality_layer。  
-备注或待确认问题：FLASH_FORWARD、UNRELIABLE_MEMORY 是否进入 V1 枚举需评审。  
+字段建议：reality_layer、candidate_layers、source_medium、source_label、verification_status、reliability_reason、evidence_refs。
+备注或待确认问题：`UNRELIABLE_MEMORY` 与 `FLASH_FORWARD` 在 V1 文档语义中可作为合法 RealityLayer 标签使用；若当前 Schema 尚未支持，后续由 Schema 映射或兼容层处理。本轮不新增正式 `SIMULATION` 层。
 
 ## StateChange
 
@@ -1368,6 +1386,15 @@
 - “收到邮件”是 Event；邮件里写的内容是 Claim。
 - Claim 只有在证据检查和冲突处理后，才能支持建立或修正 Canonical Event。
 - 被角色否认的事不自动变成未发生事件；它首先是一条 DENIAL Claim。
+- 角色确信、研究员推测和系统日志标签都不能单独升级为 Canonical Data；系统日志标签是证据线索，若其生成或修改过程被质疑，应同时保存冲突 Claim。
+
+### RealityLayer、Claim 与 Canonical Data
+
+- 画面内容说明“角色或系统呈现了什么”，不等于现实主线事实。
+- 角色说法说明“角色相信或声称什么”，进入 Claim 或 KnowledgeState。
+- 系统日志标签说明“系统如何标记画面来源”，可作为 Evidence 线索或 Claim，但不是不可质疑的事实。
+- Canonical Data 只能来自证据检查、冲突处理和 CommitService；设备画面、角色确信、系统标签和研究员推测都不能绕过这一层。
+- 预测模拟优先归入 `HYPOTHETICAL`，不作为已发生 StoryTime，也不自动成为 `FLASH_FORWARD`。
 
 ### Character Belief 与 Canonical Fact
 
