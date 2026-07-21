@@ -4,7 +4,7 @@
 
 本文是“长文本多 Agent 连续漫画生成系统”的领域概念唯一正式定义来源。它用于统一产品、Schema、Agent、数据库、QA 和视觉生产模块对同一名称的理解。其他文档引用本文词汇，不再重复定义。
 
-当前版本：V1.4-draft
+当前版本：V1.5-draft
 维护负责人：待团队指定
 最后更新时间：2026-07-21
 
@@ -16,6 +16,14 @@
 - 关键故事事实必须能通过 EvidenceRef（原文证据引用）追溯到 SourceChunk（原文片段）。
 - 无原文支持、证据不足或叙述不可靠的内容必须标记为 UNKNOWN 或 UNCERTAIN。
 - PanelSpec（单格分镜规范）必须与模型供应商解耦；供应商字段进入 PromptSpec（模型提示词规范）。
+
+## V1.5-draft 变更摘要
+
+- 强化 Claim、KnowledgeState、NarrativePerspective 与 Canonical Data 的边界。
+- 明确读者可见事实不等于人物 KnowledgeState。
+- 明确后续证据不能反向修改角色历史认知。
+- 明确 CommitService 对冲突 Proposal 只提交中性已证事实。
+- 补充 ObjectState 只记录证据支持的位置或持有状态，不自动补偷窃、栽赃或完整移动路径。
 
 ## V1.4-draft 变更摘要
 
@@ -548,10 +556,10 @@
 所属阶段：故事世界
 优先级：P0
 精确定义：Claim 表示文本、角色、消息、设备日志标签或叙述者提出的一条可被验证或暂时保留的陈述。Claim 不等于 Event，也不等于 Canonical Data；它记录“谁在何处声称了什么”，并通过 verification_status 表示证据状态。
-识别规则：原文出现断言、否认、指控、猜测、记忆、解释、预测、消息内容、系统标签、实验记录或角色草稿改写时建立。任何未被独立证实的角色说法、匿名消息、署名线索、系统日志标签和推理结论都应先作为 Claim 或 Evidence 线索。
-正例：“灰桥不是发照片的人”是一条 Claim；“我没有贴那张照片”是一条 DENIAL Claim；角色说“我在未来见过它”是 Claim/KnowledgeState，不是对象身份 Canonical 证明；研究员说“也许读取到未来记忆”是 HYPOTHESIS Claim，不是 FLASH_FORWARD Event。
+识别规则：原文出现断言、否认、指控、猜测、暗示、调查推论、记忆、解释、预测、消息内容、系统标签、实验记录、Agent 推理或角色草稿改写时建立。任何未被独立证实的角色说法、匿名消息、署名线索、系统日志标签和推理结论都应先作为 Claim、Proposal 或 Evidence 线索。
+正例：“灰桥不是发照片的人”是一条 Claim；“我没有贴那张照片”是一条 DENIAL Claim；“林祁说程放拿卡”是 ACCUSATION Claim，不是“程放拿卡”这个 Canonical Event；角色说“我在未来见过它”是 Claim/KnowledgeState，不是对象身份 Canonical 证明；研究员说“也许读取到未来记忆”是 HYPOTHESIS Claim，不是 FLASH_FORWARD Event。
 反例：“唐宁收到邮件”是 Event；邮件中说“你问错了人”是 Claim。
-容易混淆：Event 是故事世界中发生的事；Claim 是关于事实的说法。Character Belief 可由 Claim 影响，但 Claim 本身不是 KnowledgeState。
+容易混淆：Event 是故事世界中发生的事；Claim 是关于事实的说法。Character Belief 可由 Claim 影响，但 Claim 本身不是 KnowledgeState。没有可验证内容的暗示不能生成 Canonical 因果链。
 产生者：Claim 抽取 Agent、消息抽取 Agent、叙事结构 Agent。
 读取者：CommitService、KnowledgeState、QA、审核界面。
 是否必须包含 EvidenceRef：是。
@@ -629,14 +637,15 @@
 所属阶段：故事世界
 优先级：P0
 精确定义：NarrativePerspective 表示某段文本从谁的感知、回忆、想象、转述或叙述位置呈现。它决定信息可见性、可靠性和角色是否可据此更新 KnowledgeState，但不自动改变 Canonical Data。
-识别规则：文本出现第一人称、角色心理、回忆触发、观察限制、传闻来源、草稿改写、匿名消息或视角切换时建立，并记录 perspective_type、focal_entity_id、visible_to_character_ids、reliability_status。
-正例：唐宁听见身后有人说话时，该信息首先进入唐宁受限视角；林晓“想起”大学下午，视角来源是林晓记忆。
+识别规则：文本出现第一人称、角色心理、回忆触发、观察限制、传闻来源、草稿改写、匿名消息、读者可见但角色不可见的信息或视角切换时建立，并记录 perspective_type、focal_entity_id、visible_to_character_ids、visible_to_reader、reliability_status。
+正例：唐宁听见身后有人说话时，该信息首先进入唐宁受限视角；林晓“想起”大学下午，视角来源是林晓记忆；客观叙述让读者看见黑手套拿走门禁卡时，可记录 visible_to_reader=true 且 visible_to_character_ids 为空。
 反例：全知旁白直接陈述事实不一定绑定具体人物视角。
 容易混淆：RealityLayer 是现实层级；NarrativePerspective 是叙述来源；KnowledgeState 是某个角色在某个 StoryTime 的认知内容。
 产生者：叙事层识别 Agent。
 读取者：事件抽取、TemporalRelation、QA、StoryBible。
 是否必须包含 EvidenceRef：是。
 候选Schema：NarrativePerspectiveV1。
+字段建议：visible_to_reader、visible_to_character_ids、source_perspective_id、reliability_reason。读者可见信息可进入 StoryBible 或 Canonical Data，但 visible_to_character_ids 为空时，不进入人物 KnowledgeState；本轮不新增 ReaderKnowledge 或 ReaderVisibleFact 顶层概念。
 枚举约束：perspective_type 建议使用 OMNISCIENT、EXTERNAL_OBSERVER、CHARACTER_LIMITED、FIRST_PERSON、UNKNOWN。reliability_status 建议使用 RELIABLE、LIMITED、UNRELIABLE、UNKNOWN。
 备注或待确认问题：多视角同段落的切分策略需后续黄金集校准。
 
@@ -756,14 +765,15 @@
 所属阶段：时间、叙事层和状态
 优先级：P0
 精确定义：KnowledgeState 表示某个 Character 在某个 StoryTime、RealityLayer 和 NarrativePerspective 下对某个 Claim、Event、EntityRelation 或身份问题的认知状态。它防止角色提前知道未来信息，也防止把读者、叙述者或其他角色知道的内容泄漏给该角色。
-识别规则：原文表达人物得知、听闻、怀疑、相信、否认、误解、隐瞒、发现、回忆、忘记或修改判断时建立，并记录 epistemic_status、knowledge_target_id、source_claim_id、evidence_refs 和 valid_story_time。
-正例：唐宁在收到邮件后 HEARD“灰桥不是发照片的人”；唐宁在看到乔临登录后 KNOWS“乔临经营论坛账号灰桥”；她仍然 UNKNOWN 第一张照片作者。
-反例：读者知道的信息不等于角色知道。
+识别规则：原文表达人物得知、听闻、怀疑、相信、否认、误解、隐瞒、发现、回忆、忘记或修改判断时建立，并记录 epistemic_status、knowledge_target_id、source_claim_id、evidence_refs 和 valid_story_time。读者通过全知、客观叙述或画面知道的信息，不自动进入任何 Character 的 KnowledgeState。
+正例：唐宁在收到邮件后 HEARD“灰桥不是发照片的人”；唐宁在看到乔临登录后 KNOWS“乔临经营论坛账号灰桥”；她仍然 UNKNOWN 第一张照片作者；后续监控确认积水，只能确认积水事实，不能反向把周芮在监控恢复前的猜测改成 KNOWS。
+反例：读者知道的信息不等于角色知道；角色猜中真实事实时，历史状态仍可保持 SUSPECTS 或 BELIEVES，直到角色获得证据。
 容易混淆：NarrativePerspective 是叙述角度；KnowledgeState 是角色知识内容；Canonical Data 是系统确认的事实。角色 BELIEVES 的内容可以与 Canonical Data 冲突。
 产生者：知识状态 Agent、状态编译器。
 读取者：剧情转译、DialogueUnit 生成、QA。
 是否必须包含 EvidenceRef：是。
 候选Schema：KnowledgeStateV1、CharacterStateV1.knowledge_fact_ids。
+字段建议：visible_to_character_ids、source_perspective_id、valid_story_time、epistemic_status、knowledge_target_id、source_claim_id。
 枚举约束：EpistemicStatus 必须使用 UNAWARE、HEARD、SUSPECTS、BELIEVES、DISBELIEVES、KNOWS。
 备注或待确认问题：从 BELIEVES 升级为 KNOWS 的证据阈值需后续通过黄金集校准。
 
@@ -790,8 +800,8 @@
 所属阶段：时间、叙事层和状态  
 优先级：P0  
 精确定义：ObjectState 表示 StoryObject 在某个 StoryTime 的权利关系、物理持有、使用、位置、完整性、可见性或功能状态。它至少区分 owner_id、holder_id、authorized_user_ids、in_use_by_id、location_id、condition、effective_from、effective_until 和 evidence_refs。已知离散状态点之间可以存在 UNKNOWN interval，不得为了连续性自动填补 holder、location 或 owner。
-识别规则：物件被获得、丢失、损坏、隐藏、转交、借用、佩戴、归还、保管、授权使用、观察到位于某地或改变位置/状态时建立或更新。owner、holder 和 in_use_by 必须独立更新。观察到某物在某地，可确认 observation/state，不一定确认是谁移动它。
-正例：陈默把胸针交给陆岚后，holder 可变为陆岚；陆岚第二幕佩戴时，in_use_by 可变为陆岚；归还苏闻后 holder 变为苏闻，但不能仅凭临时持有把 owner 改为陆岚。
+识别规则：物件被获得、丢失、损坏、隐藏、转交、借用、佩戴、归还、保管、授权使用、观察到位于某地或改变位置/状态时建立或更新。owner、holder 和 in_use_by 必须独立更新。观察到某物在某地，可确认 observation/state，不一定确认是谁移动它，也不能自动推出偷窃、栽赃、动机或完整移动路径。
+正例：陈默把胸针交给陆岚后，holder 可变为陆岚；陆岚第二幕佩戴时，in_use_by 可变为陆岚；归还苏闻后 holder 变为苏闻，但不能仅凭临时持有把 owner 改为陆岚；门禁卡从桌面消失后出现在林祁外套里，只能确认两个离散状态点，中间移动链保持 UNKNOWN。
 反例：画面中装饰性的未提及杯子没有 ObjectState。  
 容易混淆：StoryObject 是道具实体；ObjectState 是该道具的时间状态。交给、借用、佩戴和保管都不等于拥有。
 产生者：状态变化 Agent、状态编译器。  
@@ -1245,15 +1255,15 @@
 所属阶段：质检、修复和工作流  
 优先级：P0  
 精确定义：CommitService 是唯一允许把经过验证的 Proposal 或程序结果写入 Canonical Data 的服务。它负责 Schema 校验、证据检查、状态检查、冲突处理和 Revision 管理。  
-识别规则：任何正式故事事实、状态或审核冻结写入前必须经过它。  
-正例：把合并后的 Event 写入 Canonical Event。  
+识别规则：任何正式故事事实、状态或审核冻结写入前必须经过它。两个或多个 Agent 输出互斥 Proposal 时，CommitService 不得任选其一；应保留冲突 Proposal/Claim，只提交证据支持的中性事实，并在需要人工判断时生成审核项。
+正例：把合并后的 Event 写入 Canonical Event；在“程放拿卡”和“林祁拿卡”互斥 Proposal 冲突时，只提交“有人在停电前拿走门禁卡”和“门禁卡后来出现在林祁外套里”等已证中性事实。
 反例：Agent 直接写数据库不是 CommitService。  
 容易混淆：SourceRepository 可保存原文结构；CommitService 控制正式故事数据提交。  
 产生者：普通程序服务。  
 读取者：工作流、审核界面、数据库层。  
 是否必须包含 EvidenceRef：否；它负责验证别人是否包含。  
 候选Schema：CommitResultV1、CommitService。  
-备注或待确认问题：冲突处理策略需后续设计。  
+备注或待确认问题：完整自动真相裁决和复杂冲突评分策略需后续设计。
 
 ## ContextBuilder
 
