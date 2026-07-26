@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from comic_agent.main import create_app
@@ -31,6 +32,26 @@ SAMPLE_TEXT = """第一章 开端
 
 她把伞递给陈野。
 """
+
+LONG_FIXTURE = Path("tests/fixtures/import/long_mixed_chapters.txt")
+LONG_EXPECTED_TITLES = [
+    "第一章 旧馆门口",
+    "Chapter 1 Notice Board",
+    "第2章 报名表",
+    "chapter 2 Night Route",
+    "第三章 地下书库",
+    "CHAPTER 3 Archive Log",
+    "第十章 尾声前的更正",
+    "第十一章 清晨复核",
+]
+LONG_EXPECTED_CHUNKS = 40
+FIRST_CHAPTER_CHUNKS = [
+    "19:20，林夏站在旧图书馆门口，雨水沿着玻璃门滑下来。",
+    "校园智能体创意赛的报名通知贴在公告栏上，报名截止写着 2026-04-18 17:00。",
+    "她拨通了值班电话 010-61881234，却只听见自动语音提示。",
+    "陈野发来邮件：hello.library@example.edu，主题是“夜间记录确认”。",
+    "她在笔记里写下 Chapter 9 is not a heading.",
+]
 
 
 def create_test_client(tmp_path: Path) -> TestClient:
@@ -64,13 +85,25 @@ def test_utf8_txt_upload_imports_document(tmp_path: Path) -> None:
     assert payload["document"]["project_id"] == "project-1"
 
 
-def test_non_txt_upload_returns_415(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("filename", "content_type"),
+    [
+        ("source.pdf", "application/pdf"),
+        ("source.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        ("source.md", "text/markdown"),
+    ],
+)
+def test_non_txt_upload_returns_415(
+    tmp_path: Path,
+    filename: str,
+    content_type: str,
+) -> None:
     with create_test_client(tmp_path) as client:
         create_project(client)
 
         response = client.post(
             "/projects/project-1/documents/import",
-            files={"file": ("source.pdf", b"%PDF-1.7", "application/pdf")},
+            files={"file": (filename, b"not a txt document", content_type)},
         )
 
     assert response.status_code == 415
@@ -84,6 +117,19 @@ def test_empty_txt_upload_returns_400(tmp_path: Path) -> None:
         response = client.post(
             "/projects/project-1/documents/import",
             files={"file": ("source.txt", b"", "text/plain")},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Uploaded file is empty"
+
+
+def test_whitespace_only_txt_upload_returns_400(tmp_path: Path) -> None:
+    with create_test_client(tmp_path) as client:
+        create_project(client)
+
+        response = client.post(
+            "/projects/project-1/documents/import",
+            files={"file": ("source.txt", b"   \n\n   ", "text/plain")},
         )
 
     assert response.status_code == 400
@@ -120,3 +166,84 @@ def test_repeated_txt_upload_is_idempotent(tmp_path: Path) -> None:
     assert second.json()["status"] == "existing"
     assert second.json()["chapters_count"] > 0
     assert second.json()["chunks_count"] > 0
+
+
+def test_import_long_utf8_txt_success(tmp_path: Path) -> None:
+    with create_test_client(tmp_path) as client:
+        create_project(client)
+
+        response = client.post(
+            "/projects/project-1/documents/import",
+            files={
+                "file": (
+                    "long_mixed_chapters.txt",
+                    LONG_FIXTURE.read_bytes(),
+                    "text/plain",
+                )
+            },
+        )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert set(payload) >= {"status", "document", "chapters_count", "chunks_count"}
+    assert payload["status"] == "created"
+    assert payload["document"]["filename"] == "long_mixed_chapters.txt"
+    assert payload["document"]["project_id"] == "project-1"
+    assert payload["chapters_count"] == len(LONG_EXPECTED_TITLES)
+    assert payload["chunks_count"] == LONG_EXPECTED_CHUNKS
+
+
+def test_import_same_long_txt_twice_returns_existing(tmp_path: Path) -> None:
+    content = LONG_FIXTURE.read_bytes()
+    with create_test_client(tmp_path) as client:
+        create_project(client)
+
+        first = client.post(
+            "/projects/project-1/documents/import",
+            files={"file": ("long_mixed_chapters.txt", content, "text/plain")},
+        )
+        second = client.post(
+            "/projects/project-1/documents/import",
+            files={"file": ("long_mixed_chapters.txt", content, "text/plain")},
+        )
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["status"] == "created"
+    assert second.json()["status"] == "existing"
+    assert second.json()["chapters_count"] == first.json()["chapters_count"]
+    assert second.json()["chunks_count"] == first.json()["chunks_count"]
+
+
+def test_import_then_query_chapters_and_chunks(tmp_path: Path) -> None:
+    with create_test_client(tmp_path) as client:
+        create_project(client)
+        import_response = client.post(
+            "/projects/project-1/documents/import",
+            files={
+                "file": (
+                    "long_mixed_chapters.txt",
+                    LONG_FIXTURE.read_bytes(),
+                    "text/plain",
+                )
+            },
+        )
+        assert import_response.status_code == 201
+
+        chapters_response = client.get("/projects/project-1/chapters")
+        assert chapters_response.status_code == 200
+        chapters = chapters_response.json()
+
+        first_chapter_id = chapters[0]["chapter_id"]
+        chunks_response = client.get(f"/chapters/{first_chapter_id}/chunks")
+        assert chunks_response.status_code == 200
+        chunks = chunks_response.json()
+
+        first_chunk_response = client.get(f"/chunks/{chunks[0]['chunk_id']}")
+
+    assert [chapter["title"] for chapter in chapters] == LONG_EXPECTED_TITLES
+    assert [chapter["order"] for chapter in chapters] == list(range(len(LONG_EXPECTED_TITLES)))
+    assert [chunk["text"] for chunk in chunks] == FIRST_CHAPTER_CHUNKS
+    assert [chunk["order"] for chunk in chunks] == list(range(len(FIRST_CHAPTER_CHUNKS)))
+    assert first_chunk_response.status_code == 200
+    assert first_chunk_response.json()["text"] == FIRST_CHAPTER_CHUNKS[0]

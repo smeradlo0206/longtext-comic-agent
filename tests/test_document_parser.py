@@ -1,4 +1,20 @@
+from pathlib import Path
+
 from comic_agent.services.document_parser import DocumentParser
+
+
+LONG_FIXTURE = Path("tests/fixtures/import/long_mixed_chapters.txt")
+LONG_EXPECTED_TITLES = [
+    "第一章 旧馆门口",
+    "Chapter 1 Notice Board",
+    "第2章 报名表",
+    "chapter 2 Night Route",
+    "第三章 地下书库",
+    "CHAPTER 3 Archive Log",
+    "第十章 尾声前的更正",
+    "第十一章 清晨复核",
+]
+LONG_EXPECTED_CHUNKS = 40
 
 
 def test_parser_detects_chinese_chapters() -> None:
@@ -150,3 +166,77 @@ def test_checksum_changes_when_content_changes() -> None:
     assert first.document.checksum != second.document.checksum
     assert first.chunks[0].checksum != second.chunks[0].checksum
     assert first.chunks[0].chunk_id != second.chunks[0].chunk_id
+
+
+def test_parser_handles_long_mixed_chapter_document() -> None:
+    text = LONG_FIXTURE.read_text(encoding="utf-8")
+
+    parsed = DocumentParser().parse_txt(
+        project_id="project-1",
+        filename="long_mixed_chapters.txt",
+        text=text,
+    )
+
+    assert [chapter.title for chapter in parsed.chapters] == LONG_EXPECTED_TITLES
+    assert len(parsed.chapters) == 8
+    assert len(parsed.chunks) == LONG_EXPECTED_CHUNKS
+    assert [chunk.order for chunk in parsed.chunks] == list(range(LONG_EXPECTED_CHUNKS))
+    assert all(chunk.text.strip() for chunk in parsed.chunks)
+    assert "她在笔记里写下 Chapter 9 is not a heading." in [
+        chunk.text for chunk in parsed.chunks
+    ]
+    assert "他说，第一章并不等于真相。" in [chunk.text for chunk in parsed.chunks]
+
+
+def test_parser_char_ranges_slice_back_to_normalized_text() -> None:
+    text = LONG_FIXTURE.read_text(encoding="utf-8")
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    parsed = DocumentParser().parse_txt(
+        project_id="project-1",
+        filename="long_mixed_chapters.txt",
+        text=text,
+    )
+
+    for chunk in parsed.chunks:
+        assert chunk.char_start is not None
+        assert chunk.char_end is not None
+        assert normalized[chunk.char_start : chunk.char_end] == chunk.text
+
+
+def test_parser_is_stable_for_repeated_parse() -> None:
+    text = LONG_FIXTURE.read_text(encoding="utf-8")
+    parser = DocumentParser()
+
+    first = parser.parse_txt("project-1", "long_mixed_chapters.txt", text)
+    second = parser.parse_txt("project-1", "long_mixed_chapters.txt", text)
+
+    assert first.document.checksum == second.document.checksum
+    assert [chunk.chunk_id for chunk in first.chunks] == [
+        chunk.chunk_id for chunk in second.chunks
+    ]
+    assert [chunk.checksum for chunk in first.chunks] == [
+        chunk.checksum for chunk in second.chunks
+    ]
+    assert [chunk.order for chunk in first.chunks] == [chunk.order for chunk in second.chunks]
+
+
+def test_parser_normalizes_crlf_without_changing_chunk_semantics() -> None:
+    lf_text = LONG_FIXTURE.read_text(encoding="utf-8")
+    crlf_text = lf_text.replace("\n", "\r\n")
+
+    lf = DocumentParser().parse_txt("project-1", "long_mixed_chapters.txt", lf_text)
+    crlf = DocumentParser().parse_txt("project-1", "long_mixed_chapters.txt", crlf_text)
+    crlf_normalized = crlf_text.replace("\r\n", "\n").replace("\r", "\n")
+
+    assert [chapter.title for chapter in crlf.chapters] == [
+        chapter.title for chapter in lf.chapters
+    ]
+    assert [chunk.text for chunk in crlf.chunks] == [chunk.text for chunk in lf.chunks]
+    assert [chunk.checksum for chunk in crlf.chunks] == [
+        chunk.checksum for chunk in lf.chunks
+    ]
+    for chunk in crlf.chunks:
+        assert chunk.char_start is not None
+        assert chunk.char_end is not None
+        assert crlf_normalized[chunk.char_start : chunk.char_end] == chunk.text
