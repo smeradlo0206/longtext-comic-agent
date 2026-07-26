@@ -1,0 +1,103 @@
+第一章 旧馆门口
+
+19:20，林夏站在旧图书馆门口，雨水沿着玻璃门滑下来。
+
+校园智能体创意赛的报名通知贴在公告栏上，报名截止写着 2026-04-18 17:00。
+
+她拨通了值班电话 010-61881234，却只听见自动语音提示。
+
+陈野发来邮件：hello.library@example.edu，主题是“夜间记录确认”。
+
+她在笔记里写下 Chapter 9 is not a heading.
+
+
+
+Chapter 1 Notice Board
+
+The notice said each team could have 2 to 4 students, and the final would be held on Friday.
+
+At 20:05, the lights above the north corridor blinked twice.
+
+Lin Xia copied the contact email into her notebook without changing any punctuation.
+
+The old poster still showed 30 teams, but the supplement mentioned 36 teams.
+
+No one treated the English sentence as a chapter title because it sat inside a paragraph.
+
+
+第2章 报名表
+
+报名表放在二层服务台，纸角压着一枚黄铜钥匙。
+
+他说，第一章并不等于真相。
+
+沈策把表格编号写成 A-204，并注明“材料截止：2026-04-20 12:00”。
+
+周舟老师负责咨询，周洲副院长负责开幕致辞，二者不能混淆。
+
+表格背面还有一个手机号：138-0000-2468。
+
+
+chapter 2 Night Route
+
+The basement door opened at 21:10, but the camera log remained unreadable.
+
+Chen Ye carried a blue folder from the reading room to the archive desk.
+
+Two blank lines appeared in the printed log before the next sentence continued.
+
+The team wrote, "Chapter 9 is not a heading," inside a quoted note.
+
+The corridor map used room B12 for check-in and hall C01 for the opening ceremony.
+
+
+第三章 地下书库
+
+地下书库的空气有旧纸味，墙钟停在 22:16。
+
+林夏看见钥匙还在服务台，不在任何人的外套口袋里。
+
+维修单写着“23:30 前请勿移动档案箱”，旁边盖着红色印章。
+
+他们沿着书架之间的窄路走，脚步声被地毯吞掉。
+
+系统日志只记录“有人经过”，没有记录姓名。
+
+
+CHAPTER 3 Archive Log
+
+At 23:05, the archive terminal printed: status pending, operator unknown.
+
+The report included numbers 18, 30, and 36, each with a different unit.
+
+A note in English said, "Do not merge similar names without evidence."
+
+The old catalogue used CR-17 as a shelf code, not as a chapter number.
+
+Rainwater reached the stair landing before midnight.
+
+
+第十章 尾声前的更正
+
+第二天 08:30，补充通知确认报名截止时间不变。
+
+新增材料要求只覆盖附件清单，不覆盖报到地点。
+
+旧海报被贴上 STALE 标签，旁边写着“仅供追溯”。
+
+黄铜钥匙仍在服务台抽屉里，位置状态有了新的证据。
+
+没有人把旧馆大厅画成报到地点。
+
+
+第十一章 清晨复核
+
+清晨 07:45，陈野重新核对章节标题和正文段落。
+
+他确认连续空行不应该生成空白 SourceChunk。
+
+The parser should keep LF and CRLF texts semantically identical.
+
+最后一封邮件发往 qa-team@example.edu，内容只有三行检查清单。
+
+林夏合上笔记，说这只是导入测试，不是真实案件。

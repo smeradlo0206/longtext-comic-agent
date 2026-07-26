@@ -39,6 +39,8 @@ async def import_document(
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise HTTPException(status_code=400, detail="TXT file must be UTF-8 encoded") from exc
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
     parsed = DocumentParser().parse_txt(
         project_id=project_id,
         filename=filename,
