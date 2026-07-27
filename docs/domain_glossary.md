@@ -4,7 +4,7 @@
 
 本文是“长文本多 Agent 连续漫画生成系统”的领域概念唯一正式定义来源。它用于统一产品、Schema、Agent、数据库、QA 和视觉生产模块对同一名称的理解。其他文档引用本文词汇，不再重复定义。
 
-当前版本：V1.5-draft
+当前版本：V1.9-draft
 维护负责人：待团队指定
 最后更新时间：2026-07-21
 
@@ -16,6 +16,38 @@
 - 关键故事事实必须能通过 EvidenceRef（原文证据引用）追溯到 SourceChunk（原文片段）。
 - 无原文支持、证据不足或叙述不可靠的内容必须标记为 UNKNOWN 或 UNCERTAIN。
 - PanelSpec（单格分镜规范）必须与模型供应商解耦；供应商字段进入 PromptSpec（模型提示词规范）。
+
+## V1.9-draft 变更摘要
+
+- 基于 `tests/golden_corpus/micro_cases` 回归结果，确认 Q01-Q17、Q19-Q29 的 V1.8 语义基本足够。
+- 补清连续跨地点动作的 Scene 粒度：地点变化仍是强切分信号，但追逐、搬运、移动、交接等连续动作可通过相邻 Scene、StoryBeat 序列和 PanelSpec 连续动作说明保持连贯。
+- 明确每个 PanelSpec 必须保留自己的 location_id，不得为了保持一个 Scene 而混淆不同地点的 LocationState。
+- 补清 story-within-story 语义：角色讲述的童话、寓言、剧本或小说片段不进入 PRIMARY 主线 Canonical Event，嵌入故事中的 Entity/Event/ObjectState 与主线隔离。
+- 本轮不新增正式 `FICTIONAL_STORY` RealityLayer，不实现 ActionSequenceV1、EmbeddedNarrativeScopeV1、故事内故事实体库或自动 Scene 切分器。
+
+## V1.8-draft 变更摘要
+
+- 新增 FactLock 文档层概念，用于标记通知、公告、海报和分镜文字中必须保持精确的关键事实字段。
+- 强化通知类时间字段、地点字段、日期/星期、数字单位和联系人身份的精确性边界。
+- 明确最终有效事实来自最新有效 Revision，字段级覆盖、继承、确认不变和旧版本 STALE 必须保留 EvidenceRef。
+- 补清信息省略与 hard failure 的边界：完整通知目标下漏关键字段可硬失败，背景板省略可作为 completeness issue。
+- 本轮只修订领域文档，不实现 FactLockV1、字段级 Revision 数据库、通知解析 Agent、真实 QA 或日历校验器。
+
+## V1.7-draft 变更摘要
+
+- 强化综合小说链路一致性，覆盖共享账号、复杂时间、RealityLayer、KnowledgeState、ObjectState、PanelSpec、QA 与 STALE 传播。
+- 明确共享账号、账号名、账号密码知情者不等于单一 Character，账号操作者不等于具体 Message 作者。
+- 强化多个 NarrativeMention、Claim、记录、录像、录音或回忆回指同一历史事件组，不重复制造 Canonical Event。
+- 补清读者可见与角色所知、DREAM/未来片段与 PRIMARY、后续证据与历史 KnowledgeState 的隔离。
+- 补充 DependencyEdge / STALE 传播语义与 MVP out-of-scope 边界。
+
+## V1.6-draft 变更摘要
+
+- 强化 Storyboard QA、PanelSpec、RepairPlan 和 QAIssue 的文档语义。
+- 补清 Scene 粒度规则，明确 RealityLayer 改变、StoryTime 跳跃、地点明显改变时通常必须切 Scene。
+- 补充 StoryBeat-to-Panel 拆分规则，连续动作的关键时刻、信息揭示和物体转移不得随意压成一格。
+- 强化 PanelSpec 的 must_show / must_not_show、关键 DialogueUnit、回忆状态绑定和 ObjectState 结束态。
+- 明确 QA hard failure 优先级、RepairPlan 策略选择阈值，以及关键道具颜色/材质错误严重性。
 
 ## V1.5-draft 变更摘要
 
@@ -134,6 +166,7 @@
 | RenderedPanel | 已渲染漫画格 | 视觉与漫画生产 | P0 | 继承 PanelSpec |
 | RenderedPage | 已渲染漫画页 | 视觉与漫画生产 | P0 | 继承 PageSpec |
 | QAResult | 质检结果 | 质检、修复和工作流 | P0 | 视情况而定 |
+| FactLock | 事实锁定项 | 质检、修复和工作流 | P0 | 是 |
 | QAIssue | 具体质检问题 | 质检、修复和工作流 | P0 | 视情况而定 |
 | RepairPlan | 修复方案 | 质检、修复和工作流 | P0 | 视情况而定 |
 | DependencyEdge | 依赖关系 | 质检、修复和工作流 | P0 | 否 |
@@ -233,16 +266,16 @@
 中文名称：原文证据引用  
 所属阶段：项目、原文和证据  
 优先级：P0  
-精确定义：EvidenceRef 表示一个候选或正式事实回指 SourceChunk 的证据，必要时包含 quote_start、quote_end 和 quote_text。它证明事实来自原文，而不是模型自由发挥。  
-识别规则：任何关键故事事实、状态变化、关系、PanelSpec 约束都应绑定至少一个 EvidenceRef。  
-正例：Event“林晓回到旧车站”引用包含该句的 chunk。  
+精确定义：EvidenceRef 表示一个候选或正式事实回指 SourceChunk 的证据，必要时包含 quote_start、quote_end 和 quote_text。它证明事实来自原文，而不是模型自由发挥。
+识别规则：任何关键故事事实、状态变化、关系、PanelSpec 约束、FactLock 字段或字段级 Revision 覆盖/确认都应绑定至少一个 EvidenceRef。
+正例：Event“林晓回到旧车站”引用包含该句的 chunk；通知最终决赛日期引用更正说明；“报名截止时间不变”引用初版具体值和更正说明。
 反例：`confidence=0.9` 不是 EvidenceRef。  
 容易混淆：EvidenceRef 是证据指针，不是事实本身。  
 产生者：抽取 Agent、确定性服务。  
 读取者：CommitService、QA、审核界面。  
 是否必须包含 EvidenceRef：是。  
 候选Schema：EvidenceRefV1。  
-备注或待确认问题：quote_text 是否必须逐字匹配 SourceChunk 可后续加强。  
+备注或待确认问题：quote_text 是否必须逐字匹配 SourceChunk 可后续加强。通知、公告、海报类 FactLock 字段建议保留原文格式，便于 text_accuracy=1.00 校验。
 
 ## NarrativeOrder
 
@@ -265,16 +298,16 @@
 中文名称：版本修订  
 所属阶段：项目、原文和证据  
 优先级：P0  
-精确定义：Revision 表示同一记录的可追踪修订版本，用于支持审核、回滚、幂等写入和依赖重算。Revision 不表示故事时间变化。  
-识别规则：Schema、ProjectSpec、Canonical Data 或审核后的关键记录发生内容变化时递增。  
-正例：VisualBible 审核后从 revision 1 变为 revision 2。  
-反例：人物从长发变短发不是 Revision，而是 StateChange。  
+精确定义：Revision 表示同一记录或字段的可追踪修订版本，用于支持审核、回滚、幂等写入、字段级覆盖、确认不变、作废和依赖重算。Revision 不表示故事时间变化。
+识别规则：Schema、ProjectSpec、Canonical Data 或审核后的关键记录发生内容变化时递增。通知、公告或海报存在初版、更正、补充通知时，应按字段记录 created、overridden、confirmed_unchanged、added 或 stale 状态。
+正例：VisualBible 审核后从 revision 1 变为 revision 2；初版创建决赛日期，第一份更正覆盖决赛日期并确认报名截止不变，第二份补充覆盖现场名额并新增材料截止。
+反例：人物从长发变短发不是 Revision，而是 StateChange；第二份补充通知没有提到会场时，不代表会场字段被整份覆盖为空。
 容易混淆：Revision 是工程版本；StoryTime 是故事时间。  
 产生者：CommitService、版本服务。  
 读取者：WorkflowRun、DependencyEdge、审核界面。  
 是否必须包含 EvidenceRef：否。  
 候选Schema：BaseRecordV1.revision。  
-备注或待确认问题：无。  
+备注或待确认问题：字段级 Revision 数据库、覆盖策略枚举和迁移设计暂不进入 V1.8。
 
 ## Proposal
 
@@ -297,16 +330,16 @@
 中文名称：正式事实 / 标准数据  
 所属阶段：项目、原文和证据  
 优先级：P0  
-精确定义：Canonical Data 表示通过 Schema 验证、证据检查、合并、冲突处理和提交后被系统承认的正式数据。它是后续状态编译、分镜和 QA 的可信来源。  
-识别规则：只有 CommitService 可以把合格结果提交为 Canonical Data。  
-正例：正式确认“林晓在十年后为短发并持有怀表”。  
+精确定义：Canonical Data 表示通过 Schema 验证、证据检查、合并、冲突处理和提交后被系统承认的正式数据。它是后续状态编译、分镜和 QA 的可信来源。通知类最终有效事实必须来自最新有效 Revision，并保留覆盖或确认该字段的 EvidenceRef。嵌入故事、童话、寓言、剧本或角色讲述中的内容，除非原文明示进入主线现实，否则不得提交为 PRIMARY 主线 Canonical Data。
+识别规则：只有 CommitService 可以把合格结果提交为 Canonical Data。旧通知、旧海报或旧视觉资产中的过期字段不得覆盖最终 Canonical Data，只能作为历史 Revision、STALE 证据或对比材料。story-within-story 的 Event、Entity 或 ObjectState 应绑定非 PRIMARY RealityLayer 或候选层，不得与主线实体库静默合并。
+正例：正式确认“林晓在十年后为短发并持有怀表”；校园通知最终决赛日期为更正后的日期，现场名额为补充通知后的队伍数。
 反例：某 Agent 单次输出的高置信度 EventProposal 仍不是 Canonical Data。  
 容易混淆：Proposal 是候选；Canonical Data 是正式事实。  
 产生者：CommitService。  
 读取者：StoryBible、VisualBible、PanelSpec 生成、QA、导出服务。  
 是否必须包含 EvidenceRef：是，关键故事事实必须包含。  
 候选Schema：EventV1、EntityV1、CharacterStateV1。  
-备注或待确认问题：正式 Canonical Schema 后续单独设计。  
+备注或待确认问题：正式 Canonical Schema 后续单独设计。FactLock 不是新的故事事实类型，而是 Canonical Data、PanelSpec 和 QA 上的精确性约束。EmbeddedNarrativeScope 可作为后续候选说明，本轮不新增顶层 Schema。
 
 ## Confidence
 
@@ -331,27 +364,27 @@
 中文名称：实体  
 所属阶段：故事世界  
 优先级：P0  
-精确定义：Entity 表示故事世界或事实文本中可被引用、可跨片段追踪的对象总称，包括人物、地点、道具和组织。Entity 是上位概念，不能替代更具体类型。  
-识别规则：原文中出现可被多次提及、参与事件或具有状态的对象时建立。  
-正例：林晓、旧车站、怀表、学生会。  
+精确定义：Entity 表示故事世界或事实文本中可被引用、可跨片段追踪的对象总称，包括人物、地点、道具和组织。Entity 是上位概念，不能替代更具体类型。嵌入故事中的国王、巨龙、虚构地点或虚构道具可作为非 PRIMARY 层或候选层 Entity 表达，但不自动进入主线实体空间。
+识别规则：原文中出现可被多次提及、参与事件或具有状态的对象时建立。若对象只存在于角色讲述的童话、寓言、剧本、小说片段或虚构故事中，应记录其叙述来源和 RealityLayer，不得与主线 Character、Location 或 StoryObject 静默合并。
+正例：林晓、旧车站、怀表、学生会；童话里的国王和巨龙可作为嵌入故事 Entity 候选，但不等于主线人物。
 反例：“她”这个单次代词本身不是 Canonical Entity。  
 容易混淆：EntityAlias 是别名；NarrativeMention 是文本提及。  
 产生者：实体抽取 Agent、实体合并服务。  
 读取者：事件抽取、状态编译、PanelSpec、QA。  
 是否必须包含 EvidenceRef：是。  
 候选Schema：EntityProposalV1、EntityV1。  
-备注或待确认问题：无。  
+备注或待确认问题：故事内故事实体库暂不进入 V1.9。
 
 ## Character
 
 中文名称：人物  
 所属阶段：故事世界  
 优先级：P0  
-精确定义：Character 是具有身份、行为、状态、知识或关系变化的人物型 Entity。人物可以是真人、虚构角色或文本中的人类群体成员。  
-识别规则：实体参与行为、对白、心理、关系或视觉呈现时建立为 Character。  
-正例：林晓、顾远。  
+精确定义：Character 是具有身份、行为、状态、知识或关系变化的人物型 Entity。人物可以是真人、虚构角色或文本中的人类群体成员。
+识别规则：实体参与行为、对白、心理、关系、职务责任或视觉呈现时建立为 Character。近似姓名、同音姓名、相近职务、同姓或同单位不能单独合并为同一 Character 或 Contact。
+正例：林晓、顾远；“周舟老师”和“周洲副院长”在原文明确区分时必须保持不同 Character / Contact 候选。
 反例：旧车站不是 Character。  
-容易混淆：Organization 是组织；CharacterVisualVariant 是人物的视觉表现版本。  
+容易混淆：Organization 是组织；CharacterVisualVariant 是人物的视觉表现版本。通知类联系人、致辞人、负责人等角色职责不同，即使姓名相近也不能自动合并。
 产生者：实体抽取 Agent、实体合并服务。  
 读取者：状态编译、StoryBible、VisualBible、PanelSpec、人物连续性 QA。  
 是否必须包含 EvidenceRef：是。  
@@ -363,11 +396,11 @@
 中文名称：地点  
 所属阶段：故事世界  
 优先级：P0  
-精确定义：Location 是事件发生、人物出现或视觉场景需要呈现的空间型 Entity。Location 可以有状态，如是否破旧、是否下雨、是否拥挤。  
-识别规则：原文出现明确空间、场所、建筑、房间或地理位置时建立。  
-正例：旧车站、大学操场、图书馆。  
+精确定义：Location 是事件发生、人物出现或视觉场景需要呈现的空间型 Entity。Location 可以有状态，如是否破旧、是否下雨、是否拥挤。通知类文本中报到地点、开幕地点、主会场、材料提交渠道等不同业务地点/渠道必须分开。
+识别规则：原文出现明确空间、场所、建筑、房间或地理位置时建立。建筑、楼层、房间和功能厅可能需要层级 Location 或 LocationState 表达，不能因同属一个校区而混为同一地点。
+正例：旧车站、大学操场、图书馆；科创中心一楼大厅是报到地点，科创中心二楼多功能厅是开幕/主会场。
 反例：“十年后”是时间，不是 Location。  
-容易混淆：LocationState 描述地点在某个 StoryTime 的状态。  
+容易混淆：LocationState 描述地点在某个 StoryTime 的状态。报到地点与主会场不是同一位置时，PanelSpec 不得把两个业务事件画成同一地点。
 产生者：实体抽取 Agent、场景切分服务。  
 读取者：Scene、PanelSpec、VisualAsset 检索、QA。  
 是否必须包含 EvidenceRef：是。  
@@ -443,9 +476,9 @@
 中文名称：实体文本提及
 所属阶段：故事世界
 优先级：P0
-精确定义：EntityMention 表示 SourceChunk 中对某个 Entity、Account、Organization、StoryObject 或未知对象的一次文本出现，包括专名、昵称、代词、职务称呼、账号名、签名、缩写和模糊称呼。它是文本层对象，不自动表示稳定别名或正式实体。
-识别规则：只要原文出现可被指向某个对象的词语、短语或代词，就可建立 EntityMention，并记录 mention_text、source_chunk_id、candidate_entity_ids、resolution_status。
-正例：“她”“小林”“灰桥”“Q”“北岸”都可以是 EntityMention。
+精确定义：EntityMention 表示 SourceChunk 中对某个 Entity、Account、Organization、StoryObject 或未知对象的一次文本出现，包括专名、昵称、代词、职务称呼、账号名、签名、缩写、联系方式标签和模糊称呼。它是文本层对象，不自动表示稳定别名或正式实体。
+识别规则：只要原文出现可被指向某个对象的词语、短语或代词，就可建立 EntityMention，并记录 mention_text、source_chunk_id、candidate_entity_ids、resolution_status。近似姓名或职务相近时，应先保留独立 EntityMention，再由证据决定是否可合并。
+正例：“她”“小林”“灰桥”“Q”“北岸”都可以是 EntityMention；“周舟老师”和“周洲副院长”是两个不同 EntityMention。
 反例：已经审核确认的人物“林乔”是 Character；它在某段中的一次出现才是 EntityMention。
 容易混淆：EntityAlias 跨片段复用；EntityMention 只代表一次文本位置。NarrativeMention 更偏事件或叙述内容，EntityMention 专注实体指代。
 产生者：文档解析器、共指消解 Agent、实体抽取 Agent。
@@ -460,8 +493,8 @@
 所属阶段：故事世界
 优先级：P0
 精确定义：UnresolvedReference 表示一个 EntityMention 暂时无法被唯一绑定到 Character、Account、Organization、StoryObject 或 Location。它保留候选对象、排除对象和证据边界，防止系统为了完成结构化而强行合并。
-识别规则：当候选超过一个、证据不足、叙述视角受限、角色说法互相冲突或同名/近音/同首字母导致歧义时建立。
-正例：“小林”在两名姓林或近音人物同时回应时，应保持 UnresolvedReference。
+识别规则：当候选超过一个、证据不足、叙述视角受限、角色说法互相冲突、共享账号、账号名线索或同名/近音/同首字母导致歧义时建立。
+正例：“小林”在两名姓林或近音人物同时回应时，应保持 UnresolvedReference；共享账号“白栖”的第二条消息作者未知时，作者可保持 UnresolvedReference；“他答应过会把阿岑带回来”中的“他”候选不唯一时不得强行绑定；账号名 “Q-Zhou” 不能单独解析为某个姓 Zhou 的 Character。
 反例：原文明确写“林助教，你跟我来”且上下文唯一指向林乔时，不需要保持未解析。
 容易混淆：UNKNOWN 表示无法得知结果；UNCERTAIN 表示有候选但证据不足；UnresolvedReference 是记录这种状态的结构。
 产生者：共指消解 Agent、实体合并服务。
@@ -491,11 +524,11 @@
 中文名称：账号
 所属阶段：故事世界
 优先级：P0
-精确定义：Account 表示在论坛、邮件、社交平台、系统或设备中可登录、发帖、发送消息或署名的数字身份。Account 是故事世界 Entity，但不等同于 Character；账号操作者、账号知情者和具体消息作者必须分开记录。
+精确定义：Account 表示在论坛、邮件、社交平台、系统或设备中可登录、发帖、发送消息或署名的数字身份。Account 是故事世界 Entity，但不等同于 Character；共享账号、账号操作者、账号知情者和具体消息作者必须分开记录。
 识别规则：原文出现用户名、邮箱账号、论坛账号、设备登录名、署名身份或账号操作证据时建立。
-正例：校园论坛账号“灰桥”、邮件账号“北岸”。
+正例：校园论坛账号“灰桥”、邮件账号“北岸”；校园账号“白栖”；被铭文说明为一组共享账号的 “Q”。
 反例：人物乔临不是 Account；“灰桥”作为照片背面署名若无账号证据，只是 EntityMention 或 AuthorshipClaim 的署名线索。
-容易混淆：Character 是人物；Account 是数字身份；EntityAlias 只有在证据确认账号名稳定指向某实体时才建立。
+容易混淆：Character 是人物；Account 是数字身份；EntityAlias 只有在证据确认账号名稳定指向某实体时才建立。账号名、共享密码知情者或主要使用者都不能单独证明具体 Message 作者。
 产生者：实体抽取 Agent、账号解析 Agent。
 读取者：AuthorshipClaim、AccountAccessRelation、Message、StoryBible、QA。
 是否必须包含 EvidenceRef：是。
@@ -507,11 +540,11 @@
 中文名称：消息
 所属阶段：故事世界
 优先级：P0
-精确定义：Message 表示由某个可见来源发布、发送、张贴或留下的一段信息载体，包括邮件、论坛帖、短信、便签、照片背面文字、公告等。Message 记录内容、渠道、发布时间、可见发送方和 EvidenceRef，但不自动确认真实作者。
+精确定义：Message 表示由某个可见来源发布、发送、张贴或留下的一段信息载体，包括邮件、论坛帖、短信、便签、照片背面文字、公告、定时消息等。Message 记录内容、渠道、发布时间、可见发送方和 EvidenceRef，但不自动确认真实作者。
 识别规则：原文出现可被引用的信息文本、发布行为或载体时建立。
-正例：论坛账号“灰桥”发布的新消息；账号“北岸”发来的邮件；照片背面的“不要相信Q”。
+正例：论坛账号“灰桥”发布的新消息；账号“北岸”发来的邮件；照片背面的“不要相信Q”；“白栖”在 23:06 以后发送的定时消息。
 反例：角色口头说出一句话通常是 DialogueUnit，不是 Message，除非它以可保存的信息载体存在。
-容易混淆：Message 是信息载体；Claim 是消息中表达的主张；AuthorshipClaim 判断谁发了这条 Message。
+容易混淆：Message 是信息载体；Claim 是消息中表达的主张；AuthorshipClaim 判断谁发了这条 Message。Message 的 visible_sender 只说明显示来源，不排除预设、共享账号或冒用。
 产生者：消息抽取 Agent、事件抽取 Agent。
 读取者：Claim 抽取、AuthorshipClaim、KnowledgeState、QA。
 是否必须包含 EvidenceRef：是。
@@ -525,7 +558,7 @@
 优先级：P0
 精确定义：AccountAccessRelation 表示 Character、Organization 或其他主体与 Account 之间的访问、运营、知晓密码、共享登录、被盗用或被冒用关系。它只说明访问能力或管理关系，不说明某条 Message 的真实作者。
 识别规则：原文出现登录、经营账号、知道密码、交出密码、借用账号、否认登录或账号被他人使用等证据时建立。
-正例：乔临被确认经营论坛账号“灰桥”；林乔曾知道该账号密码。
+正例：乔临被确认经营论坛账号“灰桥”；林乔曾知道该账号密码；周璐是“白栖”的主要使用者；社团成员共享过同一账号密码。
 反例：某条消息署名“灰桥”不能单独证明乔临写了这条消息。
 容易混淆：AccountAccessRelation 是账号访问能力；AuthorshipClaim 是具体消息作者判断。
 产生者：账号解析 Agent、关系抽取 Agent。
@@ -539,16 +572,16 @@
 中文名称：作者身份主张
 所属阶段：故事世界
 优先级：P0
-精确定义：AuthorshipClaim 表示关于某条 Message、照片、帖子、邮件或署名文本真实作者/发送者/发布者的结构化主张。它可引用 Account、Character、Organization 或 UnresolvedReference，并必须保留验证状态。
+精确定义：AuthorshipClaim 表示关于某条 Message、照片、帖子、邮件或署名文本真实作者/发送者/发布者的结构化主张。它可引用 Account、Character、Organization 或 UnresolvedReference，并必须保留验证状态、候选作者范围和冲突来源。
 识别规则：原文直接陈述、否认、暗示、质疑或留下署名线索时建立。账号可见发送方、实际登录者和真实作者不一致时，必须用 AuthorshipClaim 表达，而不能改写 Account 或 Character 身份。
-正例：“乔临否认发送第一张照片”是一条 DENIAL 类型 AuthorshipClaim；“论坛账号灰桥发新消息”只确认可见发布账号，不确认键盘前是谁。
+正例：“乔临否认发送第一张照片”是一条 DENIAL 类型 AuthorshipClaim；“论坛账号灰桥发新消息”只确认可见发布账号，不确认键盘前是谁；“周璐否认发送第二条白栖消息”是 Authorship DENIAL，不能反向证明其他人发送。
 反例：账号经营关系本身不是 AuthorshipClaim。
 容易混淆：Claim 是通用主张；AuthorshipClaim 是作者身份领域的专门 Claim；AccountAccessRelation 只描述账号访问关系。
 产生者：Claim 抽取 Agent、账号解析 Agent、共指消解 Agent。
 读取者：StoryBible、QA、审核界面、KnowledgeState。
 是否必须包含 EvidenceRef：是。
 候选Schema：AuthorshipClaimV1、ClaimV1。
-备注或待确认问题：后续可抽象为 Claim 的 subtype。
+备注或待确认问题：后续可抽象为 Claim 的 subtype。shared_account、candidate_author_ids、excluded_author_ids、scheduled_or_presumed_send 等字段可作为 Schema 候选。
 
 ## Claim
 
@@ -557,7 +590,7 @@
 优先级：P0
 精确定义：Claim 表示文本、角色、消息、设备日志标签或叙述者提出的一条可被验证或暂时保留的陈述。Claim 不等于 Event，也不等于 Canonical Data；它记录“谁在何处声称了什么”，并通过 verification_status 表示证据状态。
 识别规则：原文出现断言、否认、指控、猜测、暗示、调查推论、记忆、解释、预测、消息内容、系统标签、实验记录、Agent 推理或角色草稿改写时建立。任何未被独立证实的角色说法、匿名消息、署名线索、系统日志标签和推理结论都应先作为 Claim、Proposal 或 Evidence 线索。
-正例：“灰桥不是发照片的人”是一条 Claim；“我没有贴那张照片”是一条 DENIAL Claim；“林祁说程放拿卡”是 ACCUSATION Claim，不是“程放拿卡”这个 Canonical Event；角色说“我在未来见过它”是 Claim/KnowledgeState，不是对象身份 Canonical 证明；研究员说“也许读取到未来记忆”是 HYPOTHESIS Claim，不是 FLASH_FORWARD Event。
+正例：“灰桥不是发照片的人”是一条 Claim；“我没有贴那张照片”是一条 DENIAL Claim；“林祁说程放拿卡”是 ACCUSATION Claim，不是“程放拿卡”这个 Canonical Event；角色说“我在未来见过它”是 Claim/KnowledgeState，不是对象身份 Canonical 证明；研究员说“也许读取到未来记忆”是 HYPOTHESIS Claim，不是 FLASH_FORWARD Event；周璐说“我看见顾舟捡起钥匙”是 MEMORY/ASSERTION Claim，若后续自述冲突则保持 Claim 冲突；顾舟记得沈岑说过某句话，先作为 Gu POV 的 MEMORY Claim，不能直接升级为 Canonical DialogueUnit。
 反例：“唐宁收到邮件”是 Event；邮件中说“你问错了人”是 Claim。
 容易混淆：Event 是故事世界中发生的事；Claim 是关于事实的说法。Character Belief 可由 Claim 影响，但 Claim 本身不是 KnowledgeState。没有可验证内容的暗示不能生成 Canonical 因果链。
 产生者：Claim 抽取 Agent、消息抽取 Agent、叙事结构 Agent。
@@ -588,16 +621,16 @@
 中文名称：标准事件  
 所属阶段：故事世界  
 优先级：P0  
-精确定义：Event 表示故事世界中实际发生的一次标准事件，与它在原文中被叙述、回忆或转述多少次无关。Event 必须带 RealityLayer，梦境内部 Event 不能默认成为现实主线 Event。参与者未知但结果由原文确认时，可以建立 actor=UNKNOWN 或 actor_ref=UnresolvedReference 的 Event 候选。
-识别规则：当文本表达一次行动、变化、信息揭示、决定或关系变化，并可定位到证据时建立候选 Event。同一历史夜晚可根据粒度建立事件簇，事件簇内包含受伤、交付、离开、失踪等多个 Event。
-正例：林晓剪去长发；林晓回到旧车站；大学时期第一次见到顾远；某物被未知人物放回原处。
-反例：“她想起那天下午”是 NarrativeMention 或触发回忆的 Event，不能直接等同于被回忆事件本身。  
+精确定义：Event 表示故事世界中实际发生的一次标准事件，与它在原文中被叙述、回忆或转述多少次无关。Event 必须带 RealityLayer，梦境内部 Event 不能默认成为现实主线 Event。参与者未知但结果由原文确认时，可以建立 actor=UNKNOWN 或 actor_ref=UnresolvedReference 的 Event 候选。嵌入故事中的事件可作为非 PRIMARY 可视化或叙述对象，但不自动成为主线 Canonical Event。
+识别规则：当文本表达一次行动、变化、信息揭示、决定或关系变化，并可定位到证据时建立候选 Event。同一历史夜晚可根据粒度建立事件簇，事件簇内包含受伤、交付、离开、失踪等多个 Event；多个记录、录像、录音、回忆或角色说法回指同一历史事件时，不得重复制造多个 Canonical Event。角色讲述的童话、寓言、剧本或小说片段，应优先作为 DialogueUnit、NarrationUnit、Claim、NarrativeMention 或非 PRIMARY Scene 的来源处理。
+正例：林晓剪去长发；林晓回到旧车站；大学时期第一次见到顾远；某物被未知人物放回原处；门禁记录确认沈岑 22:13 刷卡进入地下档案室，录像确认他 23:06 独自离开泵房，但二者都不确认最终去向。
+反例：“她想起那天下午”是 NarrativeMention 或触发回忆的 Event，不能直接等同于被回忆事件本身；童话里“国王被巨龙带走”不是 PRIMARY 主线 Event。
 容易混淆：NarrativeMention 是对 Event 的一次叙述；StateChange 是 Event 导致的属性变化。  
 产生者：事件抽取 Agent、事件去重服务。  
 读取者：TemporalRelation Agent、状态编译器、Scene、StoryBible、QA。  
 是否必须包含 EvidenceRef：是。  
 候选Schema：EventProposalV1、EventV1。  
-备注或待确认问题：事件粒度和事件簇边界需通过黄金样例校准。
+备注或待确认问题：事件粒度和事件簇边界需通过黄金样例校准。本轮不新增 EventCluster 顶层 Schema。
 
 ## NarrativeMention
 
@@ -605,8 +638,8 @@
 所属阶段：故事世界  
 优先级：P0  
 精确定义：NarrativeMention 表示原文对某个 Event、EventCluster、Entity 或状态的一次描述、回忆、转述、暗示或提及。它属于文本表达层，不自动成为故事世界事实。
-识别规则：当一个 SourceChunk 中出现事件描述、回忆句、传闻、梦境描述或代词提及时建立。同一历史夜晚被病历、回忆、客观叙述、角色讲述多次提及时，应建立多个 NarrativeMention、Claim 或相关 Event，并回指同一 Event 或事件簇。
-正例：`她想起大学时期第一次见到顾远的下午` 是对过去事件的一次 NarrativeMention；病历提到某夜受伤、角色讲述同一夜晚、客观叙述同一夜晚行动，都是不同 NarrativeMention 或 Claim。
+识别规则：当一个 SourceChunk 中出现事件描述、回忆句、传闻、梦境描述、记录、录像、录音、设备材料或代词提及时建立。同一历史夜晚被病历、回忆、客观叙述、角色讲述、档案记录、监控片段或自动播放录音多次提及时，应建立多个 NarrativeMention、Claim 或相关 Event，并回指同一 Event 或事件簇。
+正例：`她想起大学时期第一次见到顾远的下午` 是对过去事件的一次 NarrativeMention；病历提到某夜受伤、角色讲述同一夜晚、客观叙述同一夜晚行动，都是不同 NarrativeMention 或 Claim；巡逻表、旧录像、录音和角色记忆共同提到失踪夜时，优先回指同一历史夜晚而非复制事件。
 反例：正式去重后的“第一次见到顾远” Event 不是 NarrativeMention。  
 容易混淆：Event 是故事世界事实；NarrativeMention 是文本叙述。  
 产生者：叙事结构 Agent、事件抽取 Agent。  
@@ -636,9 +669,9 @@
 中文名称：叙事视角
 所属阶段：故事世界
 优先级：P0
-精确定义：NarrativePerspective 表示某段文本从谁的感知、回忆、想象、转述或叙述位置呈现。它决定信息可见性、可靠性和角色是否可据此更新 KnowledgeState，但不自动改变 Canonical Data。
-识别规则：文本出现第一人称、角色心理、回忆触发、观察限制、传闻来源、草稿改写、匿名消息、读者可见但角色不可见的信息或视角切换时建立，并记录 perspective_type、focal_entity_id、visible_to_character_ids、visible_to_reader、reliability_status。
-正例：唐宁听见身后有人说话时，该信息首先进入唐宁受限视角；林晓“想起”大学下午，视角来源是林晓记忆；客观叙述让读者看见黑手套拿走门禁卡时，可记录 visible_to_reader=true 且 visible_to_character_ids 为空。
+精确定义：NarrativePerspective 表示某段文本从谁的感知、回忆、想象、转述、讲述或叙述位置呈现。它决定信息可见性、可靠性和角色是否可据此更新 KnowledgeState，但不自动改变 Canonical Data。
+识别规则：文本出现第一人称、角色心理、回忆触发、观察限制、传闻来源、草稿改写、匿名消息、读者可见但角色不可见的信息、角色讲故事或视角切换时建立，并记录 perspective_type、focal_entity_id、visible_to_character_ids、visible_to_reader、reliability_status。
+正例：唐宁听见身后有人说话时，该信息首先进入唐宁受限视角；林晓“想起”大学下午，视角来源是林晓记忆；客观叙述让读者看见黑手套拿走门禁卡时，可记录 visible_to_reader=true 且 visible_to_character_ids 为空；顾舟视角让读者知道他保存巡逻表副本，但沈雾和周璐的 KnowledgeState 不因此更新；作家给孩子讲“月亮王国”童话时，讲述者视角应作为嵌入叙事来源。
 反例：全知旁白直接陈述事实不一定绑定具体人物视角。
 容易混淆：RealityLayer 是现实层级；NarrativePerspective 是叙述来源；KnowledgeState 是某个角色在某个 StoryTime 的认知内容。
 产生者：叙事层识别 Agent。
@@ -647,7 +680,7 @@
 候选Schema：NarrativePerspectiveV1。
 字段建议：visible_to_reader、visible_to_character_ids、source_perspective_id、reliability_reason。读者可见信息可进入 StoryBible 或 Canonical Data，但 visible_to_character_ids 为空时，不进入人物 KnowledgeState；本轮不新增 ReaderKnowledge 或 ReaderVisibleFact 顶层概念。
 枚举约束：perspective_type 建议使用 OMNISCIENT、EXTERNAL_OBSERVER、CHARACTER_LIMITED、FIRST_PERSON、UNKNOWN。reliability_status 建议使用 RELIABLE、LIMITED、UNRELIABLE、UNKNOWN。
-备注或待确认问题：多视角同段落的切分策略需后续黄金集校准。
+备注或待确认问题：多视角同段落和 story-within-story 的切分策略需后续黄金集校准；EmbeddedNarrativeScope 只作为候选说明，不进入 V1.9 Schema。
 
 ## 第三组：时间、叙事层和状态
 
@@ -689,8 +722,8 @@
 中文名称：叙事现实层  
 所属阶段：时间、叙事层和状态  
 优先级：P0  
-精确定义：RealityLayer 表示事实或画面属于现实主线、回忆、梦境、想象、假设、未来片段或不可靠记忆等哪一层。不同 RealityLayer 的状态不能默认互相继承。`PRIMARY` 是现实主线的标准命名；`MAIN_REALITY` 仅作为旧称或解释性同义词，不作为新增层级。
-识别规则：文本出现回忆、梦、想象、假设、预言、插叙、设备重放、系统预测模拟或现实主线切换时标记。画面内容、角色说法、系统日志标签和 Canonical Data 必须分层处理，不能互相替代。
+精确定义：RealityLayer 表示事实或画面属于现实主线、回忆、梦境、想象、假设、未来片段、不可靠记忆或嵌入叙事等哪一层。不同 RealityLayer 的状态不能默认互相继承。`PRIMARY` 是现实主线的标准命名；`MAIN_REALITY` 仅作为旧称或解释性同义词，不作为新增层级。
+识别规则：文本出现回忆、梦、想象、假设、预言、插叙、设备重放、系统预测模拟、角色讲述的童话/寓言/剧本/小说片段或现实主线切换时标记。画面内容、角色说法、系统日志标签和 Canonical Data 必须分层处理，不能互相替代。
 判定矩阵：
 - `PRIMARY`：现实主线中实际发生或被可靠证据确认的事件/状态。
 - `DREAM`：角色睡眠、惊醒、梦境语境明确，且无独立证据确认其为现实。
@@ -700,7 +733,7 @@
 - `UNRELIABLE_MEMORY`：来源是记忆或设备重放，但存在污染、冲突、否认证据或可靠性不足。
 - `FLASH_FORWARD`：只有当文本明确给出未来真实片段，且不是预测、想象、梦或模拟时才使用。
 - `UNKNOWN`：多个层级候选都合理，且证据不足以选择。
-正例：大学时期第一次见面在 FLASHBACK；十年后旧车站在 PRIMARY；设备日志标为“预测模拟”的未来画面可用 `reality_layer=HYPOTHETICAL`、`source_medium=DEVICE_LOG`、`source_label=预测模拟`、`verification_status=UNVERIFIED` 表达。
+正例：大学时期第一次见面在 FLASHBACK；十年后旧车站在 PRIMARY；梦中兄长把铜钥匙交给周璐是 DREAM 内事件，不改变 PRIMARY ObjectState；设备日志标为“预测模拟”的未来画面可用 `reality_layer=HYPOTHETICAL`、`source_medium=DEVICE_LOG`、`source_label=预测模拟`、`verification_status=UNVERIFIED` 表达；2031 春的短未来片段若文本未确认是真实未来、想象或章节预告，应使用 `UNKNOWN` 并保留 `candidate_layers=[FLASH_FORWARD, HYPOTHETICAL, IMAGINATION]`；角色讲童话时，童话画面可用 IMAGINATION、HYPOTHETICAL 或 UNKNOWN/candidate_layers 表达，不进入 PRIMARY。
 反例：把梦里的受伤直接写入 PRIMARY CharacterState。  
 容易混淆：NarrativePerspective 是叙述来源；RealityLayer 是事实所在层级。  
 产生者：叙事层识别 Agent、Scene 切分服务。  
@@ -708,7 +741,7 @@
 是否必须包含 EvidenceRef：是。  
 候选Schema：RealityLayer enum、SceneSpecV1.reality_layer。  
 字段建议：reality_layer、candidate_layers、source_medium、source_label、verification_status、reliability_reason、evidence_refs。
-备注或待确认问题：`UNRELIABLE_MEMORY` 与 `FLASH_FORWARD` 在 V1 文档语义中可作为合法 RealityLayer 标签使用；若当前 Schema 尚未支持，后续由 Schema 映射或兼容层处理。本轮不新增正式 `SIMULATION` 层。
+备注或待确认问题：`UNRELIABLE_MEMORY` 与 `FLASH_FORWARD` 在 V1 文档语义中可作为合法 RealityLayer 标签使用；若当前 Schema 尚未支持，后续由 Schema 映射或兼容层处理。本轮不新增正式 `SIMULATION`、`AUTHOR_FORESHADOW` 或 `FICTIONAL_STORY` 层级。
 
 ## StateChange
 
@@ -733,14 +766,14 @@
 优先级：P0  
 精确定义：CharacterState 表示某个 Character 在指定 StoryTime 区间和 RealityLayer 下完整有效的故事事实状态，包括外貌、身体、伤势引用、临时服装、持有物、知识和关系引用。
 识别规则：状态编译器根据 Event、TemporalRelation 和 StateChange 计算状态查询结果时建立。  
-正例：十年后林晓为成年、短发、持有怀表。  
+正例：十年后林晓为成年、短发、持有怀表；2030 的沈雾为短发、有眉疤、穿临时安全背心，2023 回忆中的沈雾为长发、校服、无 2030 安全背心，DREAM 中的无眉疤状态不得污染 PRIMARY。
 反例：某张图里的短发造型资产不是 CharacterState。  
 容易混淆：CharacterVisualVariant 是稳定可复用视觉版本；CharacterState 是故事事实；临时礼服、绷带和当场佩戴道具通常属于 CharacterState 或 PanelSpec 的临时视觉状态。
 产生者：状态编译器。  
 读取者：VisualBible、PanelSpec、人物连续性 QA。  
 是否必须包含 EvidenceRef：是，来源来自其 StateChange。  
 候选Schema：CharacterStateV1。  
-备注或待确认问题：完整状态快照字段需迭代。  
+备注或待确认问题：完整状态快照字段需迭代。临时装备、伤势和外貌状态必须绑定 StoryTime 与 RealityLayer，并在证据支持的结束点停止延续。
 
 ## InjuryState
 
@@ -766,7 +799,7 @@
 优先级：P0
 精确定义：KnowledgeState 表示某个 Character 在某个 StoryTime、RealityLayer 和 NarrativePerspective 下对某个 Claim、Event、EntityRelation 或身份问题的认知状态。它防止角色提前知道未来信息，也防止把读者、叙述者或其他角色知道的内容泄漏给该角色。
 识别规则：原文表达人物得知、听闻、怀疑、相信、否认、误解、隐瞒、发现、回忆、忘记或修改判断时建立，并记录 epistemic_status、knowledge_target_id、source_claim_id、evidence_refs 和 valid_story_time。读者通过全知、客观叙述或画面知道的信息，不自动进入任何 Character 的 KnowledgeState。
-正例：唐宁在收到邮件后 HEARD“灰桥不是发照片的人”；唐宁在看到乔临登录后 KNOWS“乔临经营论坛账号灰桥”；她仍然 UNKNOWN 第一张照片作者；后续监控确认积水，只能确认积水事实，不能反向把周芮在监控恢复前的猜测改成 KNOWS。
+正例：唐宁在收到邮件后 HEARD“灰桥不是发照片的人”；唐宁在看到乔临登录后 KNOWS“乔临经营论坛账号灰桥”；她仍然 UNKNOWN 第一张照片作者；后续监控确认积水，只能确认积水事实，不能反向把周芮在监控恢复前的猜测改成 KNOWS；读者通过顾舟视角知道巡逻表副本存在时，沈雾和周璐仍为 UNAWARE；沈雾在 2030 看到录像后才 KNOWS 沈岑 23:06 仍活着离开泵房。
 反例：读者知道的信息不等于角色知道；角色猜中真实事实时，历史状态仍可保持 SUSPECTS 或 BELIEVES，直到角色获得证据。
 容易混淆：NarrativePerspective 是叙述角度；KnowledgeState 是角色知识内容；Canonical Data 是系统确认的事实。角色 BELIEVES 的内容可以与 Canonical Data 冲突。
 产生者：知识状态 Agent、状态编译器。
@@ -799,16 +832,16 @@
 中文名称：道具状态  
 所属阶段：时间、叙事层和状态  
 优先级：P0  
-精确定义：ObjectState 表示 StoryObject 在某个 StoryTime 的权利关系、物理持有、使用、位置、完整性、可见性或功能状态。它至少区分 owner_id、holder_id、authorized_user_ids、in_use_by_id、location_id、condition、effective_from、effective_until 和 evidence_refs。已知离散状态点之间可以存在 UNKNOWN interval，不得为了连续性自动填补 holder、location 或 owner。
-识别规则：物件被获得、丢失、损坏、隐藏、转交、借用、佩戴、归还、保管、授权使用、观察到位于某地或改变位置/状态时建立或更新。owner、holder 和 in_use_by 必须独立更新。观察到某物在某地，可确认 observation/state，不一定确认是谁移动它，也不能自动推出偷窃、栽赃、动机或完整移动路径。
-正例：陈默把胸针交给陆岚后，holder 可变为陆岚；陆岚第二幕佩戴时，in_use_by 可变为陆岚；归还苏闻后 holder 变为苏闻，但不能仅凭临时持有把 owner 改为陆岚；门禁卡从桌面消失后出现在林祁外套里，只能确认两个离散状态点，中间移动链保持 UNKNOWN。
+精确定义：ObjectState 表示 StoryObject 在某个 StoryTime 和 RealityLayer 的权利关系、物理持有、使用、位置、完整性、可见性或功能状态。它至少区分 owner_id、holder_id、authorized_user_ids、in_use_by_id、location_id、condition、effective_from、effective_until 和 evidence_refs。已知离散状态点之间可以存在 UNKNOWN interval，不得为了连续性自动填补 holder、location 或 owner。
+识别规则：物件被获得、丢失、损坏、隐藏、转交、借用、佩戴、归还、保管、授权使用、观察到位于某地或改变位置/状态时建立或更新。owner、holder 和 in_use_by 必须独立更新；最新 EvidenceRef 支持的结束态必须覆盖旧 holder、location 或 in_use_by 的延续。观察到某物在某地，可确认 observation/state，不一定确认是谁移动它，也不能自动推出偷窃、栽赃、动机或完整移动路径。
+正例：陈默把胸针交给陆岚后，holder 可变为陆岚；陆岚第二幕佩戴时，in_use_by 可变为陆岚；归还苏闻后 holder 变为苏闻，但不能仅凭临时持有把 owner 改为陆岚；门禁卡从桌面消失后出现在林祁外套里，只能确认两个离散状态点，中间移动链保持 UNKNOWN；钥匙留在门锁上后，不能继续把 holder 静默延续为刚才开门的人；周璐从某时起持有铜钥匙并在 2030 交给沈雾，但 2023 停电后到取出钥匙前的完整保管链可保持 UNKNOWN；沈雾归还黄色安全背心后 holder 回到顾舟，不得继续画在沈雾身上；外套与学生证一起出现只能确认该时间点位置，不能确认死亡、持续持有或完整移动路径。
 反例：画面中装饰性的未提及杯子没有 ObjectState。  
 容易混淆：StoryObject 是道具实体；ObjectState 是该道具的时间状态。交给、借用、佩戴和保管都不等于拥有。
 产生者：状态变化 Agent、状态编译器。  
 读取者：PanelSpec、视觉资产检索、QA。  
 是否必须包含 EvidenceRef：是。  
 候选Schema：ObjectStateV1。  
-备注或待确认问题：复杂法律所有权、多人共有权和完整物流轨迹推断暂不进入 MVP。
+备注或待确认问题：复杂法律所有权、多人共有权和完整物流轨迹推断暂不进入 MVP。梦境或不确定未来片段中的 ObjectState 不得覆盖 PRIMARY ObjectState。
 
 ## LocationState
 
@@ -833,42 +866,42 @@
 中文名称：场景  
 所属阶段：场景和剧情组织  
 优先级：P0  
-精确定义：Scene 表示一段在 StoryTime、Location、RealityLayer、叙事视角和主要行动目标上相对连续的剧情单元。Scene 可以包含多个 StoryBeat。  
-识别规则：地点明显改变、故事时间跳跃、RealityLayer 改变、视角改变或行动目标改变时切分。  
-正例：十年后的旧车站现实主线是一个 Scene。  
+精确定义：Scene 表示一段在 StoryTime、Location、RealityLayer、叙事视角和主要行动目标上相对连续的剧情单元。Scene 可以包含多个 StoryBeat。RealityLayer 改变、StoryTime 跳跃或地点明显改变时通常必须切 Scene；过渡段可根据页面节奏保留一定粒度弹性。连续追逐、移动、搬运、交接等跨地点动作可拆成多个相邻 Scene，并通过 StoryBeat 序列、PanelSpec 连续动作说明或候选 continuous_action_group 保持动作连贯。
+识别规则：地点明显改变、故事时间跳跃、RealityLayer 改变、视角改变或行动目标改变时切分。回忆、梦境、想象或假设插入前后必须与现实主线分 Scene；单纯换段或同地连续动作不必机械切分。跨办公室、走廊、楼梯口等不同 Location 的连续追逐，不得为了保持一个 Scene 而混淆不同地点的 LocationState。
+正例：十年后的旧车站现实主线是一个 Scene；插入大学时期回忆时切为 FLASHBACK Scene，回到现实后再回到 PRIMARY Scene；林岚从办公室冲进走廊再到楼梯口追人，可拆为相邻 Scene，并用同一 continuous_action_group 或 StoryBeat 序列表示追逐连续。
 反例：漫画单格不是 Scene。  
 容易混淆：StoryBeat 是 Scene 内更小的叙事变化；Panel 是漫画画面单元。  
 产生者：Scene 切分服务、叙事结构 Agent。  
 读取者：剧情转译 Agent、PageSpec、PanelSpec、QA。  
 是否必须包含 EvidenceRef：是。  
 候选Schema：SceneSpecV1、SceneV1。  
-备注或待确认问题：无。  
+备注或待确认问题：Scene 粒度与漫画页节奏需要黄金样例继续校准。continuous_action_group 只作为候选说明，不进入 V1.9 顶层 Schema。
 
 ## StoryBeat
 
 中文名称：剧情节拍  
 所属阶段：场景和剧情组织  
 优先级：P0  
-精确定义：StoryBeat 表示 Scene 中最小的有叙事意义的动作、信息、情绪、决策或关系变化。它是漫画转译单位，不等同于漫画格。  
-识别规则：当文本表达剧情推进、信息揭示、情绪变化或行动变化时建立。  
-正例：钟声响起触发林晓回忆大学下午。  
+精确定义：StoryBeat 表示 Scene 中最小的有叙事意义的动作、信息、情绪、决策或关系变化。它是漫画转译单位，不等同于漫画格；一个 StoryBeat 可以拆成多个 Panel，多个简单 StoryBeat 也可以在不丢失事实的前提下合入一格。跨地点连续动作可由多个相邻 Scene 内的 StoryBeat 序列共同表达。
+识别规则：当文本表达剧情推进、信息揭示、情绪变化、决策变化、物体转移或行动变化时建立。连续动作若包含多个关键时刻、信息揭示或状态变化，不得为了压缩页面随意合并；若动作跨地点，应保持每个 Beat 的 location_id 或所属 Scene 清楚。
+正例：钟声响起触发林晓回忆大学下午；开柜、看到照片、犹豫和取走地图可作为连续 Beat 或相邻 Beat，但应拆成多个 Panel 表达关键信息；追逐从办公室到走廊再到楼梯口可用相邻 StoryBeat 串联。
 反例：人物眨眼但无叙事意义时不一定建立 StoryBeat。  
-容易混淆：Panel 是画面容器；一个 StoryBeat 可拆多格，多个简单 StoryBeat 可合一格。  
+容易混淆：Panel 是画面容器；StoryBeat 是叙事变化。一个连续动作若用单 Panel 表达，必须通过明确运动线、构图或因果连续性表现关键状态变化，不能让道具无因出现在新 holder 手中。
 产生者：剧情转译 Agent。  
 读取者：PageSpec、PanelSpec、QA。  
 是否必须包含 EvidenceRef：是。  
 候选Schema：StoryBeatV1。  
-备注或待确认问题：无。  
+备注或待确认问题：Beat 粒度需在样例中继续校准。ActionSequenceV1 暂不进入 V1.9。
 
 ## DialogueUnit
 
 中文名称：对白单元  
 所属阶段：场景和剧情组织  
 优先级：P0  
-精确定义：DialogueUnit 表示可被漫画气泡承载的一段原文对白或经允许拆分后的对白片段。关键对白必须逐字保留。  
-识别规则：原文出现直接引语、明确发言人和可定位文本时建立。  
-正例：陈野说：“先回教室。”  
-反例：模型为画面新增的一句台词不是 DialogueUnit。  
+精确定义：DialogueUnit 表示可被漫画气泡承载的一段原文对白或经允许拆分后的对白片段。原文明示必须逐字保留、后续作为证据或剧情钩子的关键对白不得缩写、改写或移到旁白。
+识别规则：原文出现直接引语、明确发言人和可定位文本时建立。相同文本若说话者、StoryTime、RealityLayer 或叙事功能不同，应建立不同 DialogueUnit，可额外记录重复、呼应或引用关系。
+正例：陈野说：“先回教室。”；父亲在回忆中说“门打开以后，不要回头”和安遥在现实中说同一句话，应是两个 DialogueUnit。
+反例：模型为画面新增的一句台词不是 DialogueUnit；把关键对白改写成旁白摘要不是合格 DialogueUnit。
 容易混淆：NarrationUnit 是旁白；DialogueUnit 是角色发言。  
 产生者：对白抽取 Agent、文本排版服务。  
 读取者：PanelSpec、页面排版、文本准确性 QA。  
@@ -980,10 +1013,10 @@
 所属阶段：视觉与漫画生产  
 优先级：P0  
 精确定义：CharacterVisualVariant 表示 Character 稳定、可复用、经过审核的人物视觉身份版本，例如年龄阶段、基础脸部、体型、长期发型、持久疤痕和主要人生时期。它是视觉表现，不能反向修改故事事实。
-识别规则：人物长期年龄阶段、基础脸部、体型、长期发型、持久疤痕或主要人生时期发生可复用视觉差异时建立。单场临时服装、绷带、血迹、污渍、暂时持有的道具、单场首饰和临时雨衣默认不创建新的永久 CharacterVisualVariant。
-正例：学生时期长发林晓；十年后成年短发林晓；拆线后长期保留浅疤的陆岚。
+识别规则：人物长期年龄阶段、基础脸部、体型、长期发型、持久疤痕或主要人生时期发生可复用视觉差异时建立。单场临时服装、绷带、血迹、污渍、暂时持有的道具、单场首饰和临时雨衣默认不创建新的永久 CharacterVisualVariant。回忆画面必须绑定过去 StoryTime 与对应 RealityLayer 的 CharacterState/CharacterVisualVariant，当前状态不得污染回忆。
+正例：学生时期长发林晓；十年后成年短发林晓；拆线后长期保留浅疤的陆岚；五年前穿校服的年轻安遥应使用历史 CharacterVisualVariant，而不是当前防水外套状态。
 反例：某一晚的银色礼服、手帕包扎、医用绷带、单场佩戴胸针不应单独创建永久 CharacterVisualVariant。
-容易混淆：CharacterState 是故事事实；CharacterVisualVariant 是稳定画法和资产选择；临时视觉状态应由 CharacterState、PanelSpec 人物绑定、临时视觉 overlay 或 ResolvedCharacterAppearance 表达。
+容易混淆：CharacterState 是故事事实；CharacterVisualVariant 是稳定画法和资产选择；临时视觉状态应由 CharacterState、PanelSpec 人物绑定、临时视觉 overlay 或 ResolvedCharacterAppearance 表达。原文未说明的发型、配饰或材质细节保持 UNKNOWN 或由风格补全标记，不能写回 Canonical。
 产生者：角色视觉规划 Agent、VisualBible 审核。  
 读取者：PanelSpec、PromptSpec、人物连续性 QA。  
 是否必须包含 EvidenceRef：视情况而定；继承对应 CharacterState 证据。  
@@ -996,11 +1029,11 @@
 中文名称：视觉资产  
 所属阶段：视觉与漫画生产  
 优先级：P0  
-精确定义：VisualAsset 表示可复用的图像、参考、草图、角色设定图、地点设定图或道具图。它是资产文件或引用，不等于故事事实。  
-识别规则：当视觉规划、生成或审核产生可复用图像资源时建立。  
-正例：林晓学生时期设定图、旧车站背景参考图。  
+精确定义：VisualAsset 表示可复用的图像、参考、草图、角色设定图、地点设定图或道具图。它是资产文件或引用，不等于故事事实。关键道具的颜色、材质和形状若被原文明确强调，应作为视觉资产和 PanelSpec QA 的重要约束。
+识别规则：当视觉规划、生成或审核产生可复用图像资源时建立；当关键道具需要跨 Panel 保持识别时，应保留材质、颜色、轮廓或标志性特征来源。
+正例：林晓学生时期设定图、旧车站背景参考图、黄铜钥匙的道具参考图。
 反例：`must_show=怀表` 不是 VisualAsset。  
-容易混淆：CharacterVisualVariant 选择视觉版本；VisualAsset 是实际资源。  
+容易混淆：CharacterVisualVariant 选择视觉版本；VisualAsset 是实际资源。VisualAsset 错误不能反向修改 StoryObject 或 ObjectState，只能生成 QAIssue 或 RepairPlan。
 产生者：视觉资产检索器、图片生成 Provider、人工上传。  
 读取者：PromptSpec、PanelSpec、视觉 QA。  
 是否必须包含 EvidenceRef：视情况而定。  
@@ -1028,16 +1061,16 @@
 中文名称：单格分镜规范  
 所属阶段：视觉与漫画生产  
 优先级：P0  
-精确定义：PanelSpec 表示一格漫画必须表达的故事事实、人物绑定、状态、视觉硬约束、镜头和文字排版要求。它必须与具体模型供应商和 API 参数解耦。  
-识别规则：分镜导演 Agent 将 StoryBeat 映射为一个或多个漫画格时建立。  
-正例：Panel 要求展示十年后短发林晓在旧车站握着怀表。  
-反例：包含 `provider=openai`、`model_name` 或 `positive_prompt` 的对象不是合法 PanelSpec。  
+精确定义：PanelSpec 表示一格漫画必须表达的故事事实、人物绑定、状态、视觉硬约束、镜头和文字排版要求。它必须与具体模型供应商和 API 参数解耦。must_show 与 must_not_show 是故事忠实度硬约束，不是审美建议；text_must_be_exact 和 FactLock 字段要求文字事实逐字或等值准确。
+识别规则：分镜导演 Agent 将 StoryBeat 映射为一个或多个漫画格时建立。连续动作压缩到单格时，PanelSpec 必须明确运动线、构图因果或多时刻表达方式；原文明示“没有进入画面”“尚未出现”的人物或物体应进入 must_not_show。通知、公告、海报或报名信息出现在画面中时，应绑定最新有效 Canonical Data 和 FactLock 候选字段。跨地点连续动作的每个 PanelSpec 必须保留自己的 location_id，可额外记录 continuous_action_note 或候选 continuous_action_group。
+正例：Panel 要求展示十年后短发林晓在旧车站握着怀表；钥匙交接 Panel 必须显示交接双方的手和黄铜钥匙；闯入者尚未出现时必须 must_not_show 完整闯入者；通知画面必须准确显示“11月17日 星期日”“科创中心二楼多功能厅”“最多36支队伍”等 FactLock 字段；追逐格可分别标注办公室、走廊、楼梯口并用运动方向保持连续。
+反例：包含 `provider=openai`、`model_name` 或 `positive_prompt` 的对象不是合法 PanelSpec；把原文禁止出现的人物放进画面不是可接受构图。
 容易混淆：PromptSpec 是给具体模型的请求；PanelSpec 是模型无关分镜合同。  
 产生者：分镜导演 Agent。  
 读取者：Prompt 编译器、图片生成工作流、QA。  
 是否必须包含 EvidenceRef：是。  
 候选Schema：PanelSpecV1。  
-备注或待确认问题：PanelSpec V1 字段需与代码 Schema 后续对齐。  
+备注或待确认问题：PanelSpec V1 字段需与代码 Schema 后续对齐；多时刻单格表达、运动线字段和 FactLock 字段绑定暂作候选说明，不在本轮实现。
 
 ## PromptSpec
 
@@ -1137,53 +1170,69 @@
 候选Schema：QAResultV1。  
 备注或待确认问题：分数阈值需黄金集校准。  
 
+## FactLock
+
+中文名称：事实锁定项
+所属阶段：质检、修复和工作流
+优先级：P0
+精确定义：FactLock 表示通知、公告、海报、分镜文字、字幕或 UI 文案中必须保持精确的关键事实字段。它不是新的故事事实类型，而是附加在 Canonical Data、PanelSpec、RenderedPanel 或 QA 上的精确性约束。
+识别规则：当字段涉及日期、星期、时间、地点、联系人、电话、邮箱、人数/队伍数、金额、编号、报名规则、流程规则、奖项数量或其他不可改写事实时建立 FactLock 候选。每个 FactLock 必须指向最新有效 Canonical Data、EvidenceRef 和适用范围。
+正例：报名截止 `10月25日18:00`；材料截止 `11月10日22:00`；决赛 `11月17日 星期日`；报到地点 `科创中心一楼大厅`；主会场 `科创中心二楼多功能厅`；最多 `36支队伍`；每队 `2至4名学生`；咨询电话 `0551-6360-2186`。
+反例：背景板上为了画面氛围添加的无原文装饰标语不是 FactLock；FactLock 本身也不是 Event 或 Location。
+容易混淆：Canonical Data 是正式事实；FactLock 是对该事实在下游文字或画面中不得改写的约束。QAIssue 描述违反 FactLock 的具体问题。
+产生者：通知解析 Agent、分镜导演 Agent、人工审核或 QA 规则检查器。
+读取者：PanelSpec、PromptSpec、RenderedPanel、QA、RepairPlan、审核界面。
+是否必须包含 EvidenceRef：是。
+候选Schema：PanelSpecV1。
+备注或待确认问题：PanelSpec V1 字段需与代码 Schema 后续对齐；FactLockV1 Schema、PanelSpecV1.fact_locks、QAResultV1.fact_lock_checks、continuous_action_group 暂作候选说明，不在 V1.9 实现。
+
 ## QAIssue
 
 中文名称：具体质检问题  
 所属阶段：质检、修复和工作流  
 优先级：P0  
-精确定义：QAIssue 表示 QAResult 中发现的一个可定位问题，包括 issue_type、expected、observed、severity、hard_failure 和目标区域。  
-识别规则：QA 检查发现状态、身份、文字、构图或供应商约束问题时建立。  
-正例：`STATE_MISMATCH`，expected 学生时期长发，observed 成年短发。  
+精确定义：QAIssue 表示 QAResult 中发现的一个可定位问题，包括 issue_type、expected、observed、severity、hard_failure 和目标区域。hard_failure 表示故事事实、状态、文字或硬约束错误，不能被构图漂亮、画风统一或视觉质量高抵消。
+识别规则：QA 检查发现状态、身份、文字、构图、道具属性或供应商约束问题时建立。人物状态错误、回忆和现实状态混用、关键道具缺失、关键对白错误、违反 must_not_show 通常是 hard_failure。关键道具颜色/材质被原文明确、多次强调且影响剧情功能时，通常 high severity 且 hard_failure；轻微色偏且不影响识别时可降为 medium 或 soft issue，并要求复检。上游定义错误导致 Scene、StoryBeat、PanelSpec、PromptSpec、VisualAsset、QAResult 或 RepairPlan 继续使用旧事实时，应产生 STALE 或 dependency_mismatch 类问题。FactLock 字段的日期、星期、数字单位、地点、联系人或电话错误通常属于 text_accuracy hard_failure；若只是未要求完整展示的背景信息省略，可记录 completeness issue 或 soft/medium issue。嵌入故事实体进入 PRIMARY、跨地点 Panel 混淆 location_id 或为了连续动作抹掉 LocationState，均应产生 QAIssue。
+正例：`STATE_MISMATCH`，expected 学生时期长发，observed 成年短发；`MUST_NOT_SHOW_VIOLATION`，expected 闯入者不入画，observed 完整闯入者出现；`OBJECT_ATTRIBUTE_MISMATCH`，expected 黄铜钥匙，observed 银色钥匙；梦境铜钥匙转移污染现实持有链是 hard_failure；沈雾归还安全背心后后续格仍穿背心是临时装备状态延续错误；通知海报写成“11月17日 星期六”是日期/星期 FactLock 错误；把童话巨龙画入主线现实是 RealityLayer 泄漏错误。
 反例：整个页面的综合分数不是 QAIssue。  
 容易混淆：RepairPlan 是修复指令；QAIssue 是问题描述。  
 产生者：QA Agent、规则检查器。  
 读取者：RepairPlan Agent、审核界面。  
 是否必须包含 EvidenceRef：视情况而定。  
 候选Schema：QAIssueV1、QAResultV1.issues。  
-备注或待确认问题：issue_type 枚举需后续固定。  
+备注或待确认问题：issue_type 完整枚举、严重性评分阈值、FactLock 检查项和自动追踪策略需后续固定，本轮只给文档语义边界。
 
 ## RepairPlan
 
 中文名称：修复方案  
 所属阶段：质检、修复和工作流  
 优先级：P0  
-精确定义：RepairPlan 表示对一个 QA 失败目标的有界修复指令，包括修复类型、目标区域、使用的正确状态或视觉版本、最大尝试次数和复检要求。  
-识别规则：QAResult 存在硬性错误或可修复软性问题时建立。  
-正例：使用大学时期 CharacterVisualVariant 对人物区域局部重生成。  
-反例：“重新画好看点”不是合格 RepairPlan。  
+精确定义：RepairPlan 表示对一个 QA 失败目标的有界修复指令，包括修复类型、目标区域、使用的正确状态或视觉版本、最大尝试次数和复检要求。它选择修复策略，但不实现真实图像编辑能力。
+识别规则：QAResult 存在硬性错误、可修复软性问题或上游依赖变更导致下游产物过期时建立。缺少或错误的 PanelSpec 约束应先修 PanelSpec；小范围局部事实错误优先局部重绘；主体构图依赖错误对象、错误人物或多处事实错误时整格重生成；阅读顺序、气泡区域或文字区域被破坏时才重新排版。修复后必须复检对应 QAIssue。
+正例：使用大学时期 CharacterVisualVariant 对人物区域局部重生成；展柜格漏掉黄铜钥匙时先补 PanelSpec must_show，再对钥匙区域局部重绘；P06 若以完整闯入者为主体构图，则整格重生成。
+反例：“重新画好看点”不是合格 RepairPlan；为修复一个局部道具颜色轻微偏差直接重排整页通常不是最小修复。
 容易混淆：QAIssue 描述问题；RepairPlan 描述怎么修。  
 产生者：修复规划 Agent。  
 读取者：图片编辑 Provider、工作流、QA。  
 是否必须包含 EvidenceRef：视情况而定。  
 候选Schema：RepairPlanV1。  
-备注或待确认问题：无。  
+备注或待确认问题：自动选择最优修复策略暂不进入 MVP；本轮只要求记录重算或复检建议。
 
 ## DependencyEdge
 
 中文名称：依赖关系  
 所属阶段：质检、修复和工作流  
 优先级：P0  
-精确定义：DependencyEdge 表示一个数据或产物依赖另一个数据或产物，用于局部重算、缓存失效和断点恢复。  
-识别规则：当 PanelSpec 依赖 CharacterState、PromptSpec 依赖 PanelSpec、RenderedPage 依赖 RenderedPanel 时建立。  
-正例：`panel-1 -> character-state-linxia-student`。  
+精确定义：DependencyEdge 表示一个数据或产物依赖另一个数据或产物，用于局部重算、缓存失效、STALE 标记和断点恢复。
+识别规则：当 Scene 依赖 StoryTime/RealityLayer、StoryBeat 依赖 Event、PanelSpec 依赖 CharacterState/ObjectState/FactLock、PromptSpec 依赖 PanelSpec、VisualAsset 依赖 StoryObject/CharacterVisualVariant/FactLock、QAResult 依赖 RenderedPanel/PanelSpec、RepairPlan 依赖 QAIssue 时建立。上游事实、状态、FactLock 或分镜约束变化后，下游 Scene、StoryBeat、PanelSpec、PromptSpec、VisualAsset、QAResult 或 RepairPlan 应标记为 STALE 或进入重算队列。
+正例：`panel-1 -> character-state-linxia-student`；铜钥匙 holder 从 Zhou 更新为 Shen 后，依赖旧 holder 的 PanelSpec、PromptSpec、RenderedPanel、QAResult 和 RepairPlan 应标记 STALE；旧海报中“11月16日、创新楼、30强现场赛”作废后，引用这些字段的海报资产和 QAResult 应标记 STALE。
 反例：团队任务分配不是 DependencyEdge。  
 容易混淆：TemporalRelation 是故事时间关系；DependencyEdge 是工程依赖。  
 产生者：工作流服务、依赖追踪服务。  
 读取者：重算服务、Checkpoint、WorkflowRun。  
 是否必须包含 EvidenceRef：否。  
 候选Schema：DependencyEdgeV1。  
-备注或待确认问题：无。  
+备注或待确认问题：完整 DependencyGraph、自动重算调度和缓存策略暂不进入 MVP；本轮只定义文档语义和 QA 注意事项。
 
 ## Approval
 
@@ -1366,6 +1415,14 @@
 - Proposal 必须经过 Schema 验证、证据检查、实体合并和冲突处理。
 - 只有 [CommitService](#commitservice) 能够将结果提交为 [Canonical Data](#canonical-data)。
 
+### FactLock 与 Canonical Data
+
+- [Canonical Data](#canonical-data) 是被提交的正式事实。
+- [FactLock](#factlock) 是下游文字、海报、分镜或 QA 对正式事实的精确性约束。
+- FactLock 不新增事实，只要求日期、星期、时间、地点、数字单位、联系人、电话、邮箱和流程规则不得被改写。
+- 旧通知或旧海报中的过期 FactLock 字段应标记 STALE，不能覆盖最新有效 Canonical Data。
+- 信息省略是否 hard failure 取决于 PanelSpec 的展示目标和 completeness 要求。
+
 ### EntityAlias 与 EntityMention
 
 - [EntityAlias](#entityalias) 是同一 Entity 的稳定可复用名称映射。
@@ -1476,5 +1533,6 @@
 - [ ] CharacterVisualVariant 是否避免临时状态组合爆炸
 - [ ] 可观察行为、表达态度和真实内心是否区分
 - [ ] QA 是否区分硬性错误和软性质量
+- [ ] FactLock 是否锁定通知类关键字段并保留 EvidenceRef
 - [ ] 每个词是否有正例和反例
 - [ ] P0 词汇是否足以支撑 MVP 流水线

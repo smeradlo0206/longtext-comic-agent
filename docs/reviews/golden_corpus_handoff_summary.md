@@ -147,6 +147,122 @@ V1.5-draft 强化 Claim、KnowledgeState、NarrativePerspective 与 Canonical Da
 测试结果：
 回归评审记录为 V1.5-draft 能表达未经证实 Claim、读者可见事实与人物知识分离、历史 KnowledgeState 不回填、未知参与者、ObjectState 未知移动链和冲突 Proposal 提交纪律；合理 UNKNOWN/UNCERTAIN/UNRESOLVED 保留。
 
+## 06_storyboard_qa
+
+本轮测试：
+Golden Corpus V1 `tests/golden_corpus/06_storyboard_qa`，聚焦 Scene 粒度、StoryBeat-to-Panel 拆分、PanelSpec must_show/must_not_show、关键 DialogueUnit、回忆状态绑定、ObjectState 结束态、QAIssue hard failure 和 RepairPlan 策略。
+
+发现的问题：
+Scene 粒度规则需要更显眼，尤其 RealityLayer 改变、StoryTime 跳跃、地点明显改变和过渡段弹性；StoryBeat 不是 Panel，连续动作若包含多个关键时刻、信息揭示或物体转移不能随意压成一格；must_show/must_not_show 是故事忠实度硬约束；回忆画面不能被当前 CharacterState 污染；关键对白必须逐字保留；ObjectState 结束态不能静默延续旧 holder；hard failure 不能被视觉质量抵消；RepairPlan 策略和关键道具颜色/材质严重性阈值需要补清。
+
+采用的修改：
+V1.6-draft 补充 Storyboard QA、PanelSpec、QAIssue 和 RepairPlan 语义，细化 Scene、StoryBeat、DialogueUnit、CharacterVisualVariant、VisualAsset、PanelSpec、ObjectState、QAIssue 和 RepairPlan 的边界；`docs/domain_rules.md` 新增第 14 节；新增地下展厅示例和 06 回归评审文档。
+
+没有采用的修改：
+没有修改 `tests/golden_corpus/06_storyboard_qa/source.md`、`questions.md` 或 `expected.json`；没有实现 PageSpec、PanelSpec、QAResult、QAIssue、RepairPlan 完整 Schema；没有新增真实 QA Agent、图像局部重绘、整格重生成或完整 VisualBible/VisualAsset 管理系统；没有一次性固定完整 QAIssue issue_type 枚举。
+
+影响 Schema 的候选点：
+Scene 粒度标记、StoryBeat-to-Panel 映射、多时刻 Panel 或 motion_line 表达、PanelSpec.must_show/must_not_show、DialogueUnit echo/repetition 关系、ObjectState 结束态校验、QAIssue severity/hard_failure/issue_type、RepairPlan repair_type/target_region/recheck_required、关键道具视觉属性约束。
+
+暂不进入 Schema 的点：
+完整 PageSpec/PanelSpec/QAResult/QAIssue/RepairPlan Schema 实现、真实 QA Agent、真实图像修复能力、完整 QAIssue issue_type 枚举、完整 VisualBible 和 VisualAsset 管理系统。
+
+建议后端/QA 注意：
+后端在生成 PanelSpec 时要按 Scene 的 StoryTime、RealityLayer 和 Location 查询状态，不能让回忆和现实状态混用。QA 要把人物状态错误、关键道具缺失、must_not_show 违反、关键对白错误和关键道具材质错误按 hard failure 优先处理；视觉质量只能影响软性评分，不能抵消故事事实错误。
+
+相关文件：
+`docs/reviews/storyboard_qa_regression_v1.md`；`docs/examples/storyboard_qa_example.md`；`docs/domain_glossary.md`；`docs/domain_rules.md` 第 14 节。
+
+测试结果：
+回归评审记录为 V1.6-draft 能表达 Scene 切分、StoryBeat-to-Panel 拆分、must_show/must_not_show、关键 DialogueUnit、回忆状态绑定、ObjectState 结束态、QAIssue hard failure 和 RepairPlan 策略；Q1、Q14、Q15 仍保留阈值弹性，不进入完整 Schema 实现。
+
+## 07_integrated_novel
+
+本轮测试：
+Golden Corpus V1 `tests/golden_corpus/07_integrated_novel`，聚焦身份、共享账号、复杂时间线、RealityLayer、Claim/Knowledge、ObjectState、Storyboard QA、DependencyEdge / STALE 和综合链路一致性。
+
+发现的问题：
+共享账号、账号名、主要使用者和消息作者容易被误合并；NarrativeOrder、StoryTime、RealityLayer、NarrativePerspective 在倒叙、梦境、Gu POV 和未来片段中需要联合判断；同一历史夜晚会被记录、录像、录音、回忆和角色 Claim 多次提及；读者可见事实不能泄漏为人物 KnowledgeState；DREAM 与不确定未来片段不能污染 PRIMARY；临时安全背心、铜钥匙 holder、顾舟伤势等状态必须有结束态；冲突 Claim 和记忆 Claim 不能升级为 Canonical；上游事实变更需要让下游分镜、提示、视觉资产、QA 和 RepairPlan 过期或重算。
+
+采用的修改：
+`docs/domain_glossary.md` 更新为 V1.7-draft，补充共享账号、账号作者候选、同一历史事件多 NarrativeMention、Gu POV 可见性、P37 RealityLayer UNKNOWN/candidate_layers、ObjectState 离散状态与临时装备结束态、QAIssue dependency_mismatch 和 DependencyEdge / STALE 语义；`docs/domain_rules.md` 新增第 15 节综合小说链路一致性规则；新增 07 钟楼综合示例和 07 回归评审文档。
+
+没有采用的修改：
+没有修改 `tests/golden_corpus/07_integrated_novel/source.md`、`questions.md` 或 `expected.json`；没有新增 TemporalGraph、StoryBible、VisualBible、AUTHOR_FORESHADOW、完整 DependencyGraph 或证据排名系统；没有实现共享账号归因算法、真相裁决器、Schema、Agent、数据库、真实 QA、真实图像修复或自动最优 RepairPlan。
+
+影响 Schema 的候选点：
+Account shared_access / primary_operator、AuthorshipClaim candidate_author_ids / excluded_author_ids / scheduled_send_status、NarrativePerspective visible_to_reader / visible_to_character_ids、RealityLayer candidate_layers、StoryTime / RealityLayer 联合状态查询、ObjectState UNKNOWN interval 和 effective_until、QAIssue dependency_mismatch / stale_reason、DependencyEdge stale_status / recompute_required。
+
+暂不进入 Schema 的点：
+TemporalGraph、EventCluster 顶层概念、AUTHOR_FORESHADOW RealityLayer、完整共享账号作者归因、复杂嫌疑/动机推理、沈岑最终去向裁决、完整证据等级排名、完整 DependencyGraph、自动重算调度和自动最优 RepairPlan。
+
+建议后端/QA 注意：
+后端在查询人物、关系、道具和视觉状态时必须同时带 StoryTime 与 RealityLayer；共享账号消息只提交可见发送方和候选作者，不直接绑定人物。QA 要把 RealityLayer 混用、梦境污染、临时装备静默延续、关键 ObjectState 过期、must_show/must_not_show 错误和上游依赖过期当作 hard failure 或 STALE 风险处理。
+
+相关文件：
+`docs/reviews/integrated_novel_regression_v1.md`；`docs/examples/integrated_novel_example.md`；`docs/domain_glossary.md`；`docs/domain_rules.md` 第 15 节。
+
+测试结果：
+回归评审记录为 V1.7-draft 能表达 07 的综合链路问题；共享账号真实作者、Q-Zhou 操作者、P37 真实层级、沈岑最终去向和完整依赖图仍保持 UNKNOWN/UNCERTAIN 或 MVP 暂缓。
+
+## 08_campus_factlock
+
+本轮测试：
+Golden Corpus V1 `tests/golden_corpus/08_campus_factlock`，聚焦通知、公告和海报类文本的事实锁定，包括多版本通知、字段级 Revision、过期海报 STALE、数字单位、近似姓名、地点分离、日期/星期和 text_accuracy。
+
+发现的问题：
+报名截止、材料截止、报到、开幕、展示和决赛日期容易被混成一个时间字段；最终有效事实必须来自最新有效 Revision 并保留 EvidenceRef；旧海报、旧通知和旧视觉资产中的过期字段需要 STALE；队伍数、学生数、奖项支数和视频时长的单位不能改写；周舟老师和周洲副院长不能因读音相近合并；报到地点和主会场不能混画；“不变”需要字段级确认；信息省略是否 hard failure 取决于 PanelSpec 目标。
+
+采用的修改：
+`docs/domain_glossary.md` 更新为 V1.8-draft，新增 FactLock 文档层概念，并补充 Canonical Data、Revision、EvidenceRef、Character、Location、EntityMention、PanelSpec、QAIssue、DependencyEdge 的通知类事实锁定边界；`docs/domain_rules.md` 新增第 16 节通知类事实锁定规则；新增校园智能体创意赛 FactLock 示例和 08 回归评审文档。
+
+没有采用的修改：
+没有修改 `tests/golden_corpus/08_campus_factlock/source.md`、`questions.md` 或 `expected.json`；没有实现 FactLockV1 Schema、字段级 Revision 数据库、完整通知解析 Agent、真实 QA Agent、完整日历校验器、完整 QAIssue issue_type 枚举或公告管理系统。
+
+影响 Schema 的候选点：
+FactLockV1、PanelSpec.fact_locks、QAResult.fact_lock_checks、Canonical 字段级 revision_status、Revision action 枚举、EvidenceRef 多来源确认、DependencyEdge stale_reason、QAIssue text_accuracy/completeness/stale_fact 类型、Location 层级字段、Contact/role 字段。
+
+暂不进入 Schema 的点：
+FactLockV1 正式实现、字段级 Revision 数据库、通知解析 Agent、日历校验器、公告管理系统、完整联系人本体、完整 QAIssue issue_type 枚举和真实 QA 自动修复。
+
+建议后端/QA 注意：
+后端处理通知类文本时要按字段更新 Canonical Data，不要整份覆盖或整份继承；“不变”要同时引用初版具体值和更正说明。QA 要将日期/星期、地点、数字单位、人名、电话、邮箱和流程规则作为 text_accuracy 高优先级检查；旧海报或旧视觉资产继续使用过期字段时，应标记 STALE 或 hard failure。
+
+相关文件：
+`docs/reviews/campus_factlock_regression_v1.md`；`docs/examples/campus_factlock_example.md`；`docs/domain_glossary.md`；`docs/domain_rules.md` 第 16 节。
+
+测试结果：
+回归评审记录为 V1.8-draft 能表达 08 的通知类事实锁定问题；FactLock、字段级 Revision 和信息省略边界只进入文档层，未进入 Schema、Agent、数据库或真实 QA 实现。
+
+## micro_cases
+
+本轮测试：
+Golden Corpus V1 `tests/golden_corpus/micro_cases`，覆盖 30 个微型边界案例，聚焦同一事件多次叙述、梦境隔离、临时状态、Claim/Proposal、共指、账号、回忆、预测、同时不同地点、相对时间、ObjectState、KnowledgeState、RelationshipState、PanelSpec、QA、UNKNOWN/UNCERTAIN、因果、不可靠记忆、精确对白、STALE，以及连续跨地点动作和 story-within-story。
+
+发现的问题：
+Q01-Q17、Q19-Q29 当前 V1.8-draft 基本足够，只需归档回归结果。Q18 暴露连续动作跨地点时 Scene 粒度需要补清：地点变化通常是强切分信号，但追逐、移动、搬运、交接等动作可用相邻 Scene、StoryBeat 序列和 PanelSpec 连续动作说明保持连贯。Q30 暴露 story-within-story 边界需要补清：童话、寓言、剧本、小说片段等不进入 PRIMARY 主线 Canonical Event，嵌入故事中的 Entity/Event/ObjectState 与主线隔离。
+
+采用的修改：
+`docs/domain_glossary.md` 更新为 V1.9-draft，补充 Scene、StoryBeat、RealityLayer、NarrativePerspective、Event、Entity、Canonical Data、PanelSpec、QAIssue 的 micro case 边界；`docs/domain_rules.md` 新增第 17 节 Micro Case 边界校准规则；新增 micro_cases 边界示例和 Q01-Q30 回归评审文档。
+
+没有采用的修改：
+没有修改 `tests/golden_corpus/micro_cases/*.md`；没有自动填写 expected.json；没有实现 ActionSequenceV1、EmbeddedNarrativeScopeV1、FICTIONAL_STORY RealityLayer、自动 Scene 切分器、故事内故事实体库、完整 Panel 连续动作求解器、Schema、Agent、数据库或真实 LLM。
+
+影响 Schema 的候选点：
+Scene/StoryBeat 可候选支持 `continuous_action_group`、`continuous_action_note`、相邻 Scene 关系；PanelSpec 可候选支持逐格 `location_id` 校验和连续动作说明；RealityLayer 可候选继续支持 candidate_layers；QAIssue 可候选支持 `location_state_mismatch`、`scene_boundary_error`、`continuity_loss`、`reality_layer_leakage`、`entity_scope_mismatch`。
+
+暂不进入 Schema 的点：
+ActionSequenceV1、EmbeddedNarrativeScopeV1、FICTIONAL_STORY RealityLayer、故事内故事实体库、完整自动 Scene 切分器、完整 Panel 连续动作求解器和完整 QAIssue issue_type 枚举。
+
+建议后端/QA 注意：
+后端不要为了连续动作把不同 LocationState 合成一个地点；相邻 Scene 可用 StoryBeat 序列或候选 continuous_action_group 保持连续。QA 要同时检查动作连贯性和每格 location_id 准确性。故事内故事可视觉化，但嵌入实体和事件不得进入 PRIMARY 主线 StoryBible 或 Canonical Event。
+
+相关文件：
+`docs/reviews/micro_cases_regression_v1.md`；`docs/examples/micro_cases_boundary_example.md`；`docs/domain_glossary.md`；`docs/domain_rules.md` 第 17 节。
+
+测试结果：
+回归评审记录为 V1.9-draft 能表达 micro_cases 的 30 个边界案例；Q18 和 Q30 的歧义已做文档层最小修订；合理 UNKNOWN/UNCERTAIN 保留；未进入 Schema、Agent、数据库或自动化实现。
+
 ## 05以后维护规则
 
 1. 每完成一篇 Golden Corpus 测试，必须在本文件追加同格式摘要。
