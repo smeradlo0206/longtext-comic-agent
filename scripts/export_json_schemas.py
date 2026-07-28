@@ -9,6 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pydantic import BaseModel, TypeAdapter
 
 from comic_agent.schemas import (
+    AgentInputRefV1,
+    AgentOutputRefV1,
     AgentRunV1,
     CharacterStateV1,
     CommitPlanV1,
@@ -16,9 +18,11 @@ from comic_agent.schemas import (
     EntityProposalV1,
     EventProposalV1,
     EvidenceRefV1,
+    MockProviderResultV1,
     PanelSpecV1,
     ProfileUpdateProposalV1,
     ProjectSpecV1,
+    ProviderResultV1,
     QAResultV1,
     RelationshipUpdateProposalV1,
     RepairPlanV1,
@@ -38,6 +42,7 @@ from comic_agent.schemas import (
     TemporalRelationProposalV1,
     WorldRuleUpdateProposalV1,
     WorldRuleV1,
+    WorkflowRunV1,
 )
 
 SCHEMAS: list[type[BaseModel]] = [
@@ -51,6 +56,12 @@ SCHEMAS: list[type[BaseModel]] = [
     EventProposalV1,
     TemporalRelationProposalV1,
     StateChangeProposalV1,
+    WorkflowRunV1,
+    AgentInputRefV1,
+    AgentOutputRefV1,
+    ProviderResultV1,
+    MockProviderResultV1,
+    AgentRunV1,
     CharacterStateV1,
     SceneSpecV1,
     StoryBeatV1,

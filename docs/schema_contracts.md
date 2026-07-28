@@ -2,10 +2,25 @@
 
 All V1 schemas use `schema_version = "1.0"` and live in `comic_agent/schemas`.
 
+2026-07-28 update: this is an additive phase-one schema change. It adds
+`AgentRunV1`, `ProviderResultV1`, `MockProviderResultV1`, `AgentInputRefV1`, and
+`AgentOutputRefV1` for Mock Agent auditability without changing existing V1 field
+semantics, so no `schema_version` bump or data migration is required.
+
+2026-07-28 P0 hardening update: this tightens V1 draft validation without adding
+new top-level story concepts. `ProviderResultV1` now rejects contradictory
+success/error states and successful empty outputs. `AgentRunV1` now rejects
+successful runs without source inputs or auditable outputs and failed runs without
+an error message. `EvidenceRefV1` remains a field-format schema; CommitService is
+responsible for checking that `quote_text` and `quote_start`/`quote_end` match the
+referenced `SourceChunkV1.text`. This is a compatibility-impacting validation
+tightening for malformed draft records, but it does not require a database
+migration because no persisted canonical story data exists in phase one.
+
 | Schema | Purpose | Required Fields | Evidence | Readers | Proposal Producer | Canonical Commit |
 | --- | --- | --- | --- | --- | --- | --- |
 | BaseRecordV1 | Common record metadata. | id, project_id, revision, status, timestamps, created_by | N/A | Services | Services | CommitService |
-| EvidenceRefV1 | Source traceability pointer. | chunk_id | Optional range/quote; supplied values must match the referenced chunk | All story agents | All story agents | CommitService validates |
+| EvidenceRefV1 | Source traceability pointer. Pydantic validates field shape only; CommitService validates quote/range against SourceChunk text. | chunk_id | Optional range/quote | All story agents | All story agents | CommitService validates chunk existence and quote authenticity |
 | ProjectSpecV1 | Project policy. | id, name, type, fidelity flags | N/A | All services | API/user | SourceRepository |
 | SourceDocumentV1 | Source file metadata. | document_id, project_id, checksum, storage_uri | N/A | Importer, agents | DocumentParser | SourceRepository |
 | SourceChapterV1 | Chapter boundary. | chapter_id, document_id, order | N/A | Agents, API | DocumentParser | SourceRepository |
@@ -14,6 +29,8 @@ All V1 schemas use `schema_version = "1.0"` and live in `comic_agent/schemas`.
 | EventProposalV1 | Candidate event. | proposal_id, type, non-empty summary, non-empty evidence_refs, confidence | At least one reference required; persisted with CANDIDATE status | Temporal/state agents | Event agent | CommitService later |
 | TemporalRelationProposalV1 | Candidate event relation. | proposal_id, source, target, relation, confidence | Required unless UNKNOWN | Temporal solver | Temporal agent | CommitService later |
 | StateChangeProposalV1 | Candidate state mutation. | proposal_id, event_id, target, path, evidence_refs | Required | State compiler | State agent | CommitService later |
+| AgentInputRefV1 | Bounded object passed into an AgentRun. | object_id, object_schema, role | In referenced object if applicable | Workflow, audit | Agent wrapper | N/A |
+| AgentOutputRefV1 | Structured object produced by an AgentRun. | object_id, object_schema, role | In output object if applicable | Workflow, audit | Agent wrapper | N/A |
 | CharacterStateV1 | Compiled character state. | state_id, character_id, reality_layer | Derived from changes | Story/visual agents | State compiler | CommitService later |
 | SceneSpecV1 | Source-grounded scene. | scene_id, chapter_id, chunks, layer, purpose | Via chunks | Translation agents | Narrative translator | CommitService later |
 | StoryBeatV1 | Adaptation beat. | beat_id, scene_id, chunks, meaning, visual_expression | Via chunks | Page/panel agents | Narrative translator | CommitService later |
@@ -62,12 +79,41 @@ canonical StoryBible resource tables and candidate commit-plan storage. The Pyda
 models in `comic_agent/schemas` remain the only schema source of truth, and the JSON
 Schema export script produces the machine-readable contracts.
 
-### 2026-08-09 V1 contract hardening and migration note
+| AgentRunV1 | One auditable agent execution. Successful runs require source input chunks and at least one output proposal or provider result; failed runs require error_message. | agent_run_id, project_id, agent_name, input_chunk_ids, output_schema, status | Output Proposal carries evidence | Workflow, audit, QA | Agent wrapper | N/A |
+| ProviderResultV1 | One provider call result. Success requires raw_output or structured_output and forbids error_message; failure requires error_message. | provider_result_id, provider_name, provider_type, output_schema, success | Structured output carries evidence if any | AgentRun, audit | Provider adapter | N/A |
+| MockProviderResultV1 | Mock provider result specialization using ProviderResultV1 consistency rules. | provider_result_id, output_schema, success | Structured output carries evidence if any | Tests, AgentRun, audit | Mock provider | N/A |
 
-The StoryBible contracts remain at `schema_version = "1.0"` because this correction is
-part of the initial, unreleased V1 feature branch required by the implementation plan.
-The accepted input domain is tightened only for identifiers longer than 128 characters
-and names longer than 255 characters, values the existing `0004_storybible_resources`
-columns could not portably store. No Alembic data migration is required: migration
-`0004` already defines the matching database lengths, and no column or stored-payload
-shape changed.
+Field types are implemented directly in Pydantic. The JSON Schema export script is the authoritative machine-readable contract.
+
+## P0 Evidence Authenticity
+
+`EvidenceRefV1` can be constructed with only `chunk_id`, with `quote_text`, with
+`quote_start`/`quote_end`, or with both range and quote. Pydantic only checks that
+range fields are a valid pair and that `quote_text` is not blank. CommitService
+performs repository-aware checks:
+
+- `chunk_id` only: referenced chunk must exist.
+- `quote_text` only: quote must appear in `SourceChunkV1.text`.
+- range only: range must satisfy `0 <= quote_start < quote_end <= len(text)`.
+- range plus quote: `text[quote_start:quote_end]` must equal `quote_text`.
+
+Project-level cross-use of chunks is not yet enforced by the evidence schema
+because phase-one proposals do not carry a project id. Services that validate
+project context must do so before or inside CommitService in a later hardening
+pass.
+
+## P0 Workflow Consistency
+
+Provider results and agent runs are audit records, not canonical story facts.
+They still must be internally coherent:
+
+- A successful provider result must include `raw_output` or `structured_output`.
+- A successful provider result must not include `error_message`.
+- A failed provider result must include `error_message`.
+- A successful agent run must include at least one `input_chunk_id`.
+- A successful agent run must include `output_proposal_ids`, `provider_result_id`,
+  or inline `provider_result`.
+- A failed agent run may have no outputs, but it must include `error_message`.
+
+This update does not introduce `ClaimProposalV1`, `KnowledgeStateV1`,
+`ObjectStateV1`, `FactLockV1`, `CausalRelationV1`, or a complete StoryBible.
