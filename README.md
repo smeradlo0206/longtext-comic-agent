@@ -20,6 +20,13 @@ API:
 - `GET /chapters/{chapter_id}/chunks`
 - `GET /chunks/{chunk_id}`
 
+## 项目文档
+
+- [文档索引](docs/README.md)
+- [领域词汇表 V1](docs/domain_glossary.md)
+- [领域业务规则 V1](docs/domain_rules.md)
+- [完整流水线示例](docs/examples/story_pipeline_example.md)
+
 ## Docker Compose
 
 ```bash

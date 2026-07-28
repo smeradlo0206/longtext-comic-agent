@@ -137,7 +137,7 @@ class DocumentParser:
             if not chunk_text.strip():
                 continue
             char_start = start + match.start()
-            char_end = start + match.end()
+            char_end = char_start + len(chunk_text)
             order = starting_order + len(chunks)
             chunks.append(
                 SourceChunkV1(
