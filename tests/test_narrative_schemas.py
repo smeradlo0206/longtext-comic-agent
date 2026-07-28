@@ -3,9 +3,16 @@ from pydantic import ValidationError
 
 from comic_agent.schemas.base import EvidenceRefV1, RealityLayer
 from comic_agent.schemas.narrative import (
+    ActorResolutionStatus,
+    ClaimProposalV1,
+    ClaimSourceType,
+    ClaimType,
+    EpistemicStatus,
     EventProposalV1,
+    KnowledgeStateProposalV1,
     StateChangeProposalV1,
     TemporalRelationProposalV1,
+    VerificationStatus,
 )
 
 
@@ -28,6 +35,7 @@ def test_event_proposal_minimal_valid_example() -> None:
     assert event.proposal_id == "proposal-event-1"
     assert event.evidence_refs[0].chunk_id == "chunk-1"
     assert event.confidence == 0.9
+    assert event.actor_resolution_status == ActorResolutionStatus.UNSPECIFIED
 
 
 def test_event_proposal_requires_evidence_refs() -> None:
@@ -58,6 +66,138 @@ def test_event_proposal_rejects_extra_fields() -> None:
 
     with pytest.raises(ValidationError):
         EventProposalV1(**payload)
+
+
+def test_event_proposal_known_actor_requires_participants() -> None:
+    event = EventProposalV1(
+        **(
+            event_payload()
+            | {"actor_resolution_status": ActorResolutionStatus.KNOWN}
+        )
+    )
+
+    assert event.actor_resolution_status == ActorResolutionStatus.KNOWN
+
+
+def test_event_proposal_known_actor_rejects_empty_participants() -> None:
+    with pytest.raises(ValidationError):
+        EventProposalV1(
+            **(
+                event_payload()
+                | {
+                    "participant_ids": [],
+                    "actor_resolution_status": ActorResolutionStatus.KNOWN,
+                }
+            )
+        )
+
+
+def test_event_proposal_unknown_actor_requires_empty_participants() -> None:
+    event = EventProposalV1(
+        **(
+            event_payload()
+            | {
+                "participant_ids": [],
+                "actor_resolution_status": ActorResolutionStatus.UNKNOWN,
+            }
+        )
+    )
+
+    assert event.actor_resolution_status == ActorResolutionStatus.UNKNOWN
+    assert event.participant_ids == []
+
+
+def test_event_proposal_unknown_actor_rejects_participants() -> None:
+    with pytest.raises(ValidationError):
+        EventProposalV1(
+            **(event_payload() | {"actor_resolution_status": ActorResolutionStatus.UNKNOWN})
+        )
+
+
+def test_event_proposal_unknown_actor_rejects_unresolved_ref() -> None:
+    with pytest.raises(ValidationError):
+        EventProposalV1(
+            **(
+                event_payload()
+                | {
+                    "participant_ids": [],
+                    "actor_resolution_status": ActorResolutionStatus.UNKNOWN,
+                    "unresolved_actor_ref_id": "unresolved-black-glove",
+                }
+            )
+        )
+
+
+def test_event_proposal_unresolved_actor_accepts_unresolved_ref() -> None:
+    event = EventProposalV1(
+        **(
+            event_payload()
+            | {
+                "participant_ids": [],
+                "actor_resolution_status": ActorResolutionStatus.UNRESOLVED,
+                "unresolved_actor_ref_id": "unresolved-gray-coat-person",
+            }
+        )
+    )
+
+    assert event.unresolved_actor_ref_id == "unresolved-gray-coat-person"
+
+
+def test_event_proposal_unresolved_actor_requires_ref() -> None:
+    with pytest.raises(ValidationError):
+        EventProposalV1(
+            **(
+                event_payload()
+                | {
+                    "participant_ids": [],
+                    "actor_resolution_status": ActorResolutionStatus.UNRESOLVED,
+                }
+            )
+        )
+
+
+def test_event_proposal_not_applicable_actor_accepts_empty_participants() -> None:
+    event = EventProposalV1(
+        **(
+            event_payload()
+            | {
+                "participant_ids": [],
+                "actor_resolution_status": ActorResolutionStatus.NOT_APPLICABLE,
+            }
+        )
+    )
+
+    assert event.actor_resolution_status == ActorResolutionStatus.NOT_APPLICABLE
+
+
+def test_event_proposal_not_applicable_actor_rejects_participants() -> None:
+    with pytest.raises(ValidationError):
+        EventProposalV1(
+            **(
+                event_payload()
+                | {"actor_resolution_status": ActorResolutionStatus.NOT_APPLICABLE}
+            )
+        )
+
+
+def test_event_proposal_unspecified_preserves_legacy_payload() -> None:
+    event = EventProposalV1(**(event_payload() | {"participant_ids": []}))
+
+    assert event.actor_resolution_status == ActorResolutionStatus.UNSPECIFIED
+    assert event.participant_ids == []
+
+
+def test_event_proposal_unspecified_rejects_unresolved_ref() -> None:
+    with pytest.raises(ValidationError):
+        EventProposalV1(
+            **(
+                event_payload()
+                | {
+                    "actor_resolution_status": ActorResolutionStatus.UNSPECIFIED,
+                    "unresolved_actor_ref_id": "unresolved-someone",
+                }
+            )
+        )
 
 
 def test_temporal_relation_known_relation_requires_evidence_refs() -> None:
@@ -112,3 +252,182 @@ def test_state_change_proposal_minimal_valid_example() -> None:
 
     assert state_change.target_entity_id == "char-lin"
     assert state_change.evidence_refs[0].chunk_id == "chunk-1"
+
+
+def claim_payload() -> dict[str, object]:
+    return {
+        "proposal_id": "claim-1",
+        "claim_type": ClaimType.ACCUSATION,
+        "claim_text": "林祁说程放拿了门禁卡。",
+        "source_type": ClaimSourceType.CHARACTER,
+        "source_id": "char-linqi",
+        "target_event_id": "event-card-taken",
+        "verification_status": VerificationStatus.UNVERIFIED,
+        "evidence_refs": [EvidenceRefV1(chunk_id="chunk-claim")],
+        "confidence": 0.74,
+        "reality_layer": RealityLayer.PRIMARY,
+    }
+
+
+def test_claim_proposal_accusation_valid_example() -> None:
+    claim = ClaimProposalV1(**claim_payload())
+
+    assert claim.claim_type == ClaimType.ACCUSATION
+    assert claim.claim_text == "林祁说程放拿了门禁卡。"
+    assert not isinstance(claim, EventProposalV1)
+
+
+def test_claim_proposal_denial_valid_example() -> None:
+    claim = ClaimProposalV1(
+        **(
+            claim_payload()
+            | {
+                "proposal_id": "claim-denial-1",
+                "claim_type": ClaimType.DENIAL,
+                "claim_text": "程放否认自己拿了门禁卡。",
+                "source_id": "char-chengfang",
+            }
+        )
+    )
+
+    assert claim.claim_type == ClaimType.DENIAL
+
+
+def test_claim_proposal_requires_evidence_refs() -> None:
+    with pytest.raises(ValidationError):
+        ClaimProposalV1(**(claim_payload() | {"evidence_refs": []}))
+
+
+@pytest.mark.parametrize("claim_text", ["", "   "])
+def test_claim_proposal_rejects_blank_claim_text(claim_text: str) -> None:
+    with pytest.raises(ValidationError):
+        ClaimProposalV1(**(claim_payload() | {"claim_text": claim_text}))
+
+
+@pytest.mark.parametrize("confidence", [-0.01, 1.01])
+def test_claim_proposal_rejects_confidence_out_of_bounds(confidence: float) -> None:
+    with pytest.raises(ValidationError):
+        ClaimProposalV1(**(claim_payload() | {"confidence": confidence}))
+
+
+def test_claim_proposal_rejects_invalid_claim_type() -> None:
+    with pytest.raises(ValidationError):
+        ClaimProposalV1(**(claim_payload() | {"claim_type": "RUMOR"}))
+
+
+def test_claim_proposal_rejects_invalid_verification_status() -> None:
+    with pytest.raises(ValidationError):
+        ClaimProposalV1(**(claim_payload() | {"verification_status": "TRUE"}))
+
+
+def test_claim_proposal_rejects_extra_fields() -> None:
+    with pytest.raises(ValidationError):
+        ClaimProposalV1(**(claim_payload() | {"canonical_claim_id": "claim-canonical"}))
+
+
+def test_claim_proposal_unknown_source_accepts_missing_source_id() -> None:
+    claim = ClaimProposalV1(
+        **(
+            claim_payload()
+            | {
+                "source_type": ClaimSourceType.UNKNOWN,
+                "source_id": None,
+            }
+        )
+    )
+
+    assert claim.source_type == ClaimSourceType.UNKNOWN
+    assert claim.source_id is None
+
+
+def test_claim_proposal_unknown_source_rejects_source_id() -> None:
+    with pytest.raises(ValidationError):
+        ClaimProposalV1(
+            **(
+                claim_payload()
+                | {
+                    "source_type": ClaimSourceType.UNKNOWN,
+                    "source_id": "char-unknown",
+                }
+            )
+        )
+
+
+def knowledge_payload() -> dict[str, object]:
+    return {
+        "proposal_id": "knowledge-1",
+        "character_id": "char-shence",
+        "knowledge_target_id": "claim-mechanical-door",
+        "epistemic_status": EpistemicStatus.HEARD,
+        "source_claim_id": "claim-mechanical-door",
+        "valid_from_event_id": "event-read-work-order",
+        "reality_layer": RealityLayer.PRIMARY,
+        "evidence_refs": [EvidenceRefV1(chunk_id="chunk-knowledge")],
+        "confidence": 0.82,
+    }
+
+
+def test_knowledge_state_proposal_heard_claim_valid_example() -> None:
+    knowledge = KnowledgeStateProposalV1(**knowledge_payload())
+
+    assert knowledge.epistemic_status == EpistemicStatus.HEARD
+    assert knowledge.source_claim_id == "claim-mechanical-door"
+
+
+def test_knowledge_state_proposal_knows_target_valid_example() -> None:
+    knowledge = KnowledgeStateProposalV1(
+        **(
+            knowledge_payload()
+            | {
+                "proposal_id": "knowledge-knows-1",
+                "epistemic_status": EpistemicStatus.KNOWS,
+                "knowledge_target_id": "fact-backup-door-exists",
+                "source_claim_id": None,
+            }
+        )
+    )
+
+    assert knowledge.epistemic_status == EpistemicStatus.KNOWS
+
+
+def test_knowledge_state_proposal_unaware_reader_visible_boundary_example() -> None:
+    knowledge = KnowledgeStateProposalV1(
+        **(
+            knowledge_payload()
+            | {
+                "proposal_id": "knowledge-unaware-1",
+                "character_id": "char-linqi",
+                "knowledge_target_id": "event-black-gloved-hand-took-card",
+                "epistemic_status": EpistemicStatus.UNAWARE,
+                "source_claim_id": None,
+                "valid_from_event_id": "event-reader-visible-card-taking",
+            }
+        )
+    )
+
+    assert knowledge.epistemic_status == EpistemicStatus.UNAWARE
+
+
+def test_knowledge_state_proposal_requires_evidence_refs() -> None:
+    with pytest.raises(ValidationError):
+        KnowledgeStateProposalV1(**(knowledge_payload() | {"evidence_refs": []}))
+
+
+def test_knowledge_state_proposal_rejects_invalid_epistemic_status() -> None:
+    with pytest.raises(ValidationError):
+        KnowledgeStateProposalV1(**(knowledge_payload() | {"epistemic_status": "SEES"}))
+
+
+@pytest.mark.parametrize("confidence", [-0.01, 1.01])
+def test_knowledge_state_proposal_rejects_confidence_out_of_bounds(
+    confidence: float,
+) -> None:
+    with pytest.raises(ValidationError):
+        KnowledgeStateProposalV1(**(knowledge_payload() | {"confidence": confidence}))
+
+
+def test_knowledge_state_proposal_rejects_extra_fields() -> None:
+    with pytest.raises(ValidationError):
+        KnowledgeStateProposalV1(
+            **(knowledge_payload() | {"visible_to_reader": True})
+        )
