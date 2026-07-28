@@ -6,17 +6,21 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from comic_agent.database.models import (
+    AgentRunModel,
+    EventProposalModel,
     ProjectModel,
     SourceChapterModel,
     SourceChunkModel,
     SourceDocumentModel,
 )
+from comic_agent.schemas.narrative import EventProposalV1
 from comic_agent.schemas.source import (
     ProjectSpecV1,
     SourceChapterV1,
     SourceChunkV1,
     SourceDocumentV1,
 )
+from comic_agent.schemas.workflow import AgentRunV1
 from comic_agent.services.document_parser import ParsedDocument
 
 
@@ -164,6 +168,91 @@ class SourceRepository:
         if row is None:
             return None
         return SourceChunkV1.model_validate(row.payload)
+
+    def save_event_proposal(
+        self,
+        proposal: EventProposalV1,
+        source_chunk: SourceChunkV1,
+        agent_id: str,
+    ) -> EventProposalV1:
+        """Persist one candidate proposal idempotently for a chunk and agent."""
+
+        existing = self._session.scalar(
+            select(EventProposalModel).where(
+                EventProposalModel.source_chunk_id == source_chunk.chunk_id,
+                EventProposalModel.agent_id == agent_id,
+            )
+        )
+        if existing is not None:
+            return EventProposalV1.model_validate(existing.payload)
+
+        self._session.add(
+            EventProposalModel(
+                proposal_id=proposal.proposal_id,
+                project_id=source_chunk.project_id,
+                source_chunk_id=source_chunk.chunk_id,
+                agent_id=agent_id,
+                status="CANDIDATE",
+                payload=proposal.model_dump(mode="json"),
+            )
+        )
+        self._session.commit()
+        return proposal
+
+    def get_event_proposal(self, proposal_id: str) -> EventProposalV1 | None:
+        """Return one stored candidate proposal."""
+
+        row = self._session.get(EventProposalModel, proposal_id)
+        if row is None:
+            return None
+        return EventProposalV1.model_validate(row.payload)
+
+    def list_event_proposals_for_chunk(self, chunk_id: str) -> list[EventProposalV1]:
+        """Return candidate proposals for one source chunk."""
+
+        rows = self._session.scalars(
+            select(EventProposalModel)
+            .where(EventProposalModel.source_chunk_id == chunk_id)
+            .order_by(EventProposalModel.created_at)
+        ).all()
+        return [EventProposalV1.model_validate(row.payload) for row in rows]
+
+    def save_agent_run(self, agent_run: AgentRunV1) -> AgentRunV1:
+        """Persist one immutable agent execution trace."""
+
+        self._session.add(
+            AgentRunModel(
+                agent_run_id=agent_run.agent_run_id,
+                project_id=agent_run.project_id,
+                source_chunk_id=agent_run.source_chunk_id,
+                output_proposal_id=agent_run.output_proposal_id,
+                workflow_run_id=agent_run.workflow_run_id,
+                agent_id=agent_run.agent_id,
+                status=agent_run.status,
+                payload=agent_run.model_dump(mode="json"),
+                created_at=agent_run.created_at,
+            )
+        )
+        self._session.commit()
+        return agent_run
+
+    def get_agent_run(self, agent_run_id: str) -> AgentRunV1 | None:
+        """Return one stored agent execution trace."""
+
+        row = self._session.get(AgentRunModel, agent_run_id)
+        if row is None:
+            return None
+        return AgentRunV1.model_validate(row.payload)
+
+    def list_agent_runs_for_chunk(self, chunk_id: str) -> list[AgentRunV1]:
+        """Return agent execution traces for one source chunk."""
+
+        rows = self._session.scalars(
+            select(AgentRunModel)
+            .where(AgentRunModel.source_chunk_id == chunk_id)
+            .order_by(AgentRunModel.created_at)
+        ).all()
+        return [AgentRunV1.model_validate(row.payload) for row in rows]
 
     def count_documents(self) -> int:
         """Return total source document count."""

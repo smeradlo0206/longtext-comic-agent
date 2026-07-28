@@ -109,6 +109,30 @@ def test_event_proposal_contains_evidence_ref() -> None:
     assert event.evidence_refs[0].chunk_id == "chunk-1"
 
 
+def test_event_proposal_rejects_empty_evidence_refs() -> None:
+    with pytest.raises(ValidationError):
+        EventProposalV1(
+            proposal_id="proposal-1",
+            event_type="MOCK_EVENT",
+            summary="A mock event.",
+            evidence_refs=[],
+            confidence=1.0,
+            reality_layer=RealityLayer.PRIMARY,
+        )
+
+
+def test_event_proposal_rejects_blank_summary() -> None:
+    with pytest.raises(ValidationError):
+        EventProposalV1(
+            proposal_id="proposal-1",
+            event_type="MOCK_EVENT",
+            summary="",
+            evidence_refs=[EvidenceRefV1(chunk_id="chunk-1")],
+            confidence=1.0,
+            reality_layer=RealityLayer.PRIMARY,
+        )
+
+
 def test_project_spec_valid_example() -> None:
     project = ProjectSpecV1(
         id="project-1",

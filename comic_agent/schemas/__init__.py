@@ -17,8 +17,11 @@ from comic_agent.schemas.source import (
 )
 from comic_agent.schemas.storyboard import SceneSpecV1, StoryBeatV1
 from comic_agent.schemas.visual import PanelSpecV1
+from comic_agent.schemas.workflow import AgentRunStatus, AgentRunV1
 
 __all__ = [
+    "AgentRunStatus",
+    "AgentRunV1",
     "CharacterStateV1",
     "EntityProposalV1",
     "EventProposalV1",

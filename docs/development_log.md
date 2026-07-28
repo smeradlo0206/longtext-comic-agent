@@ -1,0 +1,37 @@
+# Development Log
+
+## 2026-07-28: Phase 1 Source-to-Proposal Closed Loop
+
+Implemented the first demonstrable workflow without a real LLM or image provider:
+
+```text
+UTF-8 TXT upload
+-> chapter and SourceChunk parsing
+-> selected SourceChunk
+-> MockEventAgent
+-> EventProposal validation
+-> EvidenceRef source validation
+-> CANDIDATE proposal persistence
+-> AgentRun audit record
+```
+
+### Delivered
+
+- `EventProposalV1` now requires a non-empty summary and at least one evidence reference.
+- `CommitService` verifies that referenced chunks exist, quote ranges stay in bounds, and quote text matches source text.
+- `MockEventAgent` accepts one `SourceChunkV1` and creates a deterministic `MOCK_EVENT` with an exact full-chunk quote.
+- API endpoints provide Mock extraction plus candidate-proposal and agent-run queries.
+- Candidate proposals are persisted with `CANDIDATE` status and remain separate from canonical story data.
+- Repeated Mock extraction for one chunk reuses its proposal but creates a new `AgentRun` audit entry.
+- Added migrations for `event_proposals` and AgentRun input/output links.
+
+### Verification
+
+- `python -m pytest`: 29 passed.
+- `python -m ruff check .`: passed.
+- `python -m mypy comic_agent`: passed.
+- JSON Schema export and Alembic migrations were validated with temporary SQLite databases.
+
+### Deliberate Phase Boundary
+
+The Mock Agent does not understand text or call an LLM. It validates the typed proposal and evidence-traceability pipeline only. Canonical story-event commits remain intentionally unimplemented.

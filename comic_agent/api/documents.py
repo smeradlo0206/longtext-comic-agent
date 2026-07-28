@@ -1,12 +1,17 @@
 """Document import and source query routes."""
 
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
+from comic_agent.agents.mocks import MockEventAgent
 from comic_agent.api.dependencies import get_repository
 from comic_agent.repositories.source_repository import SourceRepository
+from comic_agent.schemas.narrative import EventProposalV1
 from comic_agent.schemas.source import SourceChunkV1
+from comic_agent.schemas.workflow import AgentRunStatus, AgentRunV1
+from comic_agent.services.commit_service import CommitService
 from comic_agent.services.document_parser import DocumentParser
 
 router = APIRouter()
@@ -65,3 +70,83 @@ def get_chunk(
     if chunk is None:
         raise HTTPException(status_code=404, detail="Chunk not found")
     return chunk
+
+
+@router.post("/chunks/{chunk_id}/mock-event", response_model=EventProposalV1)
+def extract_mock_event(
+    chunk_id: str,
+    repository: RepositoryDep,
+) -> EventProposalV1:
+    """Create a candidate proposal and record the deterministic agent execution."""
+
+    chunk = repository.get_chunk(chunk_id)
+    if chunk is None:
+        raise HTTPException(status_code=404, detail="Chunk not found")
+    proposal = MockEventAgent().run(chunk)
+    CommitService(repository).validate_story_proposal_evidence(proposal)
+    stored_proposal = repository.save_event_proposal(
+        proposal=proposal,
+        source_chunk=chunk,
+        agent_id=MockEventAgent.spec.agent_id,
+    )
+    repository.save_agent_run(
+        AgentRunV1(
+            agent_run_id=f"agent-run-{uuid4().hex}",
+            project_id=chunk.project_id,
+            source_chunk_id=chunk.chunk_id,
+            agent_id=MockEventAgent.spec.agent_id,
+            status=AgentRunStatus.SUCCEEDED,
+            output_proposal_id=stored_proposal.proposal_id,
+        )
+    )
+    return stored_proposal
+
+
+@router.get("/event-proposals/{proposal_id}", response_model=EventProposalV1)
+def get_event_proposal(
+    proposal_id: str,
+    repository: RepositoryDep,
+) -> EventProposalV1:
+    """Return a stored candidate event proposal by id."""
+
+    proposal = repository.get_event_proposal(proposal_id)
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="Event proposal not found")
+    return proposal
+
+
+@router.get("/chunks/{chunk_id}/event-proposals", response_model=list[EventProposalV1])
+def list_chunk_event_proposals(
+    chunk_id: str,
+    repository: RepositoryDep,
+) -> list[EventProposalV1]:
+    """List stored candidate event proposals for a source chunk."""
+
+    if repository.get_chunk(chunk_id) is None:
+        raise HTTPException(status_code=404, detail="Chunk not found")
+    return repository.list_event_proposals_for_chunk(chunk_id)
+
+
+@router.get("/agent-runs/{agent_run_id}", response_model=AgentRunV1)
+def get_agent_run(
+    agent_run_id: str,
+    repository: RepositoryDep,
+) -> AgentRunV1:
+    """Return one stored agent execution trace."""
+
+    agent_run = repository.get_agent_run(agent_run_id)
+    if agent_run is None:
+        raise HTTPException(status_code=404, detail="Agent run not found")
+    return agent_run
+
+
+@router.get("/chunks/{chunk_id}/agent-runs", response_model=list[AgentRunV1])
+def list_chunk_agent_runs(
+    chunk_id: str,
+    repository: RepositoryDep,
+) -> list[AgentRunV1]:
+    """List agent execution traces for a source chunk."""
+
+    if repository.get_chunk(chunk_id) is None:
+        raise HTTPException(status_code=404, detail="Chunk not found")
+    return repository.list_agent_runs_for_chunk(chunk_id)

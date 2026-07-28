@@ -38,10 +38,13 @@ class EventProposalV1(StrictBaseModel):
     schema_version: Literal["1.0"] = Field(default="1.0", description="Schema version.")
     proposal_id: str = Field(description="Proposal id.")
     event_type: str = Field(description="Event type label.")
-    summary: str = Field(description="Faithful event summary.")
+    summary: str = Field(min_length=1, description="Faithful event summary.")
     participant_ids: list[str] = Field(default_factory=list, description="Participant entity ids.")
     location_id: str | None = Field(default=None, description="Location entity id if known.")
-    evidence_refs: list[EvidenceRefV1] = Field(description="Source evidence references.")
+    evidence_refs: list[EvidenceRefV1] = Field(
+        min_length=1,
+        description="At least one source evidence reference is required.",
+    )
     confidence: float = Field(ge=0, le=1, description="Agent confidence.")
     reality_layer: RealityLayer = Field(description="Narrative reality layer.")
 

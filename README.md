@@ -19,6 +19,13 @@ API:
 - `GET /projects/{project_id}/chapters`
 - `GET /chapters/{chapter_id}/chunks`
 - `GET /chunks/{chunk_id}`
+- `POST /chunks/{chunk_id}/mock-event`
+- `GET /chunks/{chunk_id}/event-proposals`
+- `GET /event-proposals/{proposal_id}`
+- `GET /chunks/{chunk_id}/agent-runs`
+- `GET /agent-runs/{agent_run_id}`
+
+Development progress: [development log](docs/development_log.md).
 
 ## Docker Compose
 

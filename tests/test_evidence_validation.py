@@ -45,3 +45,51 @@ def test_commit_service_rejects_missing_evidence(temp_repository) -> None:  # ty
 
     with pytest.raises(ValueError, match="EvidenceRef"):
         CommitService(temp_repository).validate_story_proposal_evidence(event)
+
+
+def test_commit_service_rejects_out_of_bounds_quote_range(temp_repository) -> None:  # type: ignore[no-untyped-def]
+    parsed = DocumentParser().parse_txt("project-1", "demo.txt", "Chapter 1\n\nExact source text.")
+    temp_repository.import_parsed_document(parsed)
+    chunk = parsed.chunks[0]
+    event = EventProposalV1(
+        proposal_id="proposal-1",
+        event_type="MOCK_EVENT",
+        summary="A mock event.",
+        evidence_refs=[
+            EvidenceRefV1(
+                chunk_id=chunk.chunk_id,
+                quote_start=0,
+                quote_end=len(chunk.text) + 1,
+                quote_text=chunk.text,
+            )
+        ],
+        confidence=1.0,
+        reality_layer=RealityLayer.PRIMARY,
+    )
+
+    with pytest.raises(ValueError, match="range exceeds"):
+        CommitService(temp_repository).validate_story_proposal_evidence(event)
+
+
+def test_commit_service_rejects_mismatched_quote_text(temp_repository) -> None:  # type: ignore[no-untyped-def]
+    parsed = DocumentParser().parse_txt("project-1", "demo.txt", "Chapter 1\n\nExact source text.")
+    temp_repository.import_parsed_document(parsed)
+    chunk = parsed.chunks[0]
+    event = EventProposalV1(
+        proposal_id="proposal-1",
+        event_type="MOCK_EVENT",
+        summary="A mock event.",
+        evidence_refs=[
+            EvidenceRefV1(
+                chunk_id=chunk.chunk_id,
+                quote_start=0,
+                quote_end=5,
+                quote_text="Wrong",
+            )
+        ],
+        confidence=1.0,
+        reality_layer=RealityLayer.PRIMARY,
+    )
+
+    with pytest.raises(ValueError, match="quote_text"):
+        CommitService(temp_repository).validate_story_proposal_evidence(event)

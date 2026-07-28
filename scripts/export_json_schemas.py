@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pydantic import BaseModel
 
 from comic_agent.schemas import (
+    AgentRunV1,
     CharacterStateV1,
     EntityProposalV1,
     EventProposalV1,
@@ -27,6 +28,7 @@ from comic_agent.schemas import (
 )
 
 SCHEMAS: list[type[BaseModel]] = [
+    AgentRunV1,
     EvidenceRefV1,
     ProjectSpecV1,
     SourceDocumentV1,

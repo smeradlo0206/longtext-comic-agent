@@ -78,6 +78,25 @@ class SourceChunkModel(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
 
+class EventProposalModel(Base):
+    """Stored candidate event proposed by an agent, never canonical story data."""
+
+    __tablename__ = "event_proposals"
+    __table_args__ = (
+        UniqueConstraint("source_chunk_id", "agent_id", name="uq_event_proposal_chunk_agent"),
+    )
+
+    proposal_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    source_chunk_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
 class WorkflowRunModel(Base):
     """Stored workflow run shell."""
 
@@ -98,6 +117,9 @@ class AgentRunModel(Base):
     __tablename__ = "agent_runs"
 
     agent_run_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    project_id: Mapped[str | None] = mapped_column(String(128), index=True, nullable=True)
+    source_chunk_id: Mapped[str | None] = mapped_column(String(128), index=True, nullable=True)
+    output_proposal_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     workflow_run_id: Mapped[str | None] = mapped_column(String(128), index=True, nullable=True)
     agent_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     status: Mapped[str] = mapped_column(String(64), nullable=False)
