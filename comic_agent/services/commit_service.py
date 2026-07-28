@@ -51,3 +51,17 @@ class CommitService:
         chunk = self._evidence_lookup.get_chunk(evidence_ref.chunk_id)
         if chunk is None:
             raise ValueError(f"EvidenceRef chunk not found: {evidence_ref.chunk_id}")
+
+        has_range = evidence_ref.quote_start is not None and evidence_ref.quote_end is not None
+        if has_range:
+            quote_start = evidence_ref.quote_start
+            quote_end = evidence_ref.quote_end
+            if quote_start is None or quote_end is None:
+                raise ValueError("Evidence quote range out of bounds")
+            if quote_start < 0 or quote_end > len(chunk.text):
+                raise ValueError("Evidence quote range out of bounds")
+            if evidence_ref.quote_text is not None:
+                if chunk.text[quote_start:quote_end] != evidence_ref.quote_text:
+                    raise ValueError("Evidence quote range does not match quote_text")
+        elif evidence_ref.quote_text is not None and evidence_ref.quote_text not in chunk.text:
+            raise ValueError("Evidence quote_text not found in source chunk")

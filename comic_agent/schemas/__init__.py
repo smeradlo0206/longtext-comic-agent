@@ -17,14 +17,31 @@ from comic_agent.schemas.source import (
 )
 from comic_agent.schemas.storyboard import SceneSpecV1, StoryBeatV1
 from comic_agent.schemas.visual import PanelSpecV1
+from comic_agent.schemas.workflow import (
+    AgentInputRefV1,
+    AgentOutputRefV1,
+    AgentRunStatus,
+    AgentRunV1,
+    MockProviderResultV1,
+    ProviderResultV1,
+    ProviderType,
+    WorkflowRunV1,
+)
 
 __all__ = [
+    "AgentInputRefV1",
+    "AgentOutputRefV1",
+    "AgentRunStatus",
+    "AgentRunV1",
     "CharacterStateV1",
     "EntityProposalV1",
     "EventProposalV1",
     "EvidenceRefV1",
+    "MockProviderResultV1",
     "PanelSpecV1",
     "ProjectSpecV1",
+    "ProviderResultV1",
+    "ProviderType",
     "QAResultV1",
     "RecordStatus",
     "RealityLayer",
@@ -36,4 +53,5 @@ __all__ = [
     "StateChangeProposalV1",
     "StoryBeatV1",
     "TemporalRelationProposalV1",
+    "WorkflowRunV1",
 ]

@@ -9,12 +9,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pydantic import BaseModel
 
 from comic_agent.schemas import (
+    AgentInputRefV1,
+    AgentOutputRefV1,
+    AgentRunV1,
     CharacterStateV1,
     EntityProposalV1,
     EventProposalV1,
     EvidenceRefV1,
+    MockProviderResultV1,
     PanelSpecV1,
     ProjectSpecV1,
+    ProviderResultV1,
     QAResultV1,
     RepairPlanV1,
     SceneSpecV1,
@@ -24,6 +29,7 @@ from comic_agent.schemas import (
     StateChangeProposalV1,
     StoryBeatV1,
     TemporalRelationProposalV1,
+    WorkflowRunV1,
 )
 
 SCHEMAS: list[type[BaseModel]] = [
@@ -36,6 +42,12 @@ SCHEMAS: list[type[BaseModel]] = [
     EventProposalV1,
     TemporalRelationProposalV1,
     StateChangeProposalV1,
+    WorkflowRunV1,
+    AgentInputRefV1,
+    AgentOutputRefV1,
+    ProviderResultV1,
+    MockProviderResultV1,
+    AgentRunV1,
     CharacterStateV1,
     SceneSpecV1,
     StoryBeatV1,

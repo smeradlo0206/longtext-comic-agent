@@ -28,7 +28,10 @@ class EntityProposalV1(StrictBaseModel):
     entity_type: str = Field(description="Entity type, e.g. CHARACTER, LOCATION, PROP.")
     canonical_name: str = Field(description="Proposed canonical name.")
     aliases: list[str] = Field(default_factory=list, description="Known aliases.")
-    evidence_refs: list[EvidenceRefV1] = Field(description="Source evidence references.")
+    evidence_refs: list[EvidenceRefV1] = Field(
+        min_length=1,
+        description="Source evidence references.",
+    )
     confidence: float = Field(ge=0, le=1, description="Agent confidence.")
 
 
@@ -41,7 +44,10 @@ class EventProposalV1(StrictBaseModel):
     summary: str = Field(description="Faithful event summary.")
     participant_ids: list[str] = Field(default_factory=list, description="Participant entity ids.")
     location_id: str | None = Field(default=None, description="Location entity id if known.")
-    evidence_refs: list[EvidenceRefV1] = Field(description="Source evidence references.")
+    evidence_refs: list[EvidenceRefV1] = Field(
+        min_length=1,
+        description="Source evidence references.",
+    )
     confidence: float = Field(ge=0, le=1, description="Agent confidence.")
     reality_layer: RealityLayer = Field(description="Narrative reality layer.")
 
@@ -88,5 +94,8 @@ class StateChangeProposalV1(StrictBaseModel):
     new_value: Any | None = Field(default=None, description="New value if known.")
     persistent: bool = Field(description="Whether this state persists after the event.")
     reality_layer: RealityLayer = Field(description="Narrative reality layer.")
-    evidence_refs: list[EvidenceRefV1] = Field(description="Source evidence references.")
+    evidence_refs: list[EvidenceRefV1] = Field(
+        min_length=1,
+        description="Source evidence references.",
+    )
     confidence: float = Field(ge=0, le=1, description="Agent confidence.")
