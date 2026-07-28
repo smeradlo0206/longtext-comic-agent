@@ -17,6 +17,27 @@ referenced `SourceChunkV1.text`. This is a compatibility-impacting validation
 tightening for malformed draft records, but it does not require a database
 migration because no persisted canonical story data exists in phase one.
 
+2026-07-28 P1 initial narrative semantics update: this keeps
+`schema_version = "1.0"` because the change is an additive V1 draft expansion for
+proposal-layer semantics. It adds `ClaimProposalV1` and
+`KnowledgeStateProposalV1` as candidate outputs only; neither is canonical story
+data, and `verification_status = CONFIRMED` still does not bypass CommitService.
+`EventProposalV1` now includes `actor_resolution_status` and
+`unresolved_actor_ref_id` so agents can distinguish `KNOWN`, `UNKNOWN`,
+`UNRESOLVED`, `NOT_APPLICABLE`, and transitional `UNSPECIFIED` actor cases
+without inventing Character ids. `UNSPECIFIED` preserves compatibility with old
+draft payloads and may be removed or tightened in a later schema revision.
+
+Validation impact: explicit `KNOWN` requires non-empty `participant_ids`;
+explicit `UNKNOWN`, `UNRESOLVED`, and `NOT_APPLICABLE` reject invented
+participants; `UNRESOLVED` requires an `unresolved_actor_ref_id`; `UNSPECIFIED`
+does not force `participant_ids` but rejects `unresolved_actor_ref_id`. The new
+claim and knowledge proposals require EvidenceRef lists, confidence in `[0, 1]`,
+valid enums, no extra fields, and non-blank claim text. Database migration
+impact: none. This does not add canonical story tables, database persistence,
+Claim merge, KnowledgeState lifecycle management, `NarrativePerspectiveV1`, or
+CommitService conflict arbitration.
+
 | Schema | Purpose | Required Fields | Evidence | Readers | Proposal Producer | Canonical Commit |
 | --- | --- | --- | --- | --- | --- | --- |
 | BaseRecordV1 | Common record metadata. | id, project_id, revision, status, timestamps, created_by | N/A | Services | Services | CommitService |
@@ -27,6 +48,9 @@ migration because no persisted canonical story data exists in phase one.
 | SourceChunkV1 | Evidence atom. | chunk_id, document_id, chapter_id, text, checksum | Self | All agents | DocumentParser | SourceRepository |
 | EntityProposalV1 | Candidate entity. | proposal_id, type, name, evidence_refs, confidence | Required | Merge services | Entity agents | CommitService later |
 | EventProposalV1 | Candidate event. | proposal_id, type, non-empty summary, non-empty evidence_refs, confidence | At least one reference required; persisted with CANDIDATE status | Temporal/state agents | Event agent | CommitService later |
+| EventProposalV1 | Candidate event, including explicit actor-resolution state. | proposal_id, type, non-empty summary, non-empty evidence_refs, confidence | At least one reference required; persisted with CANDIDATE status | Temporal/state agents | Event agent | CommitService later |
+| ClaimProposalV1 | Candidate assertion, denial, accusation, hypothesis, memory, interpretation, or prediction. | proposal_id, claim_type, claim_text, source_type, verification_status, evidence_refs, confidence, reality_layer | Required | CommitService, review, knowledge agents | Claim/knowledge agents | CommitService later |
+| KnowledgeStateProposalV1 | Candidate character knowledge or belief state. | proposal_id, character_id, knowledge_target_id, epistemic_status, reality_layer, evidence_refs, confidence | Required | Dialogue, panel, review, knowledge agents | Knowledge agents | CommitService later |
 | TemporalRelationProposalV1 | Candidate event relation. | proposal_id, source, target, relation, confidence | Required unless UNKNOWN | Temporal solver | Temporal agent | CommitService later |
 | StateChangeProposalV1 | Candidate state mutation. | proposal_id, event_id, target, path, evidence_refs | Required | State compiler | State agent | CommitService later |
 | AgentInputRefV1 | Bounded object passed into an AgentRun. | object_id, object_schema, role | In referenced object if applicable | Workflow, audit | Agent wrapper | N/A |
@@ -115,5 +139,7 @@ They still must be internally coherent:
   or inline `provider_result`.
 - A failed agent run may have no outputs, but it must include `error_message`.
 
-This update does not introduce `ClaimProposalV1`, `KnowledgeStateV1`,
-`ObjectStateV1`, `FactLockV1`, `CausalRelationV1`, or a complete StoryBible.
+This update introduces `ClaimProposalV1` and `KnowledgeStateProposalV1` only as
+proposal schemas. It still does not introduce canonical `ClaimV1`,
+`KnowledgeStateV1`, `ObjectStateV1`, `FactLockV1`, `CausalRelationV1`, or a
+complete StoryBible.
