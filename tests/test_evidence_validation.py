@@ -91,7 +91,12 @@ def test_commit_service_accepts_matching_quote_range_and_text(temp_repository) -
     start = chunk.text.index("伞")
     end = start + len("伞递给")
     event = _event_with_evidence(
-        EvidenceRefV1(chunk_id=chunk.chunk_id, quote_start=start, quote_end=end, quote_text="伞递给")
+        EvidenceRefV1(
+            chunk_id=chunk.chunk_id,
+            quote_start=start,
+            quote_end=end,
+            quote_text="伞递给",
+        )
     )
 
     CommitService(temp_repository).validate_story_proposal_evidence(event)

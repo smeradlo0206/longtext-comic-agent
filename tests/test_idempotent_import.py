@@ -131,11 +131,19 @@ def test_same_text_in_different_projects_is_independent(temp_repository) -> None
     assert [chapter.project_id for chapter in temp_repository.list_chapters("project-2")] == [
         "project-2"
     ]
-    assert [chunk.project_id for chunk in temp_repository.list_document_chunks(first.document.document_id)] == [
+    first_project_chunk_ids = [
+        chunk.project_id
+        for chunk in temp_repository.list_document_chunks(first.document.document_id)
+    ]
+    second_project_chunk_ids = [
+        chunk.project_id
+        for chunk in temp_repository.list_document_chunks(second.document.document_id)
+    ]
+    assert first_project_chunk_ids == [
         "project-1",
         "project-1",
     ]
-    assert [chunk.project_id for chunk in temp_repository.list_document_chunks(second.document.document_id)] == [
+    assert second_project_chunk_ids == [
         "project-2",
         "project-2",
     ]

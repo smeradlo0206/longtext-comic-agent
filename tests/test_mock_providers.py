@@ -1,7 +1,7 @@
 import pytest
 
-from comic_agent.providers.mocks import MockImageProvider, MockLLMProvider, MockMode
 from comic_agent.agents.mocks import MockEventAgent
+from comic_agent.providers.mocks import MockImageProvider, MockLLMProvider, MockMode
 from comic_agent.schemas.base import EvidenceRefV1
 from comic_agent.schemas.narrative import EventProposalV1
 from comic_agent.schemas.workflow import AgentRunV1, ProviderResultV1, ProviderType

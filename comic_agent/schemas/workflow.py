@@ -151,9 +151,13 @@ class AgentRunV1(StrictBaseModel):
         if self.status == AgentRunStatus.SUCCEEDED:
             if not self.input_chunk_ids:
                 raise ValueError("succeeded agent runs require input_chunk_ids")
-            has_output = bool(self.output_proposal_ids or self.provider_result_id or self.provider_result)
+            has_output = bool(
+                self.output_proposal_ids or self.provider_result_id or self.provider_result
+            )
             if not has_output:
-                raise ValueError("succeeded agent runs require output_proposal_ids or provider_result")
+                raise ValueError(
+                    "succeeded agent runs require output_proposal_ids or provider_result"
+                )
             if self.error_message is not None:
                 raise ValueError("succeeded agent runs cannot include error_message")
         elif self.status == AgentRunStatus.FAILED and not self.error_message:

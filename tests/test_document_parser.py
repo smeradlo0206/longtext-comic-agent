@@ -2,7 +2,6 @@ from pathlib import Path
 
 from comic_agent.services.document_parser import DocumentParser
 
-
 LONG_FIXTURE = Path("tests/fixtures/import/long_mixed_chapters.txt")
 LONG_EXPECTED_TITLES = [
     "第一章 旧馆门口",

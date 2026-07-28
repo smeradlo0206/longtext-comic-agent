@@ -6,7 +6,6 @@ from fastapi.testclient import TestClient
 from comic_agent.main import create_app
 from comic_agent.services.document_parser import DocumentParser
 
-
 PROJECT_PAYLOAD = {
     "id": "project-1",
     "name": "TXT Import Project",
@@ -358,7 +357,7 @@ def test_queries_do_not_leak_between_projects(tmp_path: Path) -> None:
             files={
                 "file": (
                     "project_2.txt",
-                    "第一章 项目二\n\n项目二第一段。\n\n项目二第二段。".encode("utf-8"),
+                    "第一章 项目二\n\n项目二第一段。\n\n项目二第二段。".encode(),
                     "text/plain",
                 )
             },
