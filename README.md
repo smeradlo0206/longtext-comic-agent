@@ -52,6 +52,10 @@ uv run python scripts/export_json_schemas.py
 docker compose config
 ```
 
+## Test Assets
+
+- [Golden Corpus V1](tests/golden_corpus/)：用于领域词汇、业务规则和 Schema 压力测试的黄金语料。
+
 ## Architecture Notes
 
 - `comic_agent/schemas` is the only source of schema truth.
