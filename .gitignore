@@ -10,5 +10,8 @@ __pycache__/
 dist/
 build/
 schema_exports/
+output/
+tmp/
+local_eval/
 .coverage
 htmlcov/
