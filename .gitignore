@@ -13,5 +13,6 @@ schema_exports/
 output/
 tmp/
 local_eval/
+local_web_console/
 .coverage
 htmlcov/

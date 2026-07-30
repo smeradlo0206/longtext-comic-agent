@@ -59,6 +59,14 @@ class SourceRepository:
         self._session.commit()
         return project
 
+    def get_project(self, project_id: str) -> ProjectSpecV1 | None:
+        """Return a project by id."""
+
+        row = self._session.get(ProjectModel, project_id)
+        if row is None:
+            return None
+        return ProjectSpecV1.model_validate(row.payload)
+
     def import_parsed_document(self, parsed: ParsedDocument) -> ImportResult:
         """Persist parsed source data without creating duplicates."""
 
