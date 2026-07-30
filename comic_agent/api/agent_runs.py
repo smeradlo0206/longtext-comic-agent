@@ -1,0 +1,182 @@
+"""Agent run routes for the local development workbench."""
+
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Body, Depends, HTTPException, status
+
+from comic_agent.api.dependencies import get_agent_run_repository, get_repository
+from comic_agent.providers.mocks import MockLLMProvider
+from comic_agent.repositories.agent_run_repository import AgentRunRepository
+from comic_agent.repositories.source_repository import SourceRepository
+from comic_agent.schemas.base import RealityLayer
+from comic_agent.schemas.workflow import AgentRunV1
+from comic_agent.services.id_service import checksum_text, stable_id
+from comic_agent.workflows.mock_event_workflow import MockEventWorkflow
+
+router = APIRouter()
+
+SourceRepositoryDep = Annotated[SourceRepository, Depends(get_repository)]
+AgentRunRepositoryDep = Annotated[AgentRunRepository, Depends(get_agent_run_repository)]
+
+
+@router.get("/projects/{project_id}/agent-runs")
+def list_project_agent_runs(
+    project_id: str,
+    repository: AgentRunRepositoryDep,
+) -> dict[str, list[dict[str, Any]]]:
+    """List sanitized agent runs for a project."""
+
+    runs = repository.list_agent_runs(project_id)
+    return {"items": [_agent_run_summary(run) for run in runs]}
+
+
+@router.post(
+    "/projects/{project_id}/agent-runs/mock-event",
+    status_code=status.HTTP_201_CREATED,
+)
+def run_mock_event(
+    project_id: str,
+    payload: Annotated[dict[str, Any], Body()],
+    source_repository: SourceRepositoryDep,
+    agent_run_repository: AgentRunRepositoryDep,
+) -> dict[str, Any]:
+    """Run the deterministic mock Event workflow over selected chunks."""
+
+    chunk_ids = [str(chunk_id) for chunk_id in payload.get("chunk_ids", [])]
+    if not chunk_ids:
+        raise HTTPException(status_code=400, detail="chunk_ids is required")
+
+    chunks = []
+    for chunk_id in chunk_ids:
+        chunk = source_repository.get_chunk(chunk_id)
+        if chunk is None or chunk.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Chunk not found")
+        chunks.append(chunk)
+
+    provider = MockLLMProvider(
+        response=_mock_event_response(project_id, chunks[0].chunk_id, chunks[0].text)
+    )
+    workflow = MockEventWorkflow(
+        source_repository=source_repository,
+        agent_run_repository=agent_run_repository,
+        provider=provider,
+    )
+    result = workflow.run(project_id=project_id, chunk_ids=chunk_ids)
+    return {
+        "agent_run_id": result.agent_run.agent_run_id,
+        "status": result.agent_run.status,
+        "proposal": result.proposal.model_dump(mode="json") if result.proposal else None,
+        "evidence_validation_passed": result.agent_run.payload.get("evidence_validation_passed"),
+        "error_message": result.agent_run.error_message,
+    }
+
+
+@router.get("/agent-runs/{agent_run_id}")
+def get_agent_run(
+    agent_run_id: str,
+    repository: AgentRunRepositoryDep,
+) -> dict[str, Any]:
+    """Return a sanitized AgentRun detail."""
+
+    run = repository.get_agent_run(agent_run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="AgentRun not found")
+    return _agent_run_detail(run)
+
+
+@router.get("/agent-runs/{agent_run_id}/evidence")
+def get_agent_run_evidence(
+    agent_run_id: str,
+    source_repository: SourceRepositoryDep,
+    agent_run_repository: AgentRunRepositoryDep,
+) -> dict[str, list[dict[str, Any]]]:
+    """Return short evidence snippets for one AgentRun."""
+
+    run = agent_run_repository.get_agent_run(agent_run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="AgentRun not found")
+
+    proposal = run.payload.get("proposal")
+    evidence_refs = proposal.get("evidence_refs", []) if isinstance(proposal, dict) else []
+    items = []
+    for evidence in evidence_refs:
+        if not isinstance(evidence, dict):
+            continue
+        chunk_id = str(evidence.get("chunk_id", ""))
+        quote = evidence.get("quote_text")
+        quote_text = str(quote) if quote is not None else ""
+        chunk = source_repository.get_chunk(chunk_id)
+        validation_status = "failed"
+        char_start = evidence.get("quote_start")
+        char_end = evidence.get("quote_end")
+        if chunk is not None and quote_text:
+            index = chunk.text.find(quote_text)
+            if index >= 0:
+                validation_status = "passed"
+                base = chunk.char_start or 0
+                char_start = base + index
+                char_end = char_start + len(quote_text)
+        items.append(
+            {
+                "chunk_id": chunk_id,
+                "quote": quote_text[:40],
+                "char_start": char_start,
+                "char_end": char_end,
+                "validation_status": validation_status,
+            }
+        )
+    return {"items": items}
+
+
+def _mock_event_response(project_id: str, chunk_id: str, chunk_text: str) -> dict[str, Any]:
+    quote = _short_quote(chunk_text)
+    seed = checksum_text(f"{project_id}:{chunk_id}:{quote}")
+    return {
+        "proposal_id": stable_id("proposal", seed),
+        "event_type": "mock_source_event",
+        "summary": "Mock event proposal generated from the selected source chunk.",
+        "participant_ids": [],
+        "actor_resolution_status": "UNKNOWN",
+        "location_id": None,
+        "evidence_refs": [{"chunk_id": chunk_id, "quote_text": quote}],
+        "confidence": 0.8,
+        "reality_layer": RealityLayer.PRIMARY,
+    }
+
+
+def _short_quote(text: str) -> str:
+    compact = text.strip()
+    return compact[: min(8, len(compact))]
+
+
+def _agent_run_summary(run: AgentRunV1) -> dict[str, Any]:
+    provider_result = run.provider_result
+    return {
+        "agent_run_id": run.agent_run_id,
+        "project_id": run.project_id,
+        "agent_name": run.agent_name,
+        "status": run.status,
+        "output_schema": run.output_schema,
+        "input_chunk_ids": run.input_chunk_ids,
+        "provider_name": provider_result.provider_name if provider_result else None,
+        "provider_type": provider_result.provider_type if provider_result else None,
+        "evidence_validation_passed": run.payload.get("evidence_validation_passed"),
+        "created_at": run.started_at.isoformat(),
+    }
+
+
+def _agent_run_detail(run: AgentRunV1) -> dict[str, Any]:
+    return {
+        "agent_run_id": run.agent_run_id,
+        "project_id": run.project_id,
+        "agent_name": run.agent_name,
+        "status": run.status,
+        "input_chunk_ids": run.input_chunk_ids,
+        "output_schema": run.output_schema,
+        "provider_result": (
+            run.provider_result.model_dump(mode="json") if run.provider_result else None
+        ),
+        "proposal": run.payload.get("proposal"),
+        "evidence_validation_passed": run.payload.get("evidence_validation_passed"),
+        "error_message": run.error_message,
+    }

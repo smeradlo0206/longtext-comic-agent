@@ -95,7 +95,7 @@ Local verification snapshot from 2026-07-30:
 | --- | --- |
 | `uv run ruff check comic_agent tests scripts` | Passed |
 | `uv run mypy comic_agent` | Passed |
-| `uv run pytest` | 167 passed, 1 dependency deprecation warning |
+| `uv run pytest` | 179 passed, 1 dependency deprecation warning |
 | `uv run python scripts/export_json_schemas.py` | Passed |
 
 ## Sanitized Real Excerpt Evaluation

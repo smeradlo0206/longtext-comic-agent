@@ -44,6 +44,18 @@ class AgentRunRepository:
             return None
         return AgentRunV1.model_validate(row.payload)
 
+    def list_agent_runs(self, project_id: str) -> list[AgentRunV1]:
+        """Return agent runs for one project ordered by creation time."""
+
+        rows = self._session.scalars(
+            select(AgentRunModel).order_by(AgentRunModel.created_at, AgentRunModel.agent_run_id)
+        ).all()
+        return [
+            AgentRunV1.model_validate(row.payload)
+            for row in rows
+            if row.payload.get("project_id") == project_id
+        ]
+
     def count_agent_runs(self) -> int:
         """Return total agent run count."""
 
