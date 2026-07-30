@@ -17,6 +17,7 @@ def test_llm_status_reports_key_presence_without_value(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("LLM_API_KEY", "secret-test-key")
+    monkeypatch.setenv("ENABLE_REAL_LLM", "false")
     get_settings.cache_clear()
     try:
         with create_test_client(tmp_path) as client:

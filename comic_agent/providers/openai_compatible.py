@@ -2,6 +2,8 @@
 
 import json
 import re
+import socket
+import ssl
 from typing import Any, Protocol, TypeVar
 
 import httpx
@@ -70,10 +72,13 @@ class OpenAICompatibleLLMProvider:
         except httpx.TimeoutException as exc:
             raise TimeoutError("LLM provider timeout") from exc
         except httpx.HTTPStatusError as exc:
-            status_code = exc.response.status_code
-            raise ValueError(f"LLM provider HTTP error: {status_code}") from exc
+            raise ValueError(self._classify_http_status_error(exc.response.status_code)) from exc
+        except httpx.ConnectError as exc:
+            raise ValueError(self._classify_connect_error(exc)) from exc
+        except httpx.NetworkError as exc:
+            raise ValueError("LLM provider network error") from exc
         except httpx.HTTPError as exc:
-            raise ValueError("LLM provider HTTP request failed") from exc
+            raise ValueError("LLM provider request error") from exc
 
         try:
             content = response.json()["choices"][0]["message"]["content"]
@@ -132,3 +137,44 @@ class OpenAICompatibleLLMProvider:
         if fenced:
             return fenced.group(1).strip()
         return content.strip()
+
+    def _classify_http_status_error(self, status_code: int) -> str:
+        if status_code in {401, 403}:
+            reason = "authentication or authorization failed"
+        elif status_code == 404:
+            reason = "endpoint or model not found"
+        elif status_code == 429:
+            reason = "rate limited"
+        elif status_code == 400:
+            reason = "bad request"
+        elif status_code >= 500:
+            reason = "provider server error"
+        else:
+            reason = "request rejected"
+        return f"LLM provider HTTP error: {status_code} ({reason})"
+
+    def _classify_connect_error(self, exc: httpx.ConnectError) -> str:
+        for cause in self._iter_exception_causes(exc):
+            if isinstance(cause, socket.gaierror):
+                return "LLM provider DNS resolution failed"
+            if isinstance(cause, ssl.SSLError):
+                return "LLM provider TLS handshake failed"
+            if isinstance(cause, ConnectionRefusedError):
+                return "LLM provider connection refused"
+
+        message = str(exc).lower()
+        if any(token in message for token in ("dns", "getaddrinfo", "name or service")):
+            return "LLM provider DNS resolution failed"
+        if any(token in message for token in ("ssl", "tls", "certificate")):
+            return "LLM provider TLS handshake failed"
+        if "refused" in message:
+            return "LLM provider connection refused"
+        return "LLM provider connection failed"
+
+    def _iter_exception_causes(self, exc: BaseException) -> list[BaseException]:
+        causes: list[BaseException] = []
+        current = exc.__cause__
+        while current is not None:
+            causes.append(current)
+            current = current.__cause__
+        return causes

@@ -1,4 +1,6 @@
 import json
+import socket
+import ssl
 from typing import Any
 
 import httpx
@@ -55,6 +57,26 @@ class FakeHttpClient:
         if self.response is None:
             raise AssertionError("FakeHttpClient response was not configured")
         return self.response
+
+
+class RaisingHttpClient:
+    def __init__(self, exc: Exception, cause: Exception | None = None) -> None:
+        self.exc = exc
+        self.cause = cause
+
+    def post(
+        self,
+        url: str,
+        headers: dict[str, str],
+        json: dict[str, Any],
+        timeout: int,
+    ) -> FakeResponse:
+        if self.cause is None:
+            raise self.exc
+        try:
+            raise self.cause
+        except Exception as cause:
+            raise self.exc from cause
 
 
 def _event_json() -> dict[str, Any]:
@@ -161,4 +183,65 @@ def test_openai_compatible_provider_timeout_does_not_leak_key() -> None:
     with pytest.raises(TimeoutError) as exc_info:
         provider.structured_generate({}, EventProposalV1)
 
+    assert "secret-test-key" not in str(exc_info.value)
+
+
+def test_openai_compatible_provider_dns_error_is_classified_without_key() -> None:
+    provider = OpenAICompatibleLLMProvider(
+        api_key="secret-test-key",
+        http_client=RaisingHttpClient(
+            httpx.ConnectError("connect failed"),
+            socket.gaierror("mock dns failure"),
+        ),
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        provider.structured_generate({}, EventProposalV1)
+
+    assert str(exc_info.value) == "LLM provider DNS resolution failed"
+    assert "secret-test-key" not in str(exc_info.value)
+
+
+def test_openai_compatible_provider_tls_error_is_classified_without_key() -> None:
+    provider = OpenAICompatibleLLMProvider(
+        api_key="secret-test-key",
+        http_client=RaisingHttpClient(
+            httpx.ConnectError("connect failed"),
+            ssl.SSLError("certificate verify failed"),
+        ),
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        provider.structured_generate({}, EventProposalV1)
+
+    assert str(exc_info.value) == "LLM provider TLS handshake failed"
+    assert "secret-test-key" not in str(exc_info.value)
+
+
+def test_openai_compatible_provider_connection_refused_is_classified_without_key() -> None:
+    provider = OpenAICompatibleLLMProvider(
+        api_key="secret-test-key",
+        http_client=RaisingHttpClient(
+            httpx.ConnectError("connect failed"),
+            ConnectionRefusedError("connection refused"),
+        ),
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        provider.structured_generate({}, EventProposalV1)
+
+    assert str(exc_info.value) == "LLM provider connection refused"
+    assert "secret-test-key" not in str(exc_info.value)
+
+
+def test_openai_compatible_provider_network_error_is_classified_without_key() -> None:
+    provider = OpenAICompatibleLLMProvider(
+        api_key="secret-test-key",
+        http_client=RaisingHttpClient(httpx.NetworkError("network unavailable")),
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        provider.structured_generate({}, EventProposalV1)
+
+    assert str(exc_info.value) == "LLM provider network error"
     assert "secret-test-key" not in str(exc_info.value)
