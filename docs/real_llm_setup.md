@@ -68,7 +68,18 @@ The workflow wrapper is `RealEventWorkflow`:
 
 ## Dry Run
 
-The smoke script can be run without calling a real model:
+Before any model call, run the real novel baseline evaluation. It imports the
+local TXT, checks idempotency, verifies `ContextBuilder`, and writes sanitized
+summary files:
+
+```powershell
+uv run python scripts/evaluate_real_novel_base.py `
+  --txt-path local_eval/novel_excerpt.txt `
+  --metadata-path local_eval/novel_metadata.json `
+  --output-dir output/evaluations
+```
+
+The real Event agent smoke script can also be run without calling a real model:
 
 ```powershell
 uv run python scripts/smoke_real_event_agent.py `
@@ -109,8 +120,9 @@ Implemented:
 - minimal Event extraction agent;
 - real Event workflow wrapper with audit persistence;
 - dry-run smoke script;
+- real long-novel baseline evaluation script;
 - tests for settings, provider parsing/errors, agent behavior, workflow behavior,
-  and smoke-script safety.
+  smoke-script safety, and sanitized long-novel evaluation.
 
 Not implemented:
 
