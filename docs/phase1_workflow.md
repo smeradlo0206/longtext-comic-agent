@@ -25,6 +25,7 @@ Phase 1 Mock Agent Audit Loop plus a default-disabled real Event agent skeleton.
 - Minimal EventExtractionAgent producing `EventProposalV1` only.
 - RealEventWorkflow audit wrapper with EvidenceRef validation.
 - Dry-run smoke script for real LLM readiness checks.
+- Real long-novel dry-run evaluation baseline with sanitized output.
 
 ## Not Completed
 
@@ -94,7 +95,7 @@ Local verification snapshot from 2026-07-30:
 | --- | --- |
 | `uv run ruff check comic_agent tests scripts` | Passed |
 | `uv run mypy comic_agent` | Passed |
-| `uv run pytest` | 162 passed, 1 dependency deprecation warning |
+| `uv run pytest` | 167 passed, 1 dependency deprecation warning |
 | `uv run python scripts/export_json_schemas.py` | Passed |
 
 ## Sanitized Real Excerpt Evaluation

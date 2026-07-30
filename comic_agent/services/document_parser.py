@@ -7,7 +7,7 @@ from comic_agent.schemas.source import SourceChapterV1, SourceChunkV1, SourceDoc
 from comic_agent.services.id_service import checksum_text, stable_id
 
 CHAPTER_RE = re.compile(
-    r"^\s*(第[一二三四五六七八九十百千0-9]+章.*|Chapter\s+\d+\b.*)\s*$",
+    r"^\s*(第[一二三四五六七八九十百千0-9]+章.*|Chapter\s+\d+\b.*|Chapter\s+[IVXLCDM]+)\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
 

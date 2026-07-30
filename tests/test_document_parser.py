@@ -64,6 +64,25 @@ def test_parser_detects_english_chapters() -> None:
     ]
 
 
+def test_parser_detects_standalone_roman_numeral_chapters_without_toc_matches() -> None:
+    parsed = DocumentParser().parse_txt(
+        project_id="project-1",
+        filename="demo.txt",
+        text=(
+            "CONTENTS\n\n"
+            " CHAPTER I Arrival\n"
+            " CHAPTER II Rescue\n\n"
+            "CHAPTER I\n\n"
+            "Arrival body.\n\n"
+            "CHAPTER II\n\n"
+            "Rescue body."
+        ),
+    )
+
+    assert [chapter.title for chapter in parsed.chapters] == ["CHAPTER I", "CHAPTER II"]
+    assert [chunk.text for chunk in parsed.chunks] == ["Arrival body.", "Rescue body."]
+
+
 def test_parser_uses_default_chapter_when_no_heading_exists() -> None:
     parsed = DocumentParser().parse_txt(
         project_id="project-1",
