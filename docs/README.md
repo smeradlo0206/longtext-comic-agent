@@ -15,6 +15,7 @@
 - [Schema 合同](schema_contracts.md)
 - [工作流规范](workflow_spec.md)
 - [Phase 1 工作流状态](phase1_workflow.md)
+- [真实 LLM 接入准备](real_llm_setup.md)
 - [组件责任矩阵](component_matrix.md)
 
 ## 计划与协作

@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Environment-driven application settings."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
 
     app_name: str = "longtext-comic-agent"
     database_url: str = Field(
@@ -37,6 +37,13 @@ class Settings(BaseSettings):
         gt=0,
         validation_alias="LLM_TIMEOUT_SECONDS",
     )
+    enable_real_llm: bool = Field(default=False, validation_alias="ENABLE_REAL_LLM")
+    llm_provider_name: str = Field(
+        default="ustc-openai-compatible",
+        validation_alias="LLM_PROVIDER_NAME",
+    )
+    llm_model: str = Field(default="deepseek-v4-pro", validation_alias="LLM_MODEL")
+    llm_max_output_tokens: int = Field(default=2000, validation_alias="LLM_MAX_OUTPUT_TOKENS")
 
 
 @lru_cache
