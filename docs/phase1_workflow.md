@@ -7,7 +7,7 @@ novel text, long quotes, databases, temporary files, or generated artifacts.
 
 ## Current Stage
 
-Phase 1 Mock Agent Audit Loop.
+Phase 1 Mock Agent Audit Loop plus a default-disabled real Event agent skeleton.
 
 ## Completed
 
@@ -21,10 +21,14 @@ Phase 1 Mock Agent Audit Loop.
 - AgentRun persistence.
 - Idempotent import and run checks.
 - Local real-excerpt evaluation script with sanitized output.
+- Default-disabled OpenAI-compatible LLM provider adapter.
+- Minimal EventExtractionAgent producing `EventProposalV1` only.
+- RealEventWorkflow audit wrapper with EvidenceRef validation.
+- Dry-run smoke script for real LLM readiness checks.
 
 ## Not Completed
 
-- Real LLM extraction.
+- Production real LLM extraction quality.
 - Claim / KnowledgeState workflow integration.
 - Canonical CommitService write for story facts.
 - StoryBible.
@@ -59,17 +63,38 @@ provider timeouts, and EvidenceRef mismatches are preserved as failed
 | KnowledgeStateProposalV1 | Schema available | Lifecycle and workflow integration are not implemented yet. |
 | ContextBuilder | Complete for bounded SourceChunk context | Uses explicit chunk ids and max chunk limits. |
 | MockEventWorkflow | Complete for mock audit loop | Uses MockLLMProvider only. |
+| EventExtractionAgent | Skeleton available | Can call an injected provider and produce `EventProposalV1`; default real provider use is disabled. |
+| RealEventWorkflow | Skeleton available | Requires `ENABLE_REAL_LLM=true` and explicit script opt-in before any real call. |
 | AgentRunRepository | Complete for phase-one audit persistence | Saves full `AgentRunV1` payload idempotently. |
+
+## Real LLM Readiness
+
+Real model calls are off by default. Local configuration is described in
+[Real LLM Setup](real_llm_setup.md). The readiness smoke script records only
+sanitized metadata, such as counts, ids, character ranges, hashes, and whether a
+provider call was attempted. It must not publish source text, long quotes, or API
+keys.
+
+```text
+SourceChunk
+  -> ContextBuilder bounded context
+  -> EventExtractionAgent
+  -> OpenAICompatibleLLMProvider only when explicitly enabled
+  -> EventProposalV1
+  -> CommitService EvidenceRef validation
+  -> AgentRunV1 with ProviderResultV1
+  -> AgentRunRepository persistence
+```
 
 ## Latest Automated Test Result
 
-Local verification snapshot from 2026-07-29:
+Local verification snapshot from 2026-07-30:
 
 | Check | Result |
 | --- | --- |
 | `uv run ruff check comic_agent tests scripts` | Passed |
 | `uv run mypy comic_agent` | Passed |
-| `uv run pytest` | 139 passed, 1 dependency deprecation warning |
+| `uv run pytest` | 162 passed, 1 dependency deprecation warning |
 | `uv run python scripts/export_json_schemas.py` | Passed |
 
 ## Sanitized Real Excerpt Evaluation

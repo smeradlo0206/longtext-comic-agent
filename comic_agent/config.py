@@ -2,14 +2,14 @@
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Environment-driven application settings."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
 
     app_name: str = "longtext-comic-agent"
     database_url: str = Field(
@@ -20,6 +20,22 @@ class Settings(BaseSettings):
     minio_endpoint: str = Field(default="localhost:9000", validation_alias="MINIO_ENDPOINT")
     minio_access_key: str = Field(default="minioadmin", validation_alias="MINIO_ACCESS_KEY")
     minio_secret_key: str = Field(default="minioadmin", validation_alias="MINIO_SECRET_KEY")
+    enable_real_llm: bool = Field(default=False, validation_alias="ENABLE_REAL_LLM")
+    llm_provider_name: str = Field(
+        default="ustc-openai-compatible",
+        validation_alias="LLM_PROVIDER_NAME",
+    )
+    llm_base_url: str = Field(
+        default="https://api.llm.ustc.edu.cn/v1",
+        validation_alias="LLM_BASE_URL",
+    )
+    llm_model: str = Field(default="deepseek-v4-pro", validation_alias="LLM_MODEL")
+    llm_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("LLM_API_KEY", "OPENAI_API_KEY"),
+    )
+    llm_timeout_seconds: int = Field(default=60, validation_alias="LLM_TIMEOUT_SECONDS")
+    llm_max_output_tokens: int = Field(default=2000, validation_alias="LLM_MAX_OUTPUT_TOKENS")
 
 
 @lru_cache
