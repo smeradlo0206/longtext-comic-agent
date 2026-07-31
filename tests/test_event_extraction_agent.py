@@ -51,6 +51,82 @@ def test_event_extraction_agent_calls_provider_and_returns_event_proposal() -> N
     assert provider.requests[0]["input_context"]["source_chunk_ids"] == ["chunk-1"]  # type: ignore[index]
 
 
+def test_event_extraction_agent_request_includes_prompt_and_context() -> None:
+    provider = FakeProvider()
+    agent = EventExtractionAgent(provider)
+    input_context = {
+        "project_id": "project-1",
+        "source_chunk_ids": ["chunk-1", "chunk-2", "chunk-3"],
+        "source_chunks": [
+            {"chunk_id": "chunk-1", "text": "First source chunk."},
+            {"chunk_id": "chunk-2", "text": "Second source chunk."},
+            {"chunk_id": "chunk-3", "text": "Third source chunk."},
+        ],
+    }
+
+    agent.run(input_context)
+
+    request = provider.requests[0]
+    assert set(request) == {"system_prompt", "user_prompt", "input_context"}
+    assert request["input_context"] == input_context
+    assert "project_id" in str(request["user_prompt"])
+    assert "source_chunk_ids" in str(request["user_prompt"])
+    assert "source_chunks" in str(request["user_prompt"])
+
+
+def test_event_extraction_prompt_contains_v01_constraints() -> None:
+    provider = FakeProvider()
+    agent = EventExtractionAgent(provider)
+
+    agent.run(
+        {
+            "project_id": "project-1",
+            "source_chunk_ids": ["chunk-1"],
+            "source_chunks": [{"chunk_id": "chunk-1", "text": "First source chunk."}],
+        }
+    )
+
+    prompt = str(provider.requests[0]["system_prompt"])
+    for expected in [
+        "exactly one",
+        "EventProposalV1",
+        "source_chunks",
+        "quote_text",
+        "Do not invent",
+        "JSON only",
+        "ClaimProposalV1",
+        "KnowledgeStateProposalV1",
+        "canonical story data",
+        "Return final JSON directly.",
+        "Do not include reasoning.",
+        "Keep summary concise.",
+        "single most salient event",
+        "shortest exact quote",
+    ]:
+        assert expected in prompt
+
+
+def test_event_extraction_user_prompt_is_concise_and_context_focused() -> None:
+    provider = FakeProvider()
+    agent = EventExtractionAgent(provider)
+
+    agent.run(
+        {
+            "project_id": "project-1",
+            "source_chunk_ids": ["chunk-1", "chunk-2", "chunk-3"],
+            "source_chunks": [{"chunk_id": "chunk-1", "text": "First source chunk."}],
+        }
+    )
+
+    user_prompt = str(provider.requests[0]["user_prompt"])
+    assert len(user_prompt) <= 140
+    assert "project_id" in user_prompt
+    assert "source_chunk_ids" in user_prompt
+    assert "source_chunks" in user_prompt
+    assert "Do not invent" not in user_prompt
+    assert "ClaimProposalV1" not in user_prompt
+
+
 def test_event_extraction_agent_spec_is_bounded_and_proposal_only() -> None:
     spec = EventExtractionAgent.spec
 

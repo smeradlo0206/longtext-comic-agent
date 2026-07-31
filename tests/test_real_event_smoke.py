@@ -29,14 +29,43 @@ def test_smoke_real_event_agent_dry_run_does_not_call_real_llm(tmp_path: Path) -
     assert summary["chunks_count"] == 1
     assert summary["selected_chunks_count"] == 1
     assert summary["import_idempotent"] is True
-    assert summary["key_status"] == {
-        "configured": True,
-        "length": len("secret-test-key"),
-        "looks_like_key": False,
-    }
+    assert "key_status" not in summary
     assert "secret-test-key" not in serialized
     assert "林夏推开门" not in serialized
     assert (tmp_path / "out" / "real_event_agent_smoke_summary.json").exists()
+
+
+def test_smoke_real_event_agent_dry_run_supports_three_chunk_summary(
+    tmp_path: Path,
+) -> None:
+    txt_path = tmp_path / "source.txt"
+    txt_path.write_text(
+        "First event paragraph.\n\nSecond event paragraph.\n\nThird event paragraph.",
+        encoding="utf-8",
+    )
+
+    summary = run_smoke(
+        project_id="project-1",
+        txt_path=txt_path,
+        output_dir=tmp_path / "out",
+        chunk_limit=3,
+        enable_real_llm=False,
+        settings=Settings(_env_file=None, llm_api_key="secret-test-key"),
+    )
+
+    serialized = json.dumps(summary, ensure_ascii=False)
+    assert summary["dry_run"] is True
+    assert summary["real_llm_requested"] is False
+    assert summary["real_llm_called"] is False
+    assert summary["selected_chunks_count"] == 3
+    assert summary["context_chunk_ids"] == summary["selected_chunk_ids"]
+    assert summary["agent_run_saved"] is False
+    assert summary["evidence_validation_passed"] is None
+    assert "First event paragraph" not in serialized
+    assert "Second event paragraph" not in serialized
+    assert "Third event paragraph" not in serialized
+    assert "secret-test-key" not in serialized
+    assert "key_status" not in summary
 
 
 def test_smoke_real_event_agent_real_flag_requires_env_enable(tmp_path: Path) -> None:
@@ -118,6 +147,55 @@ class FakeSuccessfulWorkflow:
         return type("FakeWorkflowResult", (), {"agent_run": agent_run, "proposal": proposal})()
 
 
+class FakeFailedDiagnosticWorkflow:
+    def __init__(self, **kwargs: Any) -> None:
+        self.source_repository = kwargs["source_repository"]
+
+    def run(self, project_id: str, chunk_ids: list[str]):
+        diagnostics = {
+            "finish_reason": "stop",
+            "response_has_choices": True,
+            "choices_count": 1,
+            "message_keys": ["content", "reasoning_content"],
+            "content_type": "NoneType",
+            "has_reasoning_content": True,
+            "has_tool_calls": False,
+            "usage_prompt_tokens": 12,
+            "usage_completion_tokens": 0,
+            "usage_total_tokens": 12,
+        }
+        provider_result = ProviderResultV1(
+            provider_result_id="provider-result-smoke-failed",
+            provider_name="ustc-openai-compatible",
+            provider_type=ProviderType.LLM,
+            model_name="deepseek-v4-pro",
+            output_schema="EventProposalV1",
+            success=False,
+            error_message="LLM provider response content is missing",
+            created_at=DETERMINISTIC_REAL_AUDIT_TIME,
+        )
+        agent_run = AgentRunV1(
+            agent_run_id="agent-run-smoke-failed",
+            project_id=project_id,
+            agent_name="event-extraction-agent",
+            input_chunk_ids=chunk_ids,
+            output_schema="EventProposalV1",
+            provider_result_id=provider_result.provider_result_id,
+            provider_result=provider_result,
+            status=AgentRunStatus.FAILED,
+            started_at=DETERMINISTIC_REAL_AUDIT_TIME,
+            completed_at=DETERMINISTIC_REAL_AUDIT_TIME,
+            error_message="LLM provider response content is missing",
+            payload={
+                "provider_result": provider_result.model_dump(mode="json"),
+                "provider_error_diagnostics": diagnostics,
+                "proposal": None,
+                "evidence_validation_passed": False,
+            },
+        )
+        return type("FakeWorkflowResult", (), {"agent_run": agent_run, "proposal": None})()
+
+
 def test_smoke_real_event_agent_summary_includes_sanitized_success_details(
     tmp_path: Path,
     monkeypatch,
@@ -153,5 +231,49 @@ def test_smoke_real_event_agent_summary_includes_sanitized_success_details(
     assert summary["evidence_chunk_id"] == summary["selected_chunk_ids"][0]
     assert summary["quote_matched"] is True
     assert summary["char_range_matched"] is True
+    assert "secret-test-key" not in serialized
+    assert "林夏推开门" not in serialized
+def test_smoke_real_event_agent_summary_includes_sanitized_failure_diagnostics(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    txt_path = tmp_path / "source.txt"
+    txt_path.write_text("第一章 开端\n\n林夏推开门。", encoding="utf-8")
+    monkeypatch.setattr(
+        "scripts.smoke_real_event_agent.RealEventWorkflow",
+        FakeFailedDiagnosticWorkflow,
+    )
+
+    summary = run_smoke(
+        project_id="project-1",
+        txt_path=txt_path,
+        output_dir=tmp_path / "out",
+        enable_real_llm=True,
+        settings=Settings(
+            _env_file=None,
+            enable_real_llm=True,
+            llm_api_key="secret-test-key",
+        ),
+    )
+
+    serialized = json.dumps(summary, ensure_ascii=False)
+    assert summary["real_llm_called"] is True
+    assert summary["provider_success"] is False
+    assert summary["schema_validation_passed"] is False
+    assert summary["provider_error_diagnostics"] == {
+        "finish_reason": "stop",
+        "response_has_choices": True,
+        "choices_count": 1,
+        "message_keys": ["content", "reasoning_content"],
+        "content_type": "NoneType",
+        "has_reasoning_content": True,
+        "has_tool_calls": False,
+        "usage_prompt_tokens": 12,
+        "usage_completion_tokens": 0,
+        "usage_total_tokens": 12,
+    }
+    assert summary["usage_prompt_tokens"] == 12
+    assert summary["usage_completion_tokens"] == 0
+    assert summary["usage_total_tokens"] == 12
     assert "secret-test-key" not in serialized
     assert "林夏推开门" not in serialized

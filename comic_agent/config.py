@@ -30,6 +30,10 @@ class Settings(BaseSettings):
         validation_alias="LLM_BASE_URL",
     )
     llm_model: str = Field(default="deepseek-v4-pro", validation_alias="LLM_MODEL")
+    llm_response_format: str | None = Field(
+        default=None,
+        validation_alias="LLM_RESPONSE_FORMAT",
+    )
     llm_api_key: SecretStr | None = Field(
         default=None,
         validation_alias=AliasChoices("LLM_API_KEY", "OPENAI_API_KEY"),
