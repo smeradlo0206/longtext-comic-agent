@@ -43,6 +43,10 @@ class Settings(BaseSettings):
         validation_alias="LLM_PROVIDER_NAME",
     )
     llm_model: str = Field(default="deepseek-v4-pro", validation_alias="LLM_MODEL")
+    llm_response_format: str | None = Field(
+        default=None,
+        validation_alias="LLM_RESPONSE_FORMAT",
+    )
     llm_max_output_tokens: int = Field(default=2000, validation_alias="LLM_MAX_OUTPUT_TOKENS")
 
 

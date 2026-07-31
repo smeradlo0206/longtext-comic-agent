@@ -11,8 +11,15 @@ def test_llm_settings_defaults_do_not_require_key() -> None:
     assert settings.llm_base_url == "https://api.llm.ustc.edu.cn/v1"
     assert settings.llm_model == "deepseek-v4-pro"
     assert settings.llm_api_key is None
+    assert settings.llm_response_format is None
     assert settings.llm_timeout_seconds == 60
     assert settings.llm_max_output_tokens == 2000
+
+
+def test_llm_settings_reads_response_format() -> None:
+    settings = Settings(_env_file=None, LLM_RESPONSE_FORMAT="json_object")
+
+    assert settings.llm_response_format == "json_object"
 
 
 def test_llm_settings_reads_secret_key_from_llm_api_key() -> None:

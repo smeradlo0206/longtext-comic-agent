@@ -68,6 +68,7 @@ class RealEventWorkflow:
         provider_result: ProviderResultV1
         evidence_validation_passed = False
         error_message: str | None = None
+        provider_error_diagnostics: dict[str, object] | None = None
         status = AgentRunStatus.SUCCEEDED
 
         try:
@@ -78,6 +79,7 @@ class RealEventWorkflow:
             evidence_validation_passed = True
         except (TimeoutError, ValueError) as exc:
             error_message = str(exc)
+            provider_error_diagnostics = self._provider_error_diagnostics(exc)
             status = AgentRunStatus.FAILED
             provider_result = (
                 self._provider_result(success=True, proposal=proposal)
@@ -94,6 +96,7 @@ class RealEventWorkflow:
             status=status,
             evidence_validation_passed=evidence_validation_passed,
             error_message=error_message,
+            provider_error_diagnostics=provider_error_diagnostics,
         )
         saved = self._agent_run_repository.save_agent_run(agent_run)
         return RealEventWorkflowResult(agent_run=saved, proposal=proposal)
@@ -108,6 +111,7 @@ class RealEventWorkflow:
             api_key=api_key,
             base_url=self._settings.llm_base_url,
             model=self._settings.llm_model,
+            response_format=self._settings.llm_response_format,
             timeout_seconds=self._settings.llm_timeout_seconds,
             max_output_tokens=self._settings.llm_max_output_tokens,
         )
@@ -116,7 +120,16 @@ class RealEventWorkflow:
         return {
             "project_id": context.project_id,
             "source_chunk_ids": context.source_chunk_ids,
-            "source_chunks": [chunk.model_dump(mode="json") for chunk in context.chunks],
+            "source_chunks": [
+                {
+                    "chunk_id": chunk.chunk_id,
+                    "chapter_id": chunk.chapter_id,
+                    "char_start": chunk.char_start,
+                    "char_end": chunk.char_end,
+                    "text": chunk.text,
+                }
+                for chunk in context.chunks
+            ],
         }
 
     def _provider_result(
@@ -163,6 +176,7 @@ class RealEventWorkflow:
             status=AgentRunStatus.FAILED,
             evidence_validation_passed=False,
             error_message=error_message,
+            provider_error_diagnostics=None,
         )
 
     def _agent_run(
@@ -175,6 +189,7 @@ class RealEventWorkflow:
         status: AgentRunStatus,
         evidence_validation_passed: bool,
         error_message: str | None,
+        provider_error_diagnostics: dict[str, object] | None,
     ) -> AgentRunV1:
         output_proposal_ids = [proposal.proposal_id] if proposal is not None else []
         payload = {
@@ -193,6 +208,8 @@ class RealEventWorkflow:
             "evidence_validation_passed": evidence_validation_passed,
             "error_message": error_message,
         }
+        if provider_error_diagnostics is not None:
+            payload["provider_error_diagnostics"] = provider_error_diagnostics
         agent_run_id = stable_id(
             "agent-run",
             project_id,
@@ -219,3 +236,7 @@ class RealEventWorkflow:
 
     def _stable_json(self, payload: dict[str, Any]) -> str:
         return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    def _provider_error_diagnostics(self, exc: BaseException) -> dict[str, object] | None:
+        diagnostics = getattr(exc, "diagnostics", None)
+        return diagnostics if isinstance(diagnostics, dict) else None

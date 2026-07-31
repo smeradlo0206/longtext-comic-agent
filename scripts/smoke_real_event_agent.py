@@ -6,7 +6,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from pydantic import SecretStr
 from sqlalchemy.orm import Session
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -69,7 +68,6 @@ def run_smoke(
             "real_llm_called": False,
             "provider_name": active_settings.llm_provider_name,
             "model": active_settings.llm_model,
-            "key_status": _key_status(active_settings.llm_api_key),
             "source_file_hash": checksum_text(text),
             "total_chars": len(text),
             "chapters_count": len(parsed.chapters),
@@ -139,18 +137,6 @@ def run_smoke(
         engine.dispose()
 
 
-def _key_status(api_key: SecretStr | None) -> dict[str, Any]:
-    if api_key is None:
-        return {"configured": False, "length": 0, "looks_like_key": False}
-
-    value = api_key.get_secret_value()
-    return {
-        "configured": bool(value),
-        "length": len(value),
-        "looks_like_key": value.startswith(("sk-", "sess-")),
-    }
-
-
 def _add_agent_run_details(
     *,
     summary: dict[str, Any],
@@ -162,6 +148,16 @@ def _add_agent_run_details(
     if provider_result is not None:
         summary["provider_result_id"] = provider_result.provider_result_id
         summary["provider_success"] = provider_result.success
+    diagnostics = agent_run.payload.get("provider_error_diagnostics")
+    if isinstance(diagnostics, dict):
+        summary["provider_error_diagnostics"] = diagnostics
+        for key in (
+            "usage_prompt_tokens",
+            "usage_completion_tokens",
+            "usage_total_tokens",
+        ):
+            if key in diagnostics:
+                summary[key] = diagnostics[key]
 
     summary["output_schema"] = agent_run.output_schema
     summary["schema_validation_passed"] = proposal is not None

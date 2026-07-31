@@ -23,6 +23,25 @@ LLM_TIMEOUT_SECONDS=120
 ```
 
 为减小 LLM 调用延迟，关闭 VPN 通常可以直接连接。
+- `GET /health`
+- `POST /projects`
+- `POST /projects/{project_id}/documents/import`
+- `GET /projects/{project_id}/chapters`
+- `GET /chapters/{chapter_id}/chunks`
+- `GET /chunks/{chunk_id}`
+- `GET /projects/{project_id}/agent-runs`
+- `POST /projects/{project_id}/agent-runs/mock-event`
+- `GET /agent-runs/{agent_run_id}`
+- `GET /agent-runs/{agent_run_id}/evidence`
+- `GET /settings/llm/status`
+
+Website-ready audit surfaces:
+
+- AgentRun list
+- AgentRun detail
+- Evidence audit
+- LLM status
+- Sanitized real eval summary
 
 ## 项目文档
 

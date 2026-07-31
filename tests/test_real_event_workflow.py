@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from comic_agent.config import Settings
 from comic_agent.database.base import Base
+from comic_agent.providers.openai_compatible import ProviderResponseError
 from comic_agent.repositories.agent_run_repository import AgentRunRepository
 from comic_agent.repositories.source_repository import SourceRepository
 from comic_agent.schemas.workflow import AgentRunStatus, ProviderType
@@ -26,6 +27,7 @@ class FakeProvider:
         self.quote_text = quote_text
         self.exc = exc
         self.calls = 0
+        self.requests: list[dict[str, object]] = []
 
     def structured_generate(
         self,
@@ -33,6 +35,7 @@ class FakeProvider:
         output_model: type[OutputModelT],
     ) -> OutputModelT:
         self.calls += 1
+        self.requests.append(request)
         if self.exc is not None:
             raise self.exc
         chunk_id = str(request["input_context"]["source_chunk_ids"][0])  # type: ignore[index]
@@ -121,6 +124,35 @@ def test_real_event_workflow_success_saves_succeeded_agent_run(tmp_path: Path) -
     assert result.agent_run.payload["evidence_validation_passed"] is True
 
 
+def test_real_event_workflow_sends_slim_source_chunks_to_provider(tmp_path: Path) -> None:
+    source_repository, agent_run_repository = _repositories(tmp_path)
+    parsed = _import_demo_source(source_repository)
+    provider = FakeProvider()
+    workflow = RealEventWorkflow(
+        settings=_settings(enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=agent_run_repository,
+        provider=provider,
+    )
+
+    workflow.run("project-1", [parsed.chunks[0].chunk_id])
+
+    input_context = provider.requests[0]["input_context"]
+    assert isinstance(input_context, dict)
+    source_chunks = input_context["source_chunks"]
+    assert isinstance(source_chunks, list)
+    assert len(source_chunks) == 1
+    slim_chunk = source_chunks[0]
+    assert isinstance(slim_chunk, dict)
+    assert set(slim_chunk) == {"chunk_id", "chapter_id", "char_start", "char_end", "text"}
+    assert slim_chunk["chunk_id"] == parsed.chunks[0].chunk_id
+    assert "document_id" not in slim_chunk
+    assert "checksum" not in slim_chunk
+    assert "storage_uri" not in slim_chunk
+    assert "created_at" not in slim_chunk
+    assert "updated_at" not in slim_chunk
+
+
 def test_real_event_workflow_provider_error_saves_failed_agent_run(tmp_path: Path) -> None:
     source_repository, agent_run_repository = _repositories(tmp_path)
     parsed = _import_demo_source(source_repository)
@@ -137,6 +169,39 @@ def test_real_event_workflow_provider_error_saves_failed_agent_run(tmp_path: Pat
     assert result.agent_run.error_message == "mock schema error"
     assert result.agent_run.provider_result is not None
     assert result.agent_run.provider_result.success is False
+
+
+def test_real_event_workflow_provider_error_saves_sanitized_diagnostics(tmp_path: Path) -> None:
+    source_repository, agent_run_repository = _repositories(tmp_path)
+    parsed = _import_demo_source(source_repository)
+    diagnostics = {
+        "finish_reason": "stop",
+        "response_has_choices": True,
+        "choices_count": 1,
+        "message_keys": ["content"],
+        "content_type": "NoneType",
+        "has_reasoning_content": False,
+        "has_tool_calls": False,
+    }
+    workflow = RealEventWorkflow(
+        settings=_settings(enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=agent_run_repository,
+        provider=FakeProvider(
+            exc=ProviderResponseError(
+                "LLM provider response content is missing",
+                diagnostics=diagnostics,
+            )
+        ),
+    )
+
+    result = workflow.run("project-1", [parsed.chunks[0].chunk_id])
+
+    assert result.agent_run.status == AgentRunStatus.FAILED
+    assert result.agent_run.error_message == "LLM provider response content is missing"
+    assert result.agent_run.payload["provider_error_diagnostics"] == diagnostics
+    serialized = json.dumps(result.agent_run.model_dump(mode="json"), ensure_ascii=False)
+    assert "secret-test-key" not in serialized
 
 
 def test_real_event_workflow_timeout_saves_failed_agent_run(tmp_path: Path) -> None:
