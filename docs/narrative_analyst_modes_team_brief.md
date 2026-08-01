@@ -139,7 +139,7 @@ web_console 测试页面已接入
 
 中文名：实体抽取
 
-当前状态：v0.1 agent + fake provider 自动测试 + smoke dry-run/real opt-in 路径已实现。
+当前状态：v0.1 已完成，fake provider 自动测试、smoke dry-run/real opt-in 路径、1/2/3 chunk 手动真实 LLM 评估均已通过。
 
 开发文件：
 
@@ -194,17 +194,21 @@ EntityProposalV1
 7. 返回结果测试覆盖 EntityProposalV1、canonical_name、EvidenceRef
 8. smoke dry-run 覆盖 TXT 导入、import idempotency、ContextBuilder、脱敏 summary
 9. real smoke 只在 ENABLE_REAL_LLM=true 且显式 --enable-real-llm 时调用 provider
-10. 不写 StoryBible
+10. deepseek-v4-pro 手动真实 LLM 1/2/3 chunk eval 已通过
+11. 不写 StoryBible
 ```
 
-下一步手动真实 LLM 评估建议：
+手动真实 LLM 评估结论：
 
 ```text
-1. 先用 smoke dry-run 检查 TXT 导入、selected chunk、ContextBuilder 和 summary 文件。
-2. 再做 1 chunk real eval，检查 schema、EvidenceRef、quote_text、canonical_name。
-3. 通过后做 2 chunk real eval，检查是否仍只抽取一个 source-grounded entity。
-4. 最后做 3 chunk real eval，检查 aliases、entity_type、quote_text 是否保守且准确。
-5. 只记录脱敏结果，不粘贴 API key、真实原文、长 quote、raw provider response 或 message.content。
+1. dry-run passed。
+2. 1 chunk real eval passed。
+3. 2 chunk real eval passed。
+4. 3 chunk real eval passed。
+5. output_schema=EntityProposalV1，provider/schema/evidence/quote validation 均通过。
+6. char_range_matched 在 quote_start/quote_end 省略时可以为 null。
+7. 观察到 CHARACTER 和 ORGANIZATION；canonical_name 非空；本轮 aliases_count=0。
+8. 只记录脱敏结果，不粘贴 API key、真实原文、长 quote、raw provider response 或 message.content。
 ```
 
 ### 3. claim_extraction
@@ -445,7 +449,7 @@ tests/test_relationship_signal_extraction_agent.py
 
 ```text
 1. event_extraction: 已完成
-2. entity_extraction: v0.1 agent + fake tests + smoke path 已完成，等待手动 real eval
+2. entity_extraction: 已完成
 3. claim_extraction
 4. knowledge_state_extraction
 5. state_change_extraction
