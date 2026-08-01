@@ -140,6 +140,22 @@ Dry-run output includes only sanitized metadata: counts, ids, ranges, hashes,
 and whether the real model was called. It does not include source text, the API
 key, or API-key status details such as key length.
 
+The Entity agent smoke script follows the same safety boundary and does not
+write canonical story data:
+
+```powershell
+uv run python scripts/smoke_real_entity_agent.py `
+  --txt-path local_eval/entity_smoke.txt `
+  --output-dir output/evaluations `
+  --chunk-limit 3
+```
+
+Entity dry-run output records sanitized metadata and smoke readiness fields only:
+selected chunk ids/ranges, import idempotency, context chunk ids, output schema,
+and whether a real provider call was blocked or skipped. It does not include
+source text, quote text, aliases, API keys, raw provider responses, or
+`message.content`.
+
 ## Real Call Opt-In
 
 Only run a real call after confirming the local key and model configuration.
@@ -181,6 +197,31 @@ uv run python scripts/smoke_real_event_agent.py `
 If `--enable-real-llm` is passed while `ENABLE_REAL_LLM=false`, the script records
 that the run was blocked and does not call the provider.
 
+Recommended manual Entity eval command:
+
+```powershell
+cd D:\107
+$env:ENABLE_REAL_LLM = 'true'
+$env:LLM_PROVIDER_NAME = 'ustc-openai-compatible'
+$env:LLM_BASE_URL = 'https://api.llm.ustc.edu.cn/v1'
+$env:LLM_MODEL = 'deepseek-v4-pro'
+$env:LLM_RESPONSE_FORMAT = ''
+$env:LLM_TIMEOUT_SECONDS = '240'
+$env:LLM_MAX_OUTPUT_TOKENS = '3000'
+$env:UV_CACHE_DIR = 'D:\107\tmp\uv-cache'
+uv run python scripts/smoke_real_entity_agent.py `
+  --txt-path local_eval/entity_smoke.txt `
+  --output-dir output/evaluations `
+  --chunk-limit 1 `
+  --enable-real-llm
+```
+
+After the 1 chunk Entity run passes, repeat with `--chunk-limit 2` and
+`--chunk-limit 3`. The Entity smoke script calls the provider only when both
+`ENABLE_REAL_LLM=true` and `--enable-real-llm` are set. If the environment flag
+is false, it records `blocked_reason="ENABLE_REAL_LLM is false"` and does not
+call the provider.
+
 After a manual campus-network run, paste only sanitized fields back into Codex.
 Use `docs/reviews/event_extraction_eval_template.md` as the checklist. Do not
 paste `.env`, API keys, complete chunk text, real novel text, long quotes, raw
@@ -213,8 +254,10 @@ Implemented:
 
 - OpenAI-compatible provider adapter skeleton;
 - minimal Event extraction agent;
+- minimal Entity extraction agent;
 - real Event workflow wrapper with audit persistence;
 - dry-run smoke script;
+- Entity dry-run / real opt-in smoke script;
 - real long-novel baseline evaluation script;
 - tests for settings, provider parsing/errors, agent behavior, workflow behavior,
   smoke-script safety, and sanitized long-novel evaluation.
