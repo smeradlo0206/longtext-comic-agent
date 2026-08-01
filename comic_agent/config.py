@@ -40,6 +40,26 @@ class Settings(BaseSettings):
     )
     llm_timeout_seconds: int = Field(default=60, validation_alias="LLM_TIMEOUT_SECONDS")
     llm_max_output_tokens: int = Field(default=2000, validation_alias="LLM_MAX_OUTPUT_TOKENS")
+    internal_demo_require_access_code: bool = Field(
+        default=True,
+        validation_alias="INTERNAL_DEMO_REQUIRE_ACCESS_CODE",
+    )
+    internal_demo_access_code: SecretStr | None = Field(
+        default=None,
+        validation_alias="INTERNAL_DEMO_ACCESS_CODE",
+    )
+    internal_demo_session_ttl_seconds: int = Field(
+        default=86400,
+        validation_alias="INTERNAL_DEMO_SESSION_TTL_SECONDS",
+    )
+    internal_demo_max_real_event_chunks_per_run: int = Field(
+        default=3,
+        validation_alias="INTERNAL_DEMO_MAX_REAL_EVENT_CHUNKS_PER_RUN",
+    )
+    internal_demo_max_import_chars: int = Field(
+        default=20000,
+        validation_alias="INTERNAL_DEMO_MAX_IMPORT_CHARS",
+    )
 
 
 @lru_cache

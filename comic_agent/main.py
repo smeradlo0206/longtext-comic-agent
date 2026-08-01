@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from comic_agent.api.agent_runs import router as agent_runs_router
+from comic_agent.api.demo import router as demo_router
 from comic_agent.api.documents import router as documents_router
 from comic_agent.api.health import router as health_router
 from comic_agent.api.projects import router as projects_router
@@ -33,6 +34,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(documents_router)
     app.include_router(agent_runs_router)
     app.include_router(settings_router)
+    app.include_router(demo_router)
     return app
 
 
