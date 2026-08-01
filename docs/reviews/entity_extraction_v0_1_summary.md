@@ -42,8 +42,6 @@ Automatic tests use a fake provider only. They cover:
 - blocked real-run behavior when `ENABLE_REAL_LLM=false`;
 - sanitized success and failure smoke summaries.
 
-No real LLM evaluation has been executed for this mode yet.
-
 The smoke summary is intentionally sanitized. It records counts, ids, ranges,
 hashes, model/provider labels, schema status, evidence audit status, proposal id,
 entity type, canonical name, aliases count, first evidence chunk id, quote match,
@@ -51,7 +49,29 @@ char-range match, sanitized provider diagnostics, and token counts when present.
 It does not write canonical StoryBible data and does not include source text,
 quote text, aliases, API keys, raw provider responses, or `message.content`.
 
-## Pending Manual Real Eval
+## Manual Real Eval Status
+
+Latest sanitized manual real LLM results:
+
+- dry-run: passed.
+- model: `deepseek-v4-pro`.
+- output schema: `EntityProposalV1`.
+- 1 chunk real eval: passed.
+- 2 chunk real eval: passed.
+- 3 chunk real eval: passed.
+- provider success: true.
+- schema validation passed: true.
+- evidence validation passed: true.
+- quote matched: true.
+- char-range match may be null when `quote_start` and `quote_end` are omitted.
+- observed entity types include `CHARACTER` and `ORGANIZATION`.
+- canonical name was non-empty.
+- aliases count was 0 in these tests.
+
+Conclusion: `EntityExtractionAgent` v0.1 real evaluation has passed up to
+3 chunks with `deepseek-v4-pro`.
+
+## Manual Real Eval Commands
 
 Recommended manual sequence:
 
