@@ -24,6 +24,9 @@ API:
 - `GET /agent-runs/{agent_run_id}`
 - `GET /agent-runs/{agent_run_id}/evidence`
 - `GET /settings/llm/status`
+- `GET /demo/status`
+- `POST /demo/verify-access`
+- `POST /projects/{project_id}/agent-runs/real-event`
 
 Website-ready audit surfaces:
 
@@ -32,6 +35,17 @@ Website-ready audit surfaces:
 - Evidence audit
 - LLM status
 - Sanitized real eval summary
+
+Internal hosted demo console:
+
+- Open `web_console/index.html` in a browser.
+- Start the API with `uv run uvicorn comic_agent.main:app --reload`.
+- Configure demo access through `INTERNAL_DEMO_REQUIRE_ACCESS_CODE` and
+  `INTERNAL_DEMO_ACCESS_CODE`.
+- Real Event Agent calls use the server-side configured provider key and still
+  require `ENABLE_REAL_LLM=true`.
+- The demo does not expose Claim, KnowledgeState, multi-agent orchestration, or
+  canonical story-data writes.
 
 ## 项目文档
 
