@@ -1,0 +1,830 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Longtext Comic Agent Demo</title>
+  <style>
+    :root {
+      --bg: #eef2f6;
+      --panel: #ffffff;
+      --panel-soft: #f8fafc;
+      --ink: #111827;
+      --muted: #667085;
+      --line: #d8e0ea;
+      --accent: #0f766e;
+      --accent-strong: #0b5d56;
+      --warn: #9a6700;
+      --danger: #b42318;
+      --ok: #067647;
+      --shadow: 0 18px 48px rgba(17, 24, 39, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+      letter-spacing: 0;
+    }
+
+    button, input, textarea { font: inherit; }
+
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 280px 1fr;
+    }
+
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 24px 18px;
+      background: #111827;
+      color: #f9fafb;
+    }
+
+    .brand h1 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      line-height: 1.2;
+    }
+
+    .brand p {
+      margin: 0 0 22px;
+      color: #a7b0bf;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    nav {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 22px;
+    }
+
+    nav a {
+      color: #d6dbe5;
+      text-decoration: none;
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+
+    nav a:hover { background: rgba(255,255,255,0.08); }
+
+    .notice {
+      padding: 12px;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 8px;
+      color: #d6dbe5;
+      background: rgba(255,255,255,0.06);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    main {
+      padding: 24px;
+      display: grid;
+      gap: 18px;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: 1.2fr 0.9fr 1fr auto auto;
+      gap: 12px;
+      align-items: end;
+      padding: 18px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    input, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 11px;
+      background: white;
+      color: var(--ink);
+      outline: none;
+      font-size: 14px;
+    }
+
+    input:focus, textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+    }
+
+    button {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 13px;
+      background: white;
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      min-height: 40px;
+    }
+
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(360px, 0.72fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .stack { display: grid; gap: 18px; }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel-soft);
+    }
+
+    .section-head h2 {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.25;
+    }
+
+    .section-head p {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .body {
+      padding: 16px 18px 18px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .matrix {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .cap {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .cap strong {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 6px;
+    }
+
+    .cap span, .muted {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #edf7f6;
+      color: var(--accent-strong);
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid #bfe3df;
+    }
+
+    .pill.warn {
+      color: var(--warn);
+      background: #fffbeb;
+      border-color: #f1d28a;
+    }
+
+    .pill.bad {
+      color: var(--danger);
+      background: #fff1f0;
+      border-color: #f4b8b1;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 10px 9px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 12px;
+      background: var(--panel-soft);
+      font-weight: 750;
+    }
+
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
+    pre {
+      max-height: 360px;
+      overflow: auto;
+      margin: 0;
+      padding: 12px;
+      border-radius: 8px;
+      background: #111827;
+      color: #e5e7eb;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .selected {
+      display: grid;
+      gap: 8px;
+    }
+
+    .selected-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-soft);
+    }
+
+    mark {
+      background: #fde68a;
+      color: #111827;
+      padding: 1px 2px;
+      border-radius: 3px;
+    }
+
+    .log {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      width: min(520px, calc(100vw - 36px));
+      padding: 12px;
+      background: #111827;
+      color: #f9fafb;
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      font-size: 12px;
+      line-height: 1.5;
+      max-height: 180px;
+      overflow: auto;
+      display: none;
+      z-index: 5;
+    }
+
+    @media (max-width: 1080px) {
+      .app { grid-template-columns: 1fr; }
+      aside {
+        position: static;
+        height: auto;
+      }
+      nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .topbar, .grid { grid-template-columns: 1fr; }
+      .matrix { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 640px) {
+      main { padding: 14px; }
+      .matrix { grid-template-columns: 1fr; }
+      table { font-size: 12px; }
+      th, td { padding: 8px 6px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside>
+      <div class="brand">
+        <h1>Comic Agent Demo</h1>
+        <p>内部 Hosted Demo Runtime。只开放 Event Agent，不开放 Claim、KnowledgeState 或多 Agent。</p>
+      </div>
+      <nav>
+        <a href="#status">Demo Status</a>
+        <a href="#import">TXT Import</a>
+        <a href="#chapters">Chunks</a>
+        <a href="#agents">Agents</a>
+        <a href="#runs">Agent Runs</a>
+        <a href="#evidence">Evidence</a>
+      </nav>
+      <div class="notice">
+        Real Event 使用平台托管模型额度。内部用户不需要输入 API Key，访问码只用于授权 demo 操作。
+      </div>
+    </aside>
+
+    <main>
+      <div class="topbar">
+        <label>API Base URL
+          <input id="apiBase" value="http://127.0.0.1:8000" />
+        </label>
+        <label>Project ID
+          <input id="projectId" value="demo-project" />
+        </label>
+        <label>访问码
+          <input id="accessCode" type="password" autocomplete="off" />
+        </label>
+        <button id="verifyAccess" class="primary">验证访问码</button>
+        <button id="refreshStatus">刷新状态</button>
+      </div>
+
+      <section id="status">
+        <div class="section-head">
+          <div>
+            <h2>Demo Status</h2>
+            <p>后端只返回脱敏配置状态，不返回访问码或模型密钥。</p>
+          </div>
+          <span id="accessBadge" class="pill warn">Access 未验证</span>
+        </div>
+        <div class="body">
+          <div class="matrix" id="capabilityMatrix"></div>
+          <pre id="demoStatus">{}</pre>
+        </div>
+      </section>
+
+      <div class="grid">
+        <div class="stack">
+          <section id="import">
+            <div class="section-head">
+              <div>
+                <h2>Project 与 TXT 上传</h2>
+                <p>创建项目并上传 UTF-8 TXT，后端会分章和生成 SourceChunk。</p>
+              </div>
+            </div>
+            <div class="body">
+              <div class="row">
+                <button id="createProject" class="primary">创建项目</button>
+                <button id="loadChapters">查看章节</button>
+              </div>
+              <label>TXT 文件
+                <input id="txtFile" type="file" accept=".txt,text/plain" />
+              </label>
+              <button id="importTxt" class="primary">导入 TXT</button>
+              <pre id="importResult">{}</pre>
+            </div>
+          </section>
+
+          <section id="chapters">
+            <div class="section-head">
+              <div>
+                <h2>章节与 Chunks</h2>
+                <p>选择 1-3 个 chunk 作为 Event Agent 输入。</p>
+              </div>
+              <span class="pill" id="selectedCount">Selected 0</span>
+            </div>
+            <div class="body">
+              <div id="chapterTable"></div>
+              <div id="chunkTable"></div>
+            </div>
+          </section>
+
+          <section id="agents">
+            <div class="section-head">
+              <div>
+                <h2>Event Agent Controls</h2>
+                <p>Mock 不调用真实模型；Real Event 需要访问码并受 ENABLE_REAL_LLM 控制。</p>
+              </div>
+            </div>
+            <div class="body">
+              <div id="selectedChunks" class="selected"></div>
+              <div class="row">
+                <button id="runMock" class="primary">运行 Mock Event Agent</button>
+                <button id="runRealEvent" class="primary" disabled>运行 Real Event Agent</button>
+              </div>
+              <pre id="agentResult">{}</pre>
+            </div>
+          </section>
+        </div>
+
+        <div class="stack">
+          <section>
+            <div class="section-head">
+              <div>
+                <h2>Chunk 详情</h2>
+                <p>查看当前项目已上传文本的单个 chunk。</p>
+              </div>
+            </div>
+            <div class="body">
+              <pre id="chunkDetail">选择一个 chunk 查看详情。</pre>
+            </div>
+          </section>
+
+          <section id="runs">
+            <div class="section-head">
+              <div>
+                <h2>AgentRun 审计</h2>
+                <p>查看运行记录、ProviderResult 状态和脱敏 payload。</p>
+              </div>
+              <button id="loadRuns">刷新 runs</button>
+            </div>
+            <div class="body">
+              <div id="runTable"></div>
+              <pre id="runDetail">选择一个 AgentRun 查看详情。</pre>
+            </div>
+          </section>
+
+          <section id="evidence">
+            <div class="section-head">
+              <div>
+                <h2>Evidence 回源</h2>
+                <p>加载 AgentRun evidence 并高亮短 quote。</p>
+              </div>
+            </div>
+            <div class="body">
+              <div id="evidencePanel" class="stack"></div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+  <div id="log" class="log"></div>
+
+  <script>
+    const state = {
+      chapters: [],
+      chunksByChapter: new Map(),
+      selectedChunks: new Map(),
+      accessGranted: false,
+      requireAccessCode: true
+    };
+
+    const $ = (id) => document.getElementById(id);
+    const api = () => $("apiBase").value.replace(/\/$/, "");
+    const projectId = () => $("projectId").value.trim();
+    const accessCode = () => $("accessCode").value;
+
+    const capabilities = [
+      ["TXT import", "UTF-8 text upload"],
+      ["Mock Event Agent", "No model call"],
+      ["Real Event Agent", "Platform-hosted model"],
+      ["AgentRun audit", "List and detail"],
+      ["Evidence audit", "Short quote trace"],
+      ["LLM status", "Sanitized settings"],
+      ["Access code", "Header-gated real agent"],
+      ["Scope", "Event only"]
+    ];
+
+    function renderCapabilities(status = {}) {
+      $("capabilityMatrix").innerHTML = capabilities.map(([title, note]) => `
+        <div class="cap"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(note)}</span></div>
+      `).join("");
+      if (status.supported_modes) {
+        $("demoStatus").textContent = pretty(status);
+      }
+    }
+
+    function demoHeaders() {
+      const headers = {"Content-Type": "application/json"};
+      if (accessCode()) headers["X-Demo-Access-Code"] = accessCode();
+      return headers;
+    }
+
+    async function request(path, options = {}) {
+      const response = await fetch(api() + path, options);
+      const text = await response.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+      if (!response.ok) {
+        throw new Error(typeof data === "object" && data?.detail ? data.detail : response.statusText);
+      }
+      return data;
+    }
+
+    function showLog(message) {
+      const el = $("log");
+      el.textContent = message;
+      el.style.display = "block";
+      clearTimeout(showLog.timer);
+      showLog.timer = setTimeout(() => { el.style.display = "none"; }, 5000);
+    }
+
+    function pretty(data) {
+      return JSON.stringify(data, null, 2);
+    }
+
+    async function refreshStatus() {
+      const data = await request("/demo/status");
+      state.requireAccessCode = data.require_access_code;
+      if (!data.require_access_code) state.accessGranted = true;
+      renderCapabilities(data);
+      updateAccessUi();
+    }
+
+    async function verifyAccess() {
+      const data = await request("/demo/verify-access", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({access_code: accessCode()})
+      });
+      state.accessGranted = data.access_granted === true;
+      updateAccessUi();
+      showLog("访问码验证通过。");
+    }
+
+    function updateAccessUi() {
+      $("accessBadge").textContent = state.accessGranted ? "Access Granted" : "Access Required";
+      $("accessBadge").className = state.accessGranted ? "pill" : "pill warn";
+      $("runRealEvent").disabled = !state.accessGranted || state.selectedChunks.size < 1;
+    }
+
+    async function createProject() {
+      const data = await request("/projects", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({project_id: projectId(), name: projectId()})
+      });
+      showLog(data.created ? "项目已创建。" : "项目已存在，已复用。");
+    }
+
+    async function importTxt() {
+      const file = $("txtFile").files[0];
+      if (!file) throw new Error("请选择 TXT 文件。");
+      const form = new FormData();
+      form.append("file", file);
+      const data = await request(`/projects/${encodeURIComponent(projectId())}/documents/import`, {
+        method: "POST",
+        body: form
+      });
+      $("importResult").textContent = pretty(data);
+      showLog(`导入完成：${data.status}, chapters=${data.chapters_count}, chunks=${data.chunks_count}`);
+    }
+
+    async function loadChapters() {
+      const chapters = await request(`/projects/${encodeURIComponent(projectId())}/chapters`);
+      state.chapters = chapters;
+      $("chapterTable").innerHTML = table(
+        ["order", "title", "chapter_id", "chunks"],
+        chapters.map((chapter) => [
+          chapter.order,
+          chapter.title,
+          `<button data-chapter="${chapter.chapter_id}">${chapter.chapter_id}</button>`,
+          `${chapter.start_chunk_order}-${chapter.end_chunk_order}`
+        ])
+      );
+      document.querySelectorAll("[data-chapter]").forEach((button) => {
+        button.addEventListener("click", () => loadChunks(button.dataset.chapter));
+      });
+    }
+
+    async function loadChunks(chapterId) {
+      const chunks = await request(`/chapters/${encodeURIComponent(chapterId)}/chunks`);
+      state.chunksByChapter.set(chapterId, chunks);
+      $("chunkTable").innerHTML = table(
+        ["select", "order", "chunk_id", "range", "length", "hash", "preview"],
+        chunks.map((chunk) => [
+          `<input type="checkbox" data-select="${chunk.chunk_id}" ${state.selectedChunks.has(chunk.chunk_id) ? "checked" : ""}>`,
+          chunk.order,
+          `<button data-chunk="${chunk.chunk_id}">${chunk.chunk_id}</button>`,
+          `${chunk.char_start ?? "-"}-${chunk.char_end ?? "-"}`,
+          chunk.text.length,
+          `<span class="mono">${chunk.checksum.slice(0, 12)}</span>`,
+          `<span>${escapeHtml(chunk.text.slice(0, 64))}</span>`
+        ])
+      );
+      document.querySelectorAll("[data-select]").forEach((input) => {
+        input.addEventListener("change", () => toggleChunk(input.dataset.select, input.checked));
+      });
+      document.querySelectorAll("[data-chunk]").forEach((button) => {
+        button.addEventListener("click", () => loadChunkDetail(button.dataset.chunk));
+      });
+    }
+
+    async function loadChunkDetail(chunkId) {
+      const chunk = await request(`/chunks/${encodeURIComponent(chunkId)}`);
+      $("chunkDetail").textContent = pretty(sanitizedChunkDetail(chunk));
+    }
+
+    function sanitizedChunkDetail(chunk) {
+      return {
+        chunk_id: chunk.chunk_id,
+        document_id: chunk.document_id,
+        chapter_id: chunk.chapter_id,
+        project_id: chunk.project_id,
+        order: chunk.order,
+        char_start: chunk.char_start,
+        char_end: chunk.char_end,
+        checksum: chunk.checksum,
+        text_preview: String(chunk.text || "").slice(0, 96),
+        text_length: String(chunk.text || "").length
+      };
+    }
+
+    function toggleChunk(chunkId, checked) {
+      if (checked) {
+        if (state.selectedChunks.size >= 3) {
+          showLog("最多选择 3 个 chunk。");
+          document.querySelector(`[data-select="${chunkId}"]`).checked = false;
+          return;
+        }
+        state.selectedChunks.set(chunkId, true);
+      } else {
+        state.selectedChunks.delete(chunkId);
+      }
+      renderSelected();
+    }
+
+    function renderSelected() {
+      $("selectedCount").textContent = `Selected ${state.selectedChunks.size}`;
+      $("selectedChunks").innerHTML = Array.from(state.selectedChunks.keys()).map((chunkId) => `
+        <div class="selected-item"><span class="mono">${chunkId}</span><button data-remove="${chunkId}">移除</button></div>
+      `).join("") || `<span class="muted">尚未选择 chunk。</span>`;
+      document.querySelectorAll("[data-remove]").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.selectedChunks.delete(button.dataset.remove);
+          renderSelected();
+          const input = document.querySelector(`[data-select="${button.dataset.remove}"]`);
+          if (input) input.checked = false;
+        });
+      });
+      updateAccessUi();
+    }
+
+    async function runMock() {
+      const chunkIds = Array.from(state.selectedChunks.keys());
+      if (!chunkIds.length) throw new Error("请先选择 1-3 个 chunk。");
+      const data = await request(`/projects/${encodeURIComponent(projectId())}/agent-runs/mock-event`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({chunk_ids: chunkIds})
+      });
+      $("agentResult").textContent = pretty(data);
+      showLog(`Mock run: ${data.status}`);
+      await loadRuns();
+    }
+
+    async function runRealEvent() {
+      const chunkIds = Array.from(state.selectedChunks.keys());
+      if (!chunkIds.length || chunkIds.length > 3) throw new Error("请选择 1-3 个 chunk。");
+      const data = await request(`/projects/${encodeURIComponent(projectId())}/agent-runs/real-event`, {
+        method: "POST",
+        headers: demoHeaders(),
+        body: JSON.stringify({chunk_ids: chunkIds})
+      });
+      $("agentResult").textContent = pretty(data);
+      showLog(`Real Event run: ${data.agent_run_status}`);
+      await loadRuns();
+    }
+
+    async function loadRuns() {
+      const data = await request(`/projects/${encodeURIComponent(projectId())}/agent-runs`);
+      $("runTable").innerHTML = table(
+        ["agent_run_id", "agent", "status", "provider", "schema", "evidence"],
+        data.items.map((run) => [
+          `<button data-run="${run.agent_run_id}">${run.agent_run_id}</button>`,
+          run.agent_name,
+          run.status,
+          `${run.provider_name ?? "-"} / ${run.provider_type ?? "-"}`,
+          run.output_schema,
+          run.evidence_validation_passed
+        ])
+      );
+      document.querySelectorAll("[data-run]").forEach((button) => {
+        button.addEventListener("click", () => loadRunDetail(button.dataset.run));
+      });
+    }
+
+    async function loadRunDetail(agentRunId) {
+      const data = await request(`/agent-runs/${encodeURIComponent(agentRunId)}`);
+      $("runDetail").textContent = pretty(sanitizeRunDetail(data));
+      await loadEvidence(agentRunId);
+    }
+
+    function sanitizeRunDetail(data) {
+      const copy = JSON.parse(JSON.stringify(data));
+      if (copy.provider_result && Object.hasOwn(copy.provider_result, "raw_output")) {
+        delete copy.provider_result.raw_output;
+      }
+      return copy;
+    }
+
+    async function loadEvidence(agentRunId) {
+      const data = await request(`/agent-runs/${encodeURIComponent(agentRunId)}/evidence`);
+      const cards = await Promise.all(data.items.map(async (item) => {
+        let chunkText = "";
+        try {
+          const chunk = await request(`/chunks/${encodeURIComponent(item.chunk_id)}`);
+          chunkText = evidenceSnippet(chunk, item.quote);
+        } catch (error) {
+          chunkText = `<span class="pill bad">chunk 加载失败</span>`;
+        }
+        return `
+          <div class="cap">
+            <strong>${escapeHtml(item.validation_status)} · ${escapeHtml(item.chunk_id)}</strong>
+            <span>range: ${item.char_start ?? "-"}-${item.char_end ?? "-"}</span>
+            <p>${chunkText}</p>
+          </div>
+        `;
+      }));
+      $("evidencePanel").innerHTML = cards.join("") || `<span class="muted">暂无 evidence。</span>`;
+    }
+
+    function evidenceSnippet(chunk, quote) {
+      return highlightQuote(String(chunk.text || ""), quote, 28);
+    }
+
+    function highlightQuote(text, quote, radius) {
+      if (!quote) return `<span class="muted">quote unavailable</span>`;
+      const index = text.indexOf(quote);
+      if (index < 0) return `<span class="pill bad">回源失败</span>`;
+      const start = Math.max(0, index - radius);
+      const end = Math.min(text.length, index + quote.length + radius);
+      const prefix = start > 0 ? "..." : "";
+      const suffix = end < text.length ? "..." : "";
+      return `${prefix}${escapeHtml(text.slice(start, index))}<mark>${escapeHtml(quote)}</mark>${escapeHtml(text.slice(index + quote.length, end))}${suffix}`;
+    }
+
+    function table(headers, rows) {
+      if (!rows.length) return `<span class="muted">暂无数据。</span>`;
+      return `
+        <table>
+          <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>
+          <tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody>
+        </table>
+      `;
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    $("refreshStatus").addEventListener("click", () => refreshStatus().catch((error) => showLog(error.message)));
+    $("verifyAccess").addEventListener("click", () => verifyAccess().catch((error) => showLog(error.message)));
+    $("createProject").addEventListener("click", () => createProject().catch((error) => showLog(error.message)));
+    $("importTxt").addEventListener("click", () => importTxt().catch((error) => showLog(error.message)));
+    $("loadChapters").addEventListener("click", () => loadChapters().catch((error) => showLog(error.message)));
+    $("runMock").addEventListener("click", () => runMock().catch((error) => showLog(error.message)));
+    $("runRealEvent").addEventListener("click", () => runRealEvent().catch((error) => showLog(error.message)));
+    $("loadRuns").addEventListener("click", () => loadRuns().catch((error) => showLog(error.message)));
+
+    renderCapabilities();
+    renderSelected();
+    refreshStatus().catch(() => showLog("后端未启动。请先运行 uv run uvicorn comic_agent.main:app --reload"));
+  </script>
+</body>
+</html>

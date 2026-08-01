@@ -2,16 +2,21 @@
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 
+from comic_agent.api.demo import require_demo_access_code
 from comic_agent.api.dependencies import get_agent_run_repository, get_repository
+from comic_agent.config import get_settings
 from comic_agent.providers.mocks import MockLLMProvider
 from comic_agent.repositories.agent_run_repository import AgentRunRepository
 from comic_agent.repositories.source_repository import SourceRepository
 from comic_agent.schemas.base import RealityLayer
+from comic_agent.schemas.narrative import EventProposalV1
+from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.workflow import AgentRunV1
 from comic_agent.services.id_service import checksum_text, stable_id
 from comic_agent.workflows.mock_event_workflow import MockEventWorkflow
+from comic_agent.workflows.real_event_workflow import RealEventWorkflow
 
 router = APIRouter()
 
@@ -71,6 +76,39 @@ def run_mock_event(
     }
 
 
+@router.post(
+    "/projects/{project_id}/agent-runs/real-event",
+    status_code=status.HTTP_201_CREATED,
+)
+def run_real_event(
+    project_id: str,
+    payload: Annotated[dict[str, Any], Body()],
+    source_repository: SourceRepositoryDep,
+    agent_run_repository: AgentRunRepositoryDep,
+    request: Request,
+    _: Annotated[None, Depends(require_demo_access_code)],
+) -> dict[str, Any]:
+    """Run the real Event workflow for the internal hosted demo."""
+
+    settings = get_settings()
+    chunk_ids = [str(chunk_id) for chunk_id in payload.get("chunk_ids", [])]
+    if not chunk_ids:
+        raise HTTPException(status_code=400, detail="chunk_ids is required")
+    if len(chunk_ids) > settings.internal_demo_max_real_event_chunks_per_run:
+        raise HTTPException(status_code=400, detail="real-event chunk_ids cannot exceed 3")
+
+    chunks = _project_chunks(source_repository, project_id, chunk_ids)
+    provider = getattr(request.app.state, "real_event_provider", None)
+    workflow = RealEventWorkflow(
+        settings=settings,
+        source_repository=source_repository,
+        agent_run_repository=agent_run_repository,
+        provider=provider,
+    )
+    result = workflow.run(project_id=project_id, chunk_ids=chunk_ids)
+    return _real_event_summary(result.agent_run, result.proposal, chunks)
+
+
 @router.get("/agent-runs/{agent_run_id}")
 def get_agent_run(
     agent_run_id: str,
@@ -126,6 +164,73 @@ def get_agent_run_evidence(
             }
         )
     return {"items": items}
+
+
+def _project_chunks(
+    source_repository: SourceRepository,
+    project_id: str,
+    chunk_ids: list[str],
+) -> list[SourceChunkV1]:
+    chunks = []
+    for chunk_id in chunk_ids:
+        chunk = source_repository.get_chunk(chunk_id)
+        if chunk is None or chunk.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Chunk not found")
+        chunks.append(chunk)
+    return chunks
+
+
+def _real_event_summary(
+    agent_run: AgentRunV1,
+    proposal: EventProposalV1 | None,
+    selected_chunks: list[SourceChunkV1],
+) -> dict[str, Any]:
+    provider_result = agent_run.provider_result
+    summary: dict[str, Any] = {
+        "agent_run_id": agent_run.agent_run_id,
+        "agent_run_status": agent_run.status,
+        "provider_result_id": agent_run.provider_result_id,
+        "provider_success": provider_result.success if provider_result else None,
+        "output_schema": agent_run.output_schema,
+        "schema_validation_passed": proposal is not None,
+        "proposal_id": proposal.proposal_id if proposal else None,
+        "confidence": proposal.confidence if proposal else None,
+        "actor_resolution_status": proposal.actor_resolution_status if proposal else None,
+        "evidence_validation_passed": agent_run.payload.get("evidence_validation_passed"),
+        "evidence_chunk_id": None,
+        "quote_matched": None,
+        "char_range_matched": None,
+        "error_message": agent_run.error_message,
+    }
+    if proposal is None or not proposal.evidence_refs:
+        return summary
+
+    evidence = proposal.evidence_refs[0]
+    summary["evidence_chunk_id"] = evidence.chunk_id
+    evidence_chunk = next(
+        (chunk for chunk in selected_chunks if chunk.chunk_id == evidence.chunk_id),
+        None,
+    )
+    if evidence_chunk is None:
+        summary["quote_matched"] = False if evidence.quote_text is not None else None
+        summary["char_range_matched"] = False if evidence.quote_start is not None else None
+        return summary
+
+    if evidence.quote_text is not None:
+        summary["quote_matched"] = evidence.quote_text in evidence_chunk.text
+    has_range = evidence.quote_start is not None and evidence.quote_end is not None
+    if has_range:
+        assert evidence.quote_start is not None
+        assert evidence.quote_end is not None
+        range_in_bounds = (
+            0 <= evidence.quote_start <= evidence.quote_end <= len(evidence_chunk.text)
+        )
+        summary["char_range_matched"] = (
+            range_in_bounds
+            and evidence_chunk.text[evidence.quote_start : evidence.quote_end]
+            == evidence.quote_text
+        )
+    return summary
 
 
 def _mock_event_response(project_id: str, chunk_id: str, chunk_text: str) -> dict[str, Any]:

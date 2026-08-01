@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from comic_agent.config import get_settings
 from comic_agent.main import create_app
 from comic_agent.services.document_parser import DocumentParser
 
@@ -168,6 +169,27 @@ def test_whitespace_only_txt_upload_returns_400(tmp_path: Path) -> None:
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Uploaded file is empty"
+
+
+def test_txt_upload_over_demo_char_limit_returns_413(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("INTERNAL_DEMO_MAX_IMPORT_CHARS", "10")
+    get_settings.cache_clear()
+    try:
+        with create_test_client(tmp_path) as client:
+            create_project(client)
+
+            response = client.post(
+                "/projects/project-1/documents/import",
+                files={"file": ("source.txt", b"01234567890", "text/plain")},
+            )
+    finally:
+        get_settings.cache_clear()
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "TXT exceeds demo import character limit"
 
 
 def test_non_utf8_txt_upload_returns_400(tmp_path: Path) -> None:

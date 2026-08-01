@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from comic_agent.agents.mocks import MockEventAgent
 from comic_agent.api.dependencies import get_repository
+from comic_agent.config import get_settings
 from comic_agent.repositories.source_repository import SourceRepository
 from comic_agent.schemas.narrative import EventProposalV1
 from comic_agent.schemas.source import SourceChunkV1
@@ -41,6 +42,11 @@ async def import_document(
         raise HTTPException(status_code=400, detail="TXT file must be UTF-8 encoded") from exc
     if not text.strip():
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
+    if len(text) > get_settings().internal_demo_max_import_chars:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="TXT exceeds demo import character limit",
+        )
     parsed = DocumentParser().parse_txt(
         project_id=project_id,
         filename=filename,
