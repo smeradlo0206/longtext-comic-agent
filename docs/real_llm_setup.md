@@ -184,18 +184,47 @@ $env:LLM_PROVIDER_NAME = 'ustc-openai-compatible'
 $env:LLM_BASE_URL = 'https://api.llm.ustc.edu.cn/v1'
 $env:LLM_MODEL = 'deepseek-v4-pro'
 $env:LLM_RESPONSE_FORMAT = ''
-$env:LLM_TIMEOUT_SECONDS = '240'
+$env:LLM_TIMEOUT_SECONDS = '360'
 $env:LLM_MAX_OUTPUT_TOKENS = '3000'
 $env:UV_CACHE_DIR = 'D:\107\tmp\uv-cache'
-uv run python scripts/smoke_real_event_agent.py `
+uv run python scripts/smoke_narrative_analyst.py `
+  --mode event_extraction `
   --txt-path local_eval/console_smoke_xuanhuan.txt `
   --output-dir output/evaluations `
   --chunk-limit 3 `
+  --chunk-offset 0 `
+  --max-chars-per-chunk 1200 `
   --enable-real-llm
 ```
 
 If `--enable-real-llm` is passed while `ENABLE_REAL_LLM=false`, the script records
 that the run was blocked and does not call the provider.
+
+For long-text 3 chunk evaluation, prefer the unified NarrativeAnalyst smoke
+script with an explicit input budget:
+
+```powershell
+uv run python scripts/smoke_narrative_analyst.py `
+  --mode event_extraction `
+  --txt-path local_eval/console_smoke_xuanhuan.txt `
+  --output-dir output/evaluations `
+  --chunk-limit 3 `
+  --chunk-offset 0 `
+  --max-chars-per-chunk 1200 `
+  --enable-real-llm
+```
+
+`--max-chars-per-chunk` truncates only the LLM input context. It does not modify
+the imported `SourceChunkV1` records or write source text to the summary. The
+summary records sanitized diagnostics such as `chunk_limit`, `chunk_offset`,
+`max_chars_per_chunk`, `input_chars_total`, and `truncated_chunks_count`.
+
+When `deepseek-v4-pro` returns `finish_reason=length` with missing `content` and
+`has_reasoning_content=true`, first lower the input budget or try a nearby
+`--chunk-offset`. Avoid blindly raising `LLM_MAX_OUTPUT_TOKENS`, because the
+model may spend the extra completion budget on reasoning rather than final JSON.
+Keep `LLM_RESPONSE_FORMAT` empty for the current USTC path. For slow long-text
+runs, `LLM_TIMEOUT_SECONDS=360` is acceptable during manual evaluation.
 
 Recommended manual Entity eval command:
 

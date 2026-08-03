@@ -99,9 +99,21 @@ def test_event_extraction_prompt_contains_v01_constraints() -> None:
         "canonical story data",
         "Return final JSON directly.",
         "Do not include reasoning.",
+        "Do not reason step by step.",
+        "Do not list candidate events.",
+        "Do not explain your choice.",
+        "Select one concrete, evidence-backed event quickly.",
         "Keep summary concise.",
+        "under 30 Chinese characters",
+        "mostly background or setup",
         "single most salient event",
         "shortest exact quote",
+        "shortest exact source quote",
+        "copied verbatim",
+        "Do not paraphrase, summarize, translate, merge, or rewrite quote_text.",
+        "If quote_start/quote_end are uncertain",
+        "quote_text must exact-match the chunk text",
+        "6-40 Chinese character quote",
     ]:
         assert expected in prompt
 

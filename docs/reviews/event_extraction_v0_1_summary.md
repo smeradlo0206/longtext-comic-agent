@@ -53,13 +53,42 @@ LLM_PROVIDER_NAME=ustc-openai-compatible
 LLM_BASE_URL=https://api.llm.ustc.edu.cn/v1
 LLM_MODEL=deepseek-v4-pro
 LLM_RESPONSE_FORMAT=
-LLM_TIMEOUT_SECONDS=240
+LLM_TIMEOUT_SECONDS=240, or 360 for slow long-text 3 chunk runs
 LLM_MAX_OUTPUT_TOKENS=3000
 ```
 
 `LLM_RESPONSE_FORMAT=json_object` remains supported by code, but is not
 recommended for the current USTC 3 chunk eval because the provider may return
 missing content with reasoning metadata or time out.
+
+## Long-Text 3 Chunk Notes
+
+Sanitized long-text smoke observations:
+
+- Some 3 chunk offsets can fail with `finish_reason=length`, missing final
+  content, `has_reasoning_content=true`, and high prompt/completion token usage.
+- Nearby offsets can still pass with schema validation, evidence validation, and
+  quote matching, which indicates the agent/provider/evidence pipeline is usable.
+- Some long-text offsets can time out.
+
+Recommended long-text command shape:
+
+```powershell
+uv run python scripts/smoke_narrative_analyst.py `
+  --mode event_extraction `
+  --txt-path local_eval/console_smoke_xuanhuan.txt `
+  --output-dir output/evaluations `
+  --chunk-limit 3 `
+  --chunk-offset 0 `
+  --max-chars-per-chunk 1200 `
+  --enable-real-llm
+```
+
+`--max-chars-per-chunk` trims only the provider input context and leaves stored
+`SourceChunkV1` records unchanged. If the provider exceeds max output tokens
+before final JSON content, first reduce `--max-chars-per-chunk` or try another
+`--chunk-offset`. Do not paste or commit local source text, evidence quotes, raw
+provider responses, `message.content`, or reasoning text.
 
 ## Safety Rules
 
