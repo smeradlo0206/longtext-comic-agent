@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from comic_agent.config import Settings
 from comic_agent.database.session import make_engine, make_session_factory
+from comic_agent.providers.openai_compatible import ProviderResponseError
 from comic_agent.repositories.source_repository import SourceRepository
 from comic_agent.schemas.narrative import ClaimProposalV1, EntityProposalV1, EventProposalV1
 from scripts.smoke_narrative_analyst import DEFAULT_MAX_CHARS_PER_CHUNK, run_smoke
@@ -74,6 +75,72 @@ def test_smoke_narrative_analyst_dry_run_applies_input_budget_to_summary(
     assert summary["truncated_chunks_count"] == 2
     assert "A" * 11 not in serialized
     assert "B" * 11 not in serialized
+
+
+def test_smoke_narrative_analyst_dry_run_contains_eval_matrix_fields(
+    tmp_path: Path,
+) -> None:
+    txt_path = tmp_path / "source.txt"
+    txt_path.write_text("The witness claimed the door was locked.", encoding="utf-8")
+
+    summary = run_smoke(
+        mode="event_extraction",
+        project_id="project-1",
+        txt_path=txt_path,
+        output_dir=tmp_path / "out",
+        chunk_limit=1,
+        chunk_offset=0,
+        enable_real_llm=False,
+        settings=Settings(_env_file=None, llm_api_key="secret-test-key"),
+    )
+
+    for field in (
+        "project_id",
+        "mode",
+        "dry_run",
+        "real_llm_requested",
+        "real_llm_enabled",
+        "real_llm_called",
+        "provider_name",
+        "model",
+        "import_idempotent",
+        "context_chunk_ids",
+        "chunk_limit",
+        "chunk_offset",
+        "selected_chunks_count",
+        "max_chars_per_chunk",
+        "input_chars_total",
+        "truncated_chunks_count",
+        "agent_run_saved",
+        "agent_run_id",
+        "agent_run_status",
+        "provider_result_id",
+        "provider_success",
+        "provider_error_diagnostics",
+        "usage_prompt_tokens",
+        "usage_completion_tokens",
+        "usage_total_tokens",
+        "output_schema",
+        "schema_validation_passed",
+        "evidence_validation_passed",
+        "quote_matched",
+        "char_range_matched",
+        "error_message",
+        "manual_score",
+        "manual_issue",
+        "failure_category",
+        "recommended_action",
+    ):
+        assert field in summary
+
+    assert summary["agent_run_saved"] is False
+    assert summary["agent_run_id"] is None
+    assert summary["provider_result_id"] is None
+    assert summary["provider_error_diagnostics"] is None
+    assert summary["manual_score"] is None
+    assert summary["manual_issue"] is None
+    assert summary["failure_category"] is None
+    assert summary["recommended_action"] is None
 
 
 def test_smoke_narrative_analyst_real_flag_requires_env_enable(tmp_path: Path) -> None:
@@ -149,7 +216,7 @@ class FakeSuccessfulProvider:
                     "proposal_id": "entity-smoke-1",
                     "entity_type": "CHARACTER",
                     "canonical_name": "Demo Entity",
-                    "aliases": [],
+                    "aliases": ["Hidden Alias"],
                     "evidence_refs": [{"chunk_id": source_chunk["chunk_id"]}],
                     "confidence": 0.7,
                 }
@@ -225,7 +292,10 @@ def test_smoke_narrative_analyst_claim_success_summary_is_sanitized(
     assert summary["evidence_chunk_id"] == summary["selected_chunk_ids"][0]
     assert summary["quote_matched"] is True
     assert summary["char_range_matched"] is True
+    assert summary["failure_category"] is None
+    assert summary["recommended_action"] is None
     assert "The witness claimed the door was locked" not in serialized
+    assert "claim_text" not in serialized
     assert "The wit" not in serialized
     assert "secret-test-key" not in serialized
     assert "message.content" not in serialized
@@ -307,3 +377,297 @@ def test_smoke_narrative_analyst_input_budget_applies_to_all_implemented_modes(
         assert summary["input_chars_total"] == 10
         assert summary["truncated_chunks_count"] == 1
         assert FakeSuccessfulProvider.seen_text_lengths == [10]
+
+
+def test_smoke_narrative_analyst_event_success_includes_mode_fields(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    txt_path = tmp_path / "source.txt"
+    txt_path.write_text("The witness claimed the door was locked.", encoding="utf-8")
+    monkeypatch.setattr(
+        "scripts.smoke_narrative_analyst.OpenAICompatibleLLMProvider",
+        FakeSuccessfulProvider,
+    )
+
+    summary = run_smoke(
+        mode="event_extraction",
+        project_id="project-1",
+        txt_path=txt_path,
+        output_dir=tmp_path / "out",
+        chunk_limit=1,
+        chunk_offset=0,
+        max_chars_per_chunk=10,
+        enable_real_llm=True,
+        settings=Settings(
+            _env_file=None,
+            enable_real_llm=True,
+            llm_api_key="secret-test-key",
+        ),
+    )
+
+    assert summary["proposal_id"] == "event-smoke-1"
+    assert summary["event_type"] == "claim"
+    assert summary["actor_resolution_status"] == "UNKNOWN"
+    assert summary["confidence"] == 0.7
+    assert summary["evidence_chunk_id"] == summary["selected_chunk_ids"][0]
+
+
+def test_smoke_narrative_analyst_entity_success_includes_sanitized_mode_fields(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    txt_path = tmp_path / "source.txt"
+    txt_path.write_text("The witness claimed the door was locked.", encoding="utf-8")
+    monkeypatch.setattr(
+        "scripts.smoke_narrative_analyst.OpenAICompatibleLLMProvider",
+        FakeSuccessfulProvider,
+    )
+
+    summary = run_smoke(
+        mode="entity_extraction",
+        project_id="project-1",
+        txt_path=txt_path,
+        output_dir=tmp_path / "out",
+        chunk_limit=1,
+        chunk_offset=0,
+        max_chars_per_chunk=10,
+        enable_real_llm=True,
+        settings=Settings(
+            _env_file=None,
+            enable_real_llm=True,
+            llm_api_key="secret-test-key",
+        ),
+    )
+
+    serialized = json.dumps(summary, ensure_ascii=False)
+    assert summary["proposal_id"] == "entity-smoke-1"
+    assert summary["entity_type"] == "CHARACTER"
+    assert summary["canonical_name"] == "Demo Entity"
+    assert summary["aliases_count"] == 1
+    assert summary["confidence"] == 0.7
+    assert summary["evidence_chunk_id"] == summary["selected_chunk_ids"][0]
+    assert "Hidden Alias" not in serialized
+
+
+class FakeTimeoutProvider:
+    def __init__(self, **_: Any) -> None:
+        pass
+
+    def structured_generate(
+        self,
+        request: dict[str, object],
+        output_model: type[OutputModelT],
+    ) -> OutputModelT:
+        raise TimeoutError("LLM provider timeout")
+
+
+class FakeLengthProvider:
+    def __init__(self, **_: Any) -> None:
+        pass
+
+    def structured_generate(
+        self,
+        request: dict[str, object],
+        output_model: type[OutputModelT],
+    ) -> OutputModelT:
+        raise ProviderResponseError(
+            "LLM provider response exceeded max output tokens before final content",
+            {
+                "finish_reason": "length",
+                "content_type": "NoneType",
+                "has_reasoning_content": True,
+                "usage_prompt_tokens": 9000,
+                "usage_completion_tokens": 3000,
+                "usage_total_tokens": 12000,
+            },
+        )
+
+
+class FakeUnknownProvider:
+    def __init__(self, **_: Any) -> None:
+        pass
+
+    def structured_generate(
+        self,
+        request: dict[str, object],
+        output_model: type[OutputModelT],
+    ) -> OutputModelT:
+        raise RuntimeError("unexpected sanitized failure")
+
+
+class FakeQuoteMismatchProvider:
+    def __init__(self, **_: Any) -> None:
+        pass
+
+    def structured_generate(
+        self,
+        request: dict[str, object],
+        output_model: type[OutputModelT],
+    ) -> OutputModelT:
+        input_context = request["input_context"]
+        assert isinstance(input_context, dict)
+        source_chunks = input_context["source_chunks"]
+        assert isinstance(source_chunks, list)
+        source_chunk = source_chunks[0]
+        assert isinstance(source_chunk, dict)
+        if output_model is ClaimProposalV1:
+            return output_model.model_validate(
+                {
+                    "proposal_id": "claim-smoke-1",
+                    "claim_type": "ASSERTION",
+                    "claim_text": "Sanitized claim.",
+                    "source_type": "NARRATOR",
+                    "source_id": None,
+                    "target_event_id": None,
+                    "verification_status": "UNVERIFIED",
+                    "evidence_refs": [
+                        {
+                            "chunk_id": source_chunk["chunk_id"],
+                            "quote_text": "not present in visible input",
+                        }
+                    ],
+                    "confidence": 0.5,
+                    "reality_layer": "PRIMARY",
+                }
+            )
+        raise AssertionError(f"Unexpected output model: {output_model}")
+
+
+def test_smoke_narrative_analyst_timeout_failure_is_classified(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    txt_path = tmp_path / "source.txt"
+    txt_path.write_text("The witness claimed the door was locked.", encoding="utf-8")
+    monkeypatch.setattr(
+        "scripts.smoke_narrative_analyst.OpenAICompatibleLLMProvider",
+        FakeTimeoutProvider,
+    )
+
+    summary = run_smoke(
+        mode="claim_extraction",
+        project_id="project-1",
+        txt_path=txt_path,
+        output_dir=tmp_path / "out",
+        chunk_limit=1,
+        chunk_offset=0,
+        max_chars_per_chunk=10,
+        enable_real_llm=True,
+        settings=Settings(
+            _env_file=None,
+            enable_real_llm=True,
+            llm_api_key="secret-test-key",
+        ),
+    )
+
+    assert summary["agent_run_status"] == "FAILED"
+    assert summary["failure_category"] == "PROVIDER_TIMEOUT"
+    assert "increase timeout" in summary["recommended_action"]
+
+
+def test_smoke_narrative_analyst_length_failure_keeps_diagnostics_sanitized(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    txt_path = tmp_path / "source.txt"
+    txt_path.write_text("The witness claimed the door was locked.", encoding="utf-8")
+    monkeypatch.setattr(
+        "scripts.smoke_narrative_analyst.OpenAICompatibleLLMProvider",
+        FakeLengthProvider,
+    )
+
+    summary = run_smoke(
+        mode="event_extraction",
+        project_id="project-1",
+        txt_path=txt_path,
+        output_dir=tmp_path / "out",
+        chunk_limit=1,
+        chunk_offset=0,
+        max_chars_per_chunk=10,
+        enable_real_llm=True,
+        settings=Settings(
+            _env_file=None,
+            enable_real_llm=True,
+            llm_api_key="secret-test-key",
+        ),
+    )
+
+    serialized = json.dumps(summary, ensure_ascii=False)
+    assert summary["failure_category"] == "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT"
+    assert "reduce max_chars_per_chunk" in summary["recommended_action"]
+    assert summary["provider_error_diagnostics"]["finish_reason"] == "length"
+    assert summary["usage_prompt_tokens"] == 9000
+    assert summary["usage_completion_tokens"] == 3000
+    assert summary["usage_total_tokens"] == 12000
+    assert "The witness claimed" not in serialized
+    assert "secret-test-key" not in serialized
+    assert "message.content" not in serialized
+
+
+def test_smoke_narrative_analyst_quote_mismatch_is_classified(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    txt_path = tmp_path / "source.txt"
+    txt_path.write_text("The witness claimed the door was locked.", encoding="utf-8")
+    monkeypatch.setattr(
+        "scripts.smoke_narrative_analyst.OpenAICompatibleLLMProvider",
+        FakeQuoteMismatchProvider,
+    )
+
+    summary = run_smoke(
+        mode="claim_extraction",
+        project_id="project-1",
+        txt_path=txt_path,
+        output_dir=tmp_path / "out",
+        chunk_limit=1,
+        chunk_offset=0,
+        max_chars_per_chunk=10,
+        enable_real_llm=True,
+        settings=Settings(
+            _env_file=None,
+            enable_real_llm=True,
+            llm_api_key="secret-test-key",
+        ),
+    )
+
+    serialized = json.dumps(summary, ensure_ascii=False)
+    assert summary["agent_run_status"] == "SUCCEEDED"
+    assert summary["evidence_validation_passed"] is False
+    assert summary["quote_matched"] is False
+    assert summary["failure_category"] == "QUOTE_NOT_MATCHED"
+    assert "tighten exact quote prompt" in summary["recommended_action"]
+    assert "not present in visible input" not in serialized
+
+
+def test_smoke_narrative_analyst_unknown_failure_is_classified(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    txt_path = tmp_path / "source.txt"
+    txt_path.write_text("The witness claimed the door was locked.", encoding="utf-8")
+    monkeypatch.setattr(
+        "scripts.smoke_narrative_analyst.OpenAICompatibleLLMProvider",
+        FakeUnknownProvider,
+    )
+
+    summary = run_smoke(
+        mode="claim_extraction",
+        project_id="project-1",
+        txt_path=txt_path,
+        output_dir=tmp_path / "out",
+        chunk_limit=1,
+        chunk_offset=0,
+        max_chars_per_chunk=10,
+        enable_real_llm=True,
+        settings=Settings(
+            _env_file=None,
+            enable_real_llm=True,
+            llm_api_key="secret-test-key",
+        ),
+    )
+
+    assert summary["agent_run_status"] == "FAILED"
+    assert summary["failure_category"] == "UNKNOWN_ERROR"
+    assert "manual review" in summary["recommended_action"]

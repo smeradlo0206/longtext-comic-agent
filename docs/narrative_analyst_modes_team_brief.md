@@ -85,6 +85,83 @@ output/
 tmp/
 ```
 
+## Unified Smoke 评估矩阵
+
+`scripts/smoke_narrative_analyst.py` 是当前 NarrativeAnalyst mode 的统一
+dry-run / real opt-in smoke 入口。它支持：
+
+```text
+event_extraction
+entity_extraction
+claim_extraction
+```
+
+统一 summary 只记录脱敏评估字段，不记录原文、quote_text、claim_text、aliases
+明细、raw provider response、message.content 或 API key。共同字段包括：
+
+```text
+project_id
+mode
+dry_run
+real_llm_requested
+real_llm_enabled
+real_llm_called
+provider_name
+model
+import_idempotent
+context_chunk_ids
+chunk_limit
+chunk_offset
+selected_chunks_count
+max_chars_per_chunk
+input_chars_total
+truncated_chunks_count
+agent_run_saved
+agent_run_id
+agent_run_status
+provider_result_id
+provider_success
+provider_error_diagnostics
+usage_prompt_tokens
+usage_completion_tokens
+usage_total_tokens
+output_schema
+schema_validation_passed
+evidence_validation_passed
+quote_matched
+char_range_matched
+error_message
+manual_score
+manual_issue
+failure_category
+recommended_action
+```
+
+mode-specific 字段：
+
+```text
+event_extraction: proposal_id, event_type, actor_resolution_status, confidence, evidence_chunk_id
+entity_extraction: proposal_id, entity_type, canonical_name, aliases_count, confidence, evidence_chunk_id
+claim_extraction: proposal_id, claim_type, source_type, verification_status, confidence, evidence_chunk_id
+```
+
+当前 failure_category：
+
+```text
+PROVIDER_TIMEOUT
+PROVIDER_LENGTH_BEFORE_FINAL_CONTENT
+PROVIDER_CONTENT_MISSING
+SCHEMA_VALIDATION_FAILED
+EVIDENCE_VALIDATION_FAILED
+QUOTE_NOT_MATCHED
+CHAR_RANGE_NOT_MATCHED
+MODE_NOT_IMPLEMENTED
+UNKNOWN_ERROR
+```
+
+`manual_score` / `manual_issue` 是人工评估占位字段，自动输出保持 null。
+如果负责人在本地填写人工评分，只能保存在 ignored 的本地输出目录，不提交。
+
 ## Mode 分工
 
 ## NarrativeAnalyst 顶层入口
