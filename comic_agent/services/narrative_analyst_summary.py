@@ -10,6 +10,7 @@ from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.services.context_builder import AgentContext
 
 DEFAULT_MAX_CHARS_PER_CHUNK = 1200
+SELECTED_CHUNK_PREVIEW_CHARS = 60
 
 FAILURE_RECOMMENDED_ACTIONS = {
     "PROVIDER_TIMEOUT": "increase timeout or reduce max_chars_per_chunk",
@@ -101,6 +102,43 @@ def base_eval_summary(
         "manual_score": None,
         "manual_issue": None,
     }
+
+
+def selected_chunk_metadata(
+    chunks: list[SourceChunkV1],
+    *,
+    chapter_titles: dict[str, str] | None = None,
+) -> list[dict[str, object]]:
+    """Return short, sanitized metadata for chunks selected for a run."""
+
+    titles = chapter_titles or {}
+    items: list[dict[str, object]] = []
+    for chunk in chunks:
+        preview = _safe_preview(chunk.text)
+        items.append(
+            {
+                "chunk_id": chunk.chunk_id,
+                "document_id": chunk.document_id,
+                "chapter_id": chunk.chapter_id,
+                "chapter_title": titles.get(chunk.chapter_id),
+                "preview": preview,
+                "preview_length": len(preview),
+                "text_length": len(chunk.text),
+            }
+        )
+    return items
+
+
+def _safe_preview(text: str) -> str:
+    compact = " ".join(text.strip().split())
+    if not compact:
+        return ""
+    if len(compact) > SELECTED_CHUNK_PREVIEW_CHARS:
+        return compact[:SELECTED_CHUNK_PREVIEW_CHARS].rstrip()
+    if len(compact) == 1:
+        return "..."
+    visible_chars = min(20, len(compact) - 1)
+    return f"{compact[:visible_chars].rstrip()}..."
 
 
 def visible_context_chunks(

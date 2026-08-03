@@ -190,6 +190,18 @@ max_chars_per_chunk
 real_llm_requested
 ```
 
+网站端 Narrative Analyst 必须显式选择 1-3 个 chunks 后再运行。不要在网页中让
+Chunk IDs 留空并依赖 `chunk_offset` / `chunk_limit`，因为同一 project 多次导入
+不同 TXT 后，project-level offset 可能指向旧导入文本。CLI / scripted caller 仍可
+使用 offset fallback，但 API response 会返回脱敏的 selected chunk metadata，方便
+审计实际输入。
+
+手动评估新 TXT 时建议使用新的 `project_id`；导入后点击“查看章节”，重新选择本次
+要评估的 chunks，并在 Selected input chunks 区域确认 chunk_id、chapter/document 和
+短 preview。Full Proposal 中的 evidence quote 必须能对应这些 selected input
+chunks。不要粘贴真实原文、长 quote、`claim_text`、raw provider response、
+`message.content` 或 API key。
+
 dry-run 不调用 provider，不保存 AgentRun，只返回上下文 readiness 和预算 summary。
 real opt-in 需要同时满足：
 

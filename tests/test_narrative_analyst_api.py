@@ -33,6 +33,7 @@ SUMMARY_FIELDS = (
     "model",
     "import_idempotent",
     "context_chunk_ids",
+    "selected_chunk_metadata",
     "chunk_limit",
     "chunk_offset",
     "selected_chunks_count",
@@ -62,9 +63,10 @@ SUMMARY_FIELDS = (
 
 
 class FakeNarrativeProvider:
-    def __init__(self) -> None:
+    def __init__(self, *, max_text_length: int = 5) -> None:
         self.calls = 0
         self.requests: list[dict[str, object]] = []
+        self.max_text_length = max_text_length
 
     def structured_generate(
         self,
@@ -86,7 +88,7 @@ class FakeNarrativeProvider:
             "char_end",
             "text",
         }
-        assert len(str(source_chunk["text"])) <= 5
+        assert len(str(source_chunk["text"])) <= self.max_text_length
         quote = str(source_chunk["text"])[:3]
         chunk_id = str(source_chunk["chunk_id"])
 
@@ -175,6 +177,35 @@ def setup_imported_project(client: TestClient) -> list[dict[str, Any]]:
         assert chunks_response.status_code == 200
         chunks.extend(chunks_response.json())
     return chunks
+
+
+def import_text_and_collect_chunks(
+    client: TestClient,
+    *,
+    project_id: str,
+    filename: str,
+    text: str,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    import_response = client.post(
+        f"/projects/{project_id}/documents/import",
+        files={"file": (filename, text.encode("utf-8"), "text/plain")},
+    )
+    assert import_response.status_code == 201
+    import_payload = import_response.json()
+    document_id = import_payload["document"]["document_id"]
+
+    chapters_response = client.get(f"/projects/{project_id}/chapters")
+    assert chapters_response.status_code == 200
+
+    chunks: list[dict[str, Any]] = []
+    for chapter in chapters_response.json():
+        if chapter["document_id"] != document_id:
+            continue
+        chunks_response = client.get(f"/chapters/{chapter['chapter_id']}/chunks")
+        assert chunks_response.status_code == 200
+        chunks.extend(chunks_response.json())
+    assert chunks
+    return import_payload, chunks
 
 
 @pytest.mark.parametrize(
@@ -304,6 +335,190 @@ def test_narrative_analyst_api_entity_summary_counts_aliases_without_listing_the
     assert payload["aliases_count"] == 1
     assert "aliases" not in {key for key in payload if key != "proposal"}
     assert payload["proposal"]["aliases"] == ["秘密别名"]
+
+
+def test_narrative_analyst_api_respects_explicit_chunk_ids_after_multiple_imports(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    provider = FakeNarrativeProvider(max_text_length=80)
+    old_text = "Chapter 1\n\nOLD_SOURCE_ALPHA should never reach the provider."
+    new_text = (
+        "Chapter 1\n\n"
+        "NEW_SOURCE_BETA selected current import preview stays short and safe "
+        "with additional words beyond the preview budget."
+    )
+    try:
+        with create_test_client(
+            tmp_path,
+            monkeypatch,
+            enable_real_llm=True,
+            provider=provider,
+        ) as client:
+            project_response = client.post("/projects", json=PROJECT_PAYLOAD)
+            assert project_response.status_code == 201
+            _, old_chunks = import_text_and_collect_chunks(
+                client,
+                project_id="demo-project",
+                filename="old_source.txt",
+                text=old_text,
+            )
+            _, new_chunks = import_text_and_collect_chunks(
+                client,
+                project_id="demo-project",
+                filename="new_source.txt",
+                text=new_text,
+            )
+
+            response = client.post(
+                "/projects/demo-project/agent-runs/narrative-analyst",
+                json={
+                    "mode": "event_extraction",
+                    "chunk_ids": [new_chunks[0]["chunk_id"]],
+                    "chunk_limit": 1,
+                    "chunk_offset": 0,
+                    "max_chars_per_chunk": 80,
+                    "real_llm_requested": True,
+                },
+            )
+    finally:
+        get_settings.cache_clear()
+
+    payload = response.json()
+    provider_context = provider.requests[0]["input_context"]
+    assert isinstance(provider_context, dict)
+    provider_chunks = provider_context["source_chunks"]
+    assert isinstance(provider_chunks, list)
+    assert response.status_code == 201
+    assert provider.calls == 1
+    assert payload["context_chunk_ids"] == [new_chunks[0]["chunk_id"]]
+    assert payload["selected_chunk_metadata"][0]["chunk_id"] == new_chunks[0]["chunk_id"]
+    assert payload["selected_chunk_metadata"][0]["document_id"] == new_chunks[0]["document_id"]
+    assert payload["selected_chunk_metadata"][0]["chapter_id"] == new_chunks[0]["chapter_id"]
+    assert payload["selected_chunk_metadata"][0]["chapter_title"] == "Chapter 1"
+    assert payload["selected_chunk_metadata"][0]["preview"].startswith(
+        "NEW_SOURCE_BETA selected current import"
+    )
+    assert len(payload["selected_chunk_metadata"][0]["preview"]) <= 60
+    assert payload["selected_chunk_metadata"][0]["preview_length"] <= 60
+    assert payload["selected_chunk_metadata"][0]["text_length"] == len(new_chunks[0]["text"])
+    assert "NEW_SOURCE_BETA" in str(provider_chunks[0]["text"])
+    assert new_chunks[0]["text"] not in json.dumps(payload, ensure_ascii=False)
+    assert old_chunks[0]["chunk_id"] not in payload["context_chunk_ids"]
+    assert "OLD_SOURCE_ALPHA" not in json.dumps(provider.requests, ensure_ascii=False)
+
+
+def test_narrative_analyst_api_rejects_cross_project_chunk_id_without_provider_call(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    provider = FakeNarrativeProvider(max_text_length=80)
+    try:
+        with create_test_client(
+            tmp_path,
+            monkeypatch,
+            enable_real_llm=True,
+            provider=provider,
+        ) as client:
+            project_a = client.post(
+                "/projects",
+                json={"project_id": "project-a", "name": "Project A"},
+            )
+            project_b = client.post(
+                "/projects",
+                json={"project_id": "project-b", "name": "Project B"},
+            )
+            assert project_a.status_code == 201
+            assert project_b.status_code == 201
+            _, project_a_chunks = import_text_and_collect_chunks(
+                client,
+                project_id="project-a",
+                filename="project_a.txt",
+                text="Chapter 1\n\nPROJECT_A_ONLY chunk text.",
+            )
+
+            response = client.post(
+                "/projects/project-b/agent-runs/narrative-analyst",
+                json={
+                    "mode": "event_extraction",
+                    "chunk_ids": [project_a_chunks[0]["chunk_id"]],
+                    "max_chars_per_chunk": 80,
+                    "real_llm_requested": True,
+                },
+            )
+    finally:
+        get_settings.cache_clear()
+
+    assert response.status_code in {400, 404}
+    assert provider.calls == 0
+    serialized = json.dumps(response.json(), ensure_ascii=False)
+    assert "PROJECT_A_ONLY" not in serialized
+    assert "platform-secret-key" not in serialized
+    assert "message.content" not in serialized
+
+
+def test_narrative_analyst_api_offset_fallback_returns_selected_chunk_metadata(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    provider = FakeNarrativeProvider(max_text_length=80)
+    first_text = "Chapter 1\n\nFIRST_IMPORT_ALPHA appears first by project order."
+    second_text = (
+        "Chapter 1\n\n"
+        "SECOND_IMPORT_BETA selected fallback preview stays short and safe "
+        "with additional words beyond the preview budget."
+    )
+    try:
+        with create_test_client(
+            tmp_path,
+            monkeypatch,
+            enable_real_llm=True,
+            provider=provider,
+        ) as client:
+            project_response = client.post("/projects", json=PROJECT_PAYLOAD)
+            assert project_response.status_code == 201
+            first_import, first_chunks = import_text_and_collect_chunks(
+                client,
+                project_id="demo-project",
+                filename="first_source.txt",
+                text=first_text,
+            )
+            second_import, second_chunks = import_text_and_collect_chunks(
+                client,
+                project_id="demo-project",
+                filename="second_source.txt",
+                text=second_text,
+            )
+
+            response = client.post(
+                "/projects/demo-project/agent-runs/narrative-analyst",
+                json={
+                    "mode": "event_extraction",
+                    "chunk_limit": 1,
+                    "chunk_offset": 1,
+                    "max_chars_per_chunk": 80,
+                    "real_llm_requested": True,
+                },
+            )
+    finally:
+        get_settings.cache_clear()
+
+    payload = response.json()
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert response.status_code == 201
+    assert payload["context_chunk_ids"] == [second_chunks[0]["chunk_id"]]
+    assert payload["selected_chunk_metadata"][0]["chunk_id"] == second_chunks[0]["chunk_id"]
+    assert payload["selected_chunk_metadata"][0]["preview"].startswith(
+        "SECOND_IMPORT_BETA selected fallback preview"
+    )
+    assert len(payload["selected_chunk_metadata"][0]["preview"]) <= 60
+    assert first_chunks[0]["text"] not in serialized
+    assert second_chunks[0]["text"] not in serialized
+    assert first_import["document"]["document_id"] != second_import["document"]["document_id"]
+    assert "raw provider" not in serialized
+    assert "message.content" not in serialized
+    assert "platform-secret-key" not in serialized
+    assert provider.calls == 1
 
 
 def test_narrative_analyst_api_unknown_mode_returns_400_without_provider_call(

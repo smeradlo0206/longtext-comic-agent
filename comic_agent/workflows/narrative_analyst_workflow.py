@@ -26,6 +26,7 @@ from comic_agent.services.narrative_analyst_summary import (
     classify_exception,
     manual_review_checklist,
     sanitize_error_message,
+    selected_chunk_metadata,
     set_failure,
     slim_input_context,
     visible_context_chunks,
@@ -129,6 +130,14 @@ class NarrativeAnalystWorkflow:
             import_idempotent=None,
         )
         summary["context_chunk_ids"] = context.source_chunk_ids
+        chapter_titles = {
+            chapter.chapter_id: chapter.title
+            for chapter in self._source_repository.list_chapters(project_id)
+        }
+        summary["selected_chunk_metadata"] = selected_chunk_metadata(
+            selected_chunks,
+            chapter_titles=chapter_titles,
+        )
 
         if not real_llm_requested:
             return NarrativeAnalystWorkflowResult(

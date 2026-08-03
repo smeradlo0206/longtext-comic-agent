@@ -8,6 +8,7 @@ def test_web_console_static_html_exposes_demo_controls_without_local_secrets() -
 
     assert 'id="accessCode"' in html
     assert 'id="verifyAccess"' in html
+    assert "Access Not Required" in html
     assert 'id="runMock"' in html
     assert 'id="runRealEvent"' in html
     assert 'id="narrativeMode"' in html
@@ -22,10 +23,18 @@ def test_web_console_static_html_exposes_demo_controls_without_local_secrets() -
     assert 'id="narrativeEvidenceStatus"' in html
     assert 'id="narrativeProviderDiagnostics"' in html
     assert 'id="manualReviewChecklist"' in html
+    assert 'id="narrativeSelectedChunks"' in html
+    assert "Selected input chunks" in html
+    assert "本次输入 chunks" in html
     assert "event_extraction" in html
     assert "entity_extraction" in html
     assert "claim_extraction" in html
     assert "/agent-runs/narrative-analyst" in html
+    assert "clearSelectedChunks" in html
+    assert "clearSelectedChunks();" in html
+    assert "请先选择 1-3 个 chunks，避免误用旧项目文本。" in html
+    assert "body.chunk_ids = chunkIds;" in html
+    assert 'addEventListener("input", () => renderNarrativeSelectedChunks())' in html
     assert "X-Demo-Access-Code" in html
     assert "local_eval" not in html
     assert "output/" not in html

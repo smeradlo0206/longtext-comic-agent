@@ -53,14 +53,23 @@ Internal hosted demo console:
 
 - Open `web_console/index.html` in a browser.
 - Start the API with `uv run uvicorn comic_agent.main:app --reload`.
-- Configure demo access through `INTERNAL_DEMO_REQUIRE_ACCESS_CODE` and
-  `INTERNAL_DEMO_ACCESS_CODE`.
+- Local demo access does not require an access code by default. For a shared
+  hosted demo, set `INTERNAL_DEMO_REQUIRE_ACCESS_CODE=true` and configure
+  `INTERNAL_DEMO_ACCESS_CODE` in local environment only.
 - Real Event and Narrative Analyst real calls use the server-side configured
   provider key and still require both `ENABLE_REAL_LLM=true` and an explicit
   request-level opt-in.
 - The Narrative Analyst Console can show full Proposal JSON for manual review,
   but it does not show API keys, raw provider responses, complete source chunk
   text, or canonical story-data writes.
+- In the Narrative Analyst Console, explicitly select 1-3 chunks before every
+  run. The browser does not rely on an empty Chunk IDs field plus
+  chunk_offset/chunk_limit, because that can accidentally reuse older chunks in
+  a reused project.
+- For manual tests with a different TXT, prefer a fresh `project_id`, then click
+  View Chapters, select the intended chunks, and verify the Selected input
+  chunks preview before running. Full Proposal evidence quotes should match the
+  selected input chunks.
 - The demo does not expose KnowledgeState, multi-agent orchestration, or
   canonical StoryBible writes.
 

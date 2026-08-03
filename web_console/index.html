@@ -536,10 +536,14 @@
                   <button id="refreshNarrativeRuns">刷新 AgentRuns</button>
                 </div>
                 <label class="wide">Chunk IDs
-                  <textarea id="narrativeChunkIds" rows="3" placeholder="可留空按当前项目 chunk_offset/chunk_limit 选择；也可一行一个或逗号分隔"></textarea>
+                  <textarea id="narrativeChunkIds" rows="3" placeholder="请先从章节 chunks 中选择 1-3 个；也可一行一个或逗号分隔手动填写"></textarea>
                 </label>
               </div>
 
+              <div>
+                <h3>本次输入 chunks / Selected input chunks</h3>
+                <div id="narrativeSelectedChunks" class="selected"></div>
+              </div>
               <div class="row" id="narrativeOutcome"></div>
               <div>
                 <h3>Summary JSON</h3>
@@ -614,8 +618,8 @@
       chapters: [],
       chunksByChapter: new Map(),
       selectedChunks: new Map(),
-      accessGranted: false,
-      requireAccessCode: true,
+      accessGranted: true,
+      requireAccessCode: false,
       lastNarrativeResponse: null
     };
 
@@ -694,8 +698,15 @@
     }
 
     function updateAccessUi() {
-      $("accessBadge").textContent = state.accessGranted ? "Access Granted" : "Access Required";
-      $("accessBadge").className = state.accessGranted ? "pill" : "pill warn";
+      if (!state.requireAccessCode) {
+        $("accessBadge").textContent = "Access Not Required";
+        $("accessBadge").className = "pill";
+        $("verifyAccess").disabled = true;
+      } else {
+        $("accessBadge").textContent = state.accessGranted ? "Access Granted" : "Access Required";
+        $("accessBadge").className = state.accessGranted ? "pill" : "pill warn";
+        $("verifyAccess").disabled = false;
+      }
       $("runRealEvent").disabled = !state.accessGranted || state.selectedChunks.size < 1;
       $("runNarrativeAnalyst").disabled = !state.accessGranted;
     }
@@ -719,7 +730,8 @@
         body: form
       });
       $("importResult").textContent = pretty(data);
-      showLog(`导入完成：${data.status}, chapters=${data.chapters_count}, chunks=${data.chunks_count}`);
+      clearSelectedChunks();
+      showLog(`导入完成：${data.status}, chapters=${data.chapters_count}, chunks=${data.chunks_count}。请点击“查看章节”并选择本次要分析的 chunks。`);
     }
 
     async function loadChapters() {
@@ -782,6 +794,46 @@
       };
     }
 
+    function findLoadedChunk(chunkId) {
+      for (const chunks of state.chunksByChapter.values()) {
+        const match = chunks.find((chunk) => chunk.chunk_id === chunkId);
+        if (match) return match;
+      }
+      return null;
+    }
+
+    function chunkMetadata(chunkId) {
+      const chunk = findLoadedChunk(chunkId);
+      if (!chunk) return {chunk_id: chunkId};
+      const chapter = state.chapters.find((item) => item.chapter_id === chunk.chapter_id);
+      return {
+        chunk_id: chunk.chunk_id,
+        document_id: chunk.document_id,
+        chapter_id: chunk.chapter_id,
+        chapter_title: chapter?.title ?? null,
+        preview: shortPreview(chunk.text, 60),
+        text_length: String(chunk.text || "").length
+      };
+    }
+
+    function shortPreview(text, limit) {
+      const compact = String(text || "").trim().replace(/\s+/g, " ");
+      if (!compact) return "";
+      if (compact.length > limit) return compact.slice(0, limit).trimEnd();
+      if (compact.length === 1) return "...";
+      return `${compact.slice(0, Math.min(20, compact.length - 1)).trimEnd()}...`;
+    }
+
+    function clearSelectedChunks() {
+      state.selectedChunks.clear();
+      $("narrativeChunkIds").value = "";
+      document.querySelectorAll("[data-select]").forEach((input) => {
+        input.checked = false;
+      });
+      renderSelected();
+      renderNarrativeSelectedChunks();
+    }
+
     function toggleChunk(chunkId, checked) {
       if (checked) {
         if (state.selectedChunks.size >= 3) {
@@ -789,7 +841,7 @@
           document.querySelector(`[data-select="${chunkId}"]`).checked = false;
           return;
         }
-        state.selectedChunks.set(chunkId, true);
+        state.selectedChunks.set(chunkId, chunkMetadata(chunkId));
       } else {
         state.selectedChunks.delete(chunkId);
       }
@@ -802,6 +854,7 @@
         <div class="selected-item"><span class="mono">${chunkId}</span><button data-remove="${chunkId}">移除</button></div>
       `).join("") || `<span class="muted">尚未选择 chunk。</span>`;
       syncNarrativeChunkIds();
+      renderNarrativeSelectedChunks();
       document.querySelectorAll("[data-remove]").forEach((button) => {
         button.addEventListener("click", () => {
           state.selectedChunks.delete(button.dataset.remove);
@@ -815,8 +868,26 @@
 
     function syncNarrativeChunkIds() {
       const selectedIds = Array.from(state.selectedChunks.keys());
-      if (!selectedIds.length) return;
       $("narrativeChunkIds").value = selectedIds.join("\n");
+    }
+
+    function renderNarrativeSelectedChunks() {
+      const chunkIds = parseNarrativeChunkIds();
+      $("narrativeSelectedChunks").innerHTML = chunkIds.map((chunkId) => {
+        const metadata = state.selectedChunks.get(chunkId) || chunkMetadata(chunkId);
+        const title = metadata.chapter_title || metadata.chapter_id || "chapter unknown";
+        const documentId = metadata.document_id || "document unknown";
+        const preview = metadata.preview || "preview unavailable; verify this chunk id before running";
+        return `
+          <div class="selected-item">
+            <div>
+              <div class="mono">${escapeHtml(metadata.chunk_id || chunkId)}</div>
+              <span>${escapeHtml(title)} · ${escapeHtml(documentId)}</span>
+              <div class="muted">${escapeHtml(preview)}</div>
+            </div>
+          </div>
+        `;
+      }).join("") || `<span class="muted">请先选择 1-3 个 chunks，避免误用旧项目文本。</span>`;
     }
 
     async function runMock() {
@@ -854,6 +925,14 @@
 
     async function runNarrativeAnalyst() {
       const chunkIds = parseNarrativeChunkIds();
+      if (!chunkIds.length) {
+        renderNarrativeSelectedChunks();
+        throw new Error("请先选择 1-3 个 chunks，避免误用旧项目文本。");
+      }
+      if (chunkIds.length > 3) {
+        renderNarrativeSelectedChunks();
+        throw new Error("Narrative Analyst 最多一次运行 3 个 chunks。");
+      }
       const body = {
         mode: $("narrativeMode").value,
         chunk_limit: Number.parseInt($("narrativeChunkLimit").value, 10),
@@ -861,7 +940,7 @@
         max_chars_per_chunk: Number.parseInt($("narrativeMaxChars").value, 10),
         real_llm_requested: $("narrativeRealLlmRequested").checked
       };
-      if (chunkIds.length) body.chunk_ids = chunkIds;
+      body.chunk_ids = chunkIds;
       const data = await request(`/projects/${encodeURIComponent(projectId())}/agent-runs/narrative-analyst`, {
         method: "POST",
         headers: demoHeaders(),
@@ -1028,6 +1107,8 @@
     $("runNarrativeAnalyst").addEventListener("click", () => runNarrativeAnalyst().catch((error) => showLog(error.message)));
     $("refreshNarrativeRuns").addEventListener("click", () => loadRuns().catch((error) => showLog(error.message)));
     $("loadRuns").addEventListener("click", () => loadRuns().catch((error) => showLog(error.message)));
+    $("narrativeChunkIds").addEventListener("input", () => renderNarrativeSelectedChunks());
+    $("projectId").addEventListener("input", () => clearSelectedChunks());
 
     renderCapabilities();
     renderSelected();
