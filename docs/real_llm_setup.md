@@ -326,15 +326,16 @@ arguments, or API-key status details.
 
 ## Website-Ready API Surface
 
-No committed frontend exists in this repository yet. A future website can attach
-to the existing backend audit APIs without reading local ignored folders:
+The committed internal test page is `web_console/index.html`. It can attach to
+the existing backend audit APIs without reading local ignored folders:
 
 - `GET /projects/{project_id}/agent-runs`
 - `GET /agent-runs/{agent_run_id}`
 - `GET /agent-runs/{agent_run_id}/evidence`
 - `GET /settings/llm/status`
+- `POST /projects/{project_id}/agent-runs/narrative-analyst`
 
-Recommended website views:
+Current website views:
 
 - AgentRun list page.
 - AgentRun detail page.
@@ -343,6 +344,33 @@ Recommended website views:
 - Three-chunk evaluation sanitized summary display.
 - `quote_matched` and `char_range_matched` display.
 - LLM configuration status page that never displays the API key.
+- Narrative Analyst Console for `event_extraction`, `entity_extraction`, and
+  `claim_extraction`.
+- Full Proposal JSON display for manual review.
+- Manual Review Checklist display with null placeholders for human scoring.
+
+The Narrative Analyst Console has two gates for real provider calls:
+
+```text
+ENABLE_REAL_LLM=true
+real_llm_requested=true
+```
+
+If either gate is false, the provider is not called. Dry-run mode returns
+readiness metadata and input-budget diagnostics only. A real opt-in run can save
+an AgentRun and return a full Proposal for manual evaluation. Do not copy
+`quote_text`, `claim_text`, raw provider responses, source text, API keys, or
+local output files into commits, issues, PRs, or chat.
+
+Use `failure_category` and `recommended_action` as triage hints:
+
+- provider timeout or length failures usually mean lowering
+  `max_chars_per_chunk`, trying a nearby chunk offset, or temporarily increasing
+  timeout;
+- quote or char-range failures usually mean tightening exact quote prompt
+  constraints;
+- schema failures usually mean inspecting mode boundaries or provider JSON
+  compatibility.
 
 ## Current Boundary
 
@@ -351,16 +379,19 @@ Implemented:
 - OpenAI-compatible provider adapter skeleton;
 - minimal Event extraction agent;
 - minimal Entity extraction agent;
+- minimal Claim extraction agent;
+- Narrative Analyst Console endpoint and static web console;
 - real Event workflow wrapper with audit persistence;
 - dry-run smoke script;
 - Entity dry-run / real opt-in smoke script;
 - real long-novel baseline evaluation script;
 - tests for settings, provider parsing/errors, agent behavior, workflow behavior,
-  smoke-script safety, and sanitized long-novel evaluation.
+  smoke-script safety, web console safety, and sanitized long-novel evaluation.
 
 Not implemented:
 
-- real Claim or KnowledgeState extraction workflows;
+- standalone real Claim or KnowledgeState workflow endpoints beyond
+  NarrativeAnalyst mode execution;
 - canonical story fact commits from LLM output;
 - prompt tuning for production extraction quality;
 - retry/backoff policy;

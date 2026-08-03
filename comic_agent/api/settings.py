@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from comic_agent.config import get_settings
+from comic_agent.services.narrative_analyst_summary import implemented_mode_names
 
 router = APIRouter()
 
@@ -20,4 +21,5 @@ def get_llm_status() -> dict[str, object]:
         "model": settings.llm_model,
         "api_key_present": bool(api_key),
         "api_key_non_empty": bool(api_key),
+        "supported_modes": implemented_mode_names(),
     }

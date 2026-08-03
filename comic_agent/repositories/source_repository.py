@@ -169,6 +169,16 @@ class SourceRepository:
         ).all()
         return [SourceChunkV1.model_validate(row.payload) for row in rows]
 
+    def list_project_chunks(self, project_id: str) -> list[SourceChunkV1]:
+        """Return chunks for a project ordered by source order."""
+
+        rows = self._session.scalars(
+            select(SourceChunkModel)
+            .where(SourceChunkModel.project_id == project_id)
+            .order_by(SourceChunkModel.order, SourceChunkModel.chunk_id)
+        ).all()
+        return [SourceChunkV1.model_validate(row.payload) for row in rows]
+
     def get_chunk(self, chunk_id: str) -> SourceChunkV1 | None:
         """Return one source chunk by id."""
 

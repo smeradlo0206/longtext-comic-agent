@@ -6,6 +6,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, Header, HTTPException
 
 from comic_agent.config import Settings, get_settings
+from comic_agent.services.narrative_analyst_summary import implemented_mode_names
 
 router = APIRouter()
 
@@ -23,7 +24,7 @@ def get_demo_status() -> dict[str, object]:
         "model": settings.llm_model,
         "api_key_configured": settings.llm_api_key is not None,
         "api_key_non_empty": bool(api_key),
-        "supported_modes": ["mock", "real_event"],
+        "supported_modes": ["mock", "real_event", *implemented_mode_names()],
     }
 
 

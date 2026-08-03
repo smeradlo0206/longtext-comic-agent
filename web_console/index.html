@@ -30,7 +30,7 @@
       letter-spacing: 0;
     }
 
-    button, input, textarea { font: inherit; }
+    button, input, textarea, select { font: inherit; }
 
     .app {
       min-height: 100vh;
@@ -112,7 +112,7 @@
       font-weight: 650;
     }
 
-    input, textarea {
+    input, textarea, select {
       width: 100%;
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -123,7 +123,7 @@
       font-size: 14px;
     }
 
-    input:focus, textarea:focus {
+    input:focus, textarea:focus, select:focus {
       border-color: var(--accent);
       box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
     }
@@ -228,6 +228,29 @@
       align-items: center;
     }
 
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      align-items: end;
+    }
+
+    .wide { grid-column: 1 / -1; }
+
+    .checkline {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      min-height: 40px;
+      color: var(--ink);
+      font-size: 13px;
+    }
+
+    .checkline input {
+      width: auto;
+      margin: 0;
+    }
+
     .pill {
       display: inline-flex;
       align-items: center;
@@ -251,6 +274,27 @@
       color: var(--danger);
       background: #fff1f0;
       border-color: #f4b8b1;
+    }
+
+    details {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      overflow: hidden;
+    }
+
+    summary {
+      padding: 11px 12px;
+      cursor: pointer;
+      font-weight: 750;
+      color: var(--ink);
+      background: var(--panel-soft);
+      border-bottom: 1px solid var(--line);
+    }
+
+    details pre {
+      border-radius: 0;
+      max-height: 420px;
     }
 
     table {
@@ -342,6 +386,7 @@
       }
       nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .topbar, .grid { grid-template-columns: 1fr; }
+      .form-grid { grid-template-columns: 1fr; }
       .matrix { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
 
@@ -358,18 +403,19 @@
     <aside>
       <div class="brand">
         <h1>Comic Agent Demo</h1>
-        <p>内部 Hosted Demo Runtime。只开放 Event Agent，不开放 Claim、KnowledgeState 或多 Agent。</p>
+        <p>内部 Hosted Demo Runtime。支持 Event、Entity、Claim 的 Narrative Analyst 评估。</p>
       </div>
       <nav>
         <a href="#status">Demo Status</a>
         <a href="#import">TXT Import</a>
         <a href="#chapters">Chunks</a>
         <a href="#agents">Agents</a>
+        <a href="#narrative">Narrative Analyst</a>
         <a href="#runs">Agent Runs</a>
         <a href="#evidence">Evidence</a>
       </nav>
       <div class="notice">
-        Real Event 使用平台托管模型额度。内部用户不需要输入 API Key，访问码只用于授权 demo 操作。
+        Real LLM 使用服务端托管配置。页面不接收或展示 API Key，访问码只用于授权 demo 操作。
       </div>
     </aside>
 
@@ -454,6 +500,69 @@
               <pre id="agentResult">{}</pre>
             </div>
           </section>
+
+          <section id="narrative">
+            <div class="section-head">
+              <div>
+                <h2>Narrative Analyst Console</h2>
+                <p>统一运行 event/entity/claim mode，并查看脱敏 summary、Proposal 和人工复核模板。</p>
+              </div>
+              <span id="narrativeStatusBadge" class="pill warn">Not run</span>
+            </div>
+            <div class="body">
+              <div class="form-grid">
+                <label>Mode
+                  <select id="narrativeMode">
+                    <option value="event_extraction">event_extraction · EventProposalV1</option>
+                    <option value="entity_extraction">entity_extraction · EntityProposalV1</option>
+                    <option value="claim_extraction">claim_extraction · ClaimProposalV1</option>
+                  </select>
+                </label>
+                <label>chunk_limit
+                  <input id="narrativeChunkLimit" type="number" min="1" max="3" value="3" />
+                </label>
+                <label>chunk_offset
+                  <input id="narrativeChunkOffset" type="number" min="0" value="0" />
+                </label>
+                <label>max_chars_per_chunk
+                  <input id="narrativeMaxChars" type="number" min="1" value="1200" />
+                </label>
+                <label class="checkline">
+                  <input id="narrativeRealLlmRequested" type="checkbox" />
+                  real LLM requested
+                </label>
+                <div class="row">
+                  <button id="runNarrativeAnalyst" class="primary" disabled>运行 Narrative Analyst</button>
+                  <button id="refreshNarrativeRuns">刷新 AgentRuns</button>
+                </div>
+                <label class="wide">Chunk IDs
+                  <textarea id="narrativeChunkIds" rows="3" placeholder="可留空按当前项目 chunk_offset/chunk_limit 选择；也可一行一个或逗号分隔"></textarea>
+                </label>
+              </div>
+
+              <div class="row" id="narrativeOutcome"></div>
+              <div>
+                <h3>Summary JSON</h3>
+                <pre id="narrativeSummary">{}</pre>
+              </div>
+              <details>
+                <summary>Full Proposal JSON</summary>
+                <pre id="narrativeProposal">null</pre>
+              </details>
+              <div>
+                <h3>Evidence / Validation</h3>
+                <pre id="narrativeEvidenceStatus">{}</pre>
+              </div>
+              <div>
+                <h3>Provider Diagnostics</h3>
+                <pre id="narrativeProviderDiagnostics">null</pre>
+              </div>
+              <div>
+                <h3>Manual Review Checklist</h3>
+                <div id="manualReviewChecklist"></div>
+              </div>
+            </div>
+          </section>
         </div>
 
         <div class="stack">
@@ -506,7 +615,8 @@
       chunksByChapter: new Map(),
       selectedChunks: new Map(),
       accessGranted: false,
-      requireAccessCode: true
+      requireAccessCode: true,
+      lastNarrativeResponse: null
     };
 
     const $ = (id) => document.getElementById(id);
@@ -518,11 +628,12 @@
       ["TXT import", "UTF-8 text upload"],
       ["Mock Event Agent", "No model call"],
       ["Real Event Agent", "Platform-hosted model"],
+      ["Narrative Analyst", "Event / Entity / Claim"],
       ["AgentRun audit", "List and detail"],
       ["Evidence audit", "Short quote trace"],
       ["LLM status", "Sanitized settings"],
       ["Access code", "Header-gated real agent"],
-      ["Scope", "Event only"]
+      ["Scope", "Proposal-only"]
     ];
 
     function renderCapabilities(status = {}) {
@@ -586,6 +697,7 @@
       $("accessBadge").textContent = state.accessGranted ? "Access Granted" : "Access Required";
       $("accessBadge").className = state.accessGranted ? "pill" : "pill warn";
       $("runRealEvent").disabled = !state.accessGranted || state.selectedChunks.size < 1;
+      $("runNarrativeAnalyst").disabled = !state.accessGranted;
     }
 
     async function createProject() {
@@ -689,6 +801,7 @@
       $("selectedChunks").innerHTML = Array.from(state.selectedChunks.keys()).map((chunkId) => `
         <div class="selected-item"><span class="mono">${chunkId}</span><button data-remove="${chunkId}">移除</button></div>
       `).join("") || `<span class="muted">尚未选择 chunk。</span>`;
+      syncNarrativeChunkIds();
       document.querySelectorAll("[data-remove]").forEach((button) => {
         button.addEventListener("click", () => {
           state.selectedChunks.delete(button.dataset.remove);
@@ -698,6 +811,12 @@
         });
       });
       updateAccessUi();
+    }
+
+    function syncNarrativeChunkIds() {
+      const selectedIds = Array.from(state.selectedChunks.keys());
+      if (!selectedIds.length) return;
+      $("narrativeChunkIds").value = selectedIds.join("\n");
     }
 
     async function runMock() {
@@ -724,6 +843,92 @@
       $("agentResult").textContent = pretty(data);
       showLog(`Real Event run: ${data.agent_run_status}`);
       await loadRuns();
+    }
+
+    function parseNarrativeChunkIds() {
+      return $("narrativeChunkIds").value
+        .split(/[\s,]+/)
+        .map((value) => value.trim())
+        .filter(Boolean);
+    }
+
+    async function runNarrativeAnalyst() {
+      const chunkIds = parseNarrativeChunkIds();
+      const body = {
+        mode: $("narrativeMode").value,
+        chunk_limit: Number.parseInt($("narrativeChunkLimit").value, 10),
+        chunk_offset: Number.parseInt($("narrativeChunkOffset").value, 10),
+        max_chars_per_chunk: Number.parseInt($("narrativeMaxChars").value, 10),
+        real_llm_requested: $("narrativeRealLlmRequested").checked
+      };
+      if (chunkIds.length) body.chunk_ids = chunkIds;
+      const data = await request(`/projects/${encodeURIComponent(projectId())}/agent-runs/narrative-analyst`, {
+        method: "POST",
+        headers: demoHeaders(),
+        body: JSON.stringify(body)
+      });
+      renderNarrativeResult(data);
+      showLog(`Narrative Analyst: ${data.agent_run_status ?? "dry-run"}`);
+      if (data.agent_run_saved) await loadRuns();
+    }
+
+    function renderNarrativeResult(data) {
+      const sanitized = sanitizeNarrativeResponse(data);
+      state.lastNarrativeResponse = sanitized;
+      const summary = JSON.parse(JSON.stringify(sanitized));
+      delete summary.proposal;
+      delete summary.manual_review_checklist;
+      $("narrativeSummary").textContent = pretty(summary);
+      $("narrativeProposal").textContent = pretty(sanitized.proposal ?? null);
+      $("narrativeEvidenceStatus").textContent = pretty({
+        evidence_validation_passed: sanitized.evidence_validation_passed,
+        evidence_chunk_id: sanitized.evidence_chunk_id,
+        quote_matched: sanitized.quote_matched,
+        char_range_matched: sanitized.char_range_matched
+      });
+      $("narrativeProviderDiagnostics").textContent = pretty(sanitized.provider_error_diagnostics ?? null);
+      renderManualReviewChecklist(sanitized.manual_review_checklist || {});
+      renderNarrativeOutcome(sanitized);
+    }
+
+    function sanitizeNarrativeResponse(data) {
+      const copy = JSON.parse(JSON.stringify(data));
+      if (copy.provider_result && Object.hasOwn(copy.provider_result, "raw_output")) {
+        delete copy.provider_result.raw_output;
+      }
+      const messageContentKey = ["message", "content"].join(".");
+      if (copy.provider_error_diagnostics && Object.hasOwn(copy.provider_error_diagnostics, messageContentKey)) {
+        delete copy.provider_error_diagnostics[messageContentKey];
+      }
+      return copy;
+    }
+
+    function renderNarrativeOutcome(data) {
+      const ok = data.agent_run_status === "SUCCEEDED" || (data.dry_run && !data.error_message);
+      $("narrativeStatusBadge").textContent = data.agent_run_status ?? (data.dry_run ? "DRY_RUN" : "UNKNOWN");
+      $("narrativeStatusBadge").className = ok ? "pill" : "pill bad";
+      $("narrativeOutcome").innerHTML = [
+        statusPill("mode", data.mode),
+        statusPill("schema", data.output_schema),
+        statusPill("provider", data.provider_success),
+        statusPill("evidence", data.evidence_validation_passed),
+        statusPill("failure", data.failure_category),
+        statusPill("action", data.recommended_action)
+      ].join("");
+    }
+
+    function statusPill(label, value) {
+      const display = value === null || value === undefined ? "-" : String(value);
+      const bad = label === "failure" && display !== "-";
+      return `<span class="${bad ? "pill bad" : "pill"}">${escapeHtml(label)}: ${escapeHtml(display)}</span>`;
+    }
+
+    function renderManualReviewChecklist(checklist) {
+      const rows = Object.entries(checklist).map(([key, value]) => [
+        `<span class="mono">${escapeHtml(key)}</span>`,
+        value === null || value === undefined ? "manual" : escapeHtml(value)
+      ]);
+      $("manualReviewChecklist").innerHTML = table(["field", "value"], rows);
     }
 
     async function loadRuns() {
@@ -820,6 +1025,8 @@
     $("loadChapters").addEventListener("click", () => loadChapters().catch((error) => showLog(error.message)));
     $("runMock").addEventListener("click", () => runMock().catch((error) => showLog(error.message)));
     $("runRealEvent").addEventListener("click", () => runRealEvent().catch((error) => showLog(error.message)));
+    $("runNarrativeAnalyst").addEventListener("click", () => runNarrativeAnalyst().catch((error) => showLog(error.message)));
+    $("refreshNarrativeRuns").addEventListener("click", () => loadRuns().catch((error) => showLog(error.message)));
     $("loadRuns").addEventListener("click", () => loadRuns().catch((error) => showLog(error.message)));
 
     renderCapabilities();
