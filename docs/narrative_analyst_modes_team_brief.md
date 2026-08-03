@@ -87,6 +87,46 @@ tmp/
 
 ## Mode 分工
 
+## NarrativeAnalyst 顶层入口
+
+`NarrativeAnalyst` 是叙事解析顶层 Agent，负责统一承载“从原文读出候选事实”的内部 mode。
+mode 是 `NarrativeAnalyst` 内部能力分支，不再作为额外顶层 Agent 计数。
+
+当前 shell 提供：
+
+```text
+统一入口: comic_agent/agents/narrative_analyst.py
+统一 mode registry: event/entity 已实现，后续 mode 已登记 planned
+统一运行接口: NarrativeAnalyst.run(mode, input_context)
+统一查询接口: list_modes(), get_mode_spec(mode)
+```
+
+当前 implemented modes：
+
+```text
+event_extraction -> EventProposalV1
+entity_extraction -> EntityProposalV1
+```
+
+当前 planned / not implemented modes：
+
+```text
+claim_extraction -> ClaimProposalV1
+knowledge_state_extraction -> KnowledgeStateProposalV1
+state_change_extraction -> StateChangeProposalV1
+relationship_signal_extraction -> planned_without_schema
+```
+
+shell 的意义：
+
+```text
+1. 后续 workflow/API 只需要接一个 NarrativeAnalyst 入口。
+2. 所有 mode 的状态、output_schema、EvidenceRef 要求和 max_context_chunks 有统一注册表。
+3. event/entity 继续复用现有 Agent，不复制 prompt 逻辑。
+4. planned mode 调用时返回脱敏 not implemented 错误，不调用 provider。
+5. 本次没有新增真实 LLM 调用，没有新增 schema，没有写 StoryBible。
+```
+
 ### 1. event_extraction
 
 中文名：事件抽取
