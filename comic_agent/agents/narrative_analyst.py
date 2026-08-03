@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from comic_agent.agents.base import BaseAgent
+from comic_agent.agents.claim_extraction import ClaimExtractionAgent
 from comic_agent.agents.entity_extraction import EntityExtractionAgent
 from comic_agent.agents.event_extraction import EventExtractionAgent
 from comic_agent.providers.llm import LLMProvider
@@ -79,6 +80,10 @@ def _create_entity_agent(provider: LLMProvider) -> BaseAgent[Proposal]:
     return EntityExtractionAgent(provider)
 
 
+def _create_claim_agent(provider: LLMProvider) -> BaseAgent[Proposal]:
+    return ClaimExtractionAgent(provider)
+
+
 NARRATIVE_ANALYST_MODE_REGISTRY: dict[str, NarrativeAnalystModeSpec] = {
     "event_extraction": NarrativeAnalystModeSpec(
         mode="event_extraction",
@@ -105,12 +110,13 @@ NARRATIVE_ANALYST_MODE_REGISTRY: dict[str, NarrativeAnalystModeSpec] = {
     "claim_extraction": NarrativeAnalystModeSpec(
         mode="claim_extraction",
         description_zh="主张抽取",
-        status="planned",
-        output_schema="ClaimProposalV1",
+        status="implemented",
+        output_schema=ClaimExtractionAgent.spec.output_schema,
         schema_class=ClaimProposalV1,
-        max_context_chunks=3,
-        requires_evidence=True,
-        proposal_only=True,
+        max_context_chunks=ClaimExtractionAgent.spec.max_context_chunks,
+        requires_evidence=ClaimExtractionAgent.spec.requires_evidence,
+        proposal_only=not ClaimExtractionAgent.spec.can_write_canonical_data,
+        agent_factory=_create_claim_agent,
     ),
     "knowledge_state_extraction": NarrativeAnalystModeSpec(
         mode="knowledge_state_extraction",

@@ -4,7 +4,7 @@ import pytest
 from pydantic import BaseModel
 
 from comic_agent.agents.narrative_analyst import NarrativeAnalyst
-from comic_agent.schemas.narrative import EntityProposalV1, EventProposalV1
+from comic_agent.schemas.narrative import ClaimProposalV1, EntityProposalV1, EventProposalV1
 
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
 
@@ -46,6 +46,21 @@ class FakeProvider:
                     "confidence": 0.88,
                 }
             )
+        if output_model is ClaimProposalV1:
+            return output_model.model_validate(
+                {
+                    "proposal_id": "claim-1",
+                    "claim_type": "DENIAL",
+                    "claim_text": "The narrator denies the rumor.",
+                    "source_type": "NARRATOR",
+                    "source_id": None,
+                    "target_event_id": None,
+                    "verification_status": "UNVERIFIED",
+                    "evidence_refs": [{"chunk_id": "chunk-1", "quote_text": "denies"}],
+                    "confidence": 0.79,
+                    "reality_layer": "PRIMARY",
+                }
+            )
         raise AssertionError(f"Unexpected output model: {output_model}")
 
 
@@ -65,6 +80,7 @@ def test_narrative_analyst_list_modes_includes_event_and_entity() -> None:
 
     assert "event_extraction" in mode_names
     assert "entity_extraction" in mode_names
+    assert "claim_extraction" in mode_names
 
 
 def test_narrative_analyst_routes_event_extraction_to_existing_agent() -> None:
@@ -91,11 +107,25 @@ def test_narrative_analyst_routes_entity_extraction_to_existing_agent() -> None:
     assert provider.requests[0]["input_context"] == _input_context()
 
 
+def test_narrative_analyst_routes_claim_extraction_to_existing_agent() -> None:
+    provider = FakeProvider()
+    analyst = NarrativeAnalyst(provider)
+
+    proposal = analyst.run("claim_extraction", _input_context())
+
+    assert isinstance(proposal, ClaimProposalV1)
+    assert proposal.proposal_id == "claim-1"
+    assert proposal.evidence_refs
+    assert provider.output_models == [ClaimProposalV1]
+    assert provider.requests[0]["input_context"] == _input_context()
+
+
 @pytest.mark.parametrize(
     ("mode", "output_schema", "schema_class"),
     [
         ("event_extraction", "EventProposalV1", EventProposalV1),
         ("entity_extraction", "EntityProposalV1", EntityProposalV1),
+        ("claim_extraction", "ClaimProposalV1", ClaimProposalV1),
     ],
 )
 def test_implemented_mode_specs_are_bounded_evidence_required_and_proposal_only(
@@ -116,19 +146,29 @@ def test_implemented_mode_specs_are_bounded_evidence_required_and_proposal_only(
     assert spec.proposal_only is True
 
 
-def test_planned_mode_is_registered_but_not_implemented_and_does_not_call_provider() -> None:
+@pytest.mark.parametrize(
+    ("mode", "output_schema"),
+    [
+        ("knowledge_state_extraction", "KnowledgeStateProposalV1"),
+        ("state_change_extraction", "StateChangeProposalV1"),
+    ],
+)
+def test_planned_mode_is_registered_but_not_implemented_and_does_not_call_provider(
+    mode: str,
+    output_schema: str,
+) -> None:
     provider = FakeProvider()
     analyst = NarrativeAnalyst(provider)
 
-    spec = analyst.get_mode_spec("claim_extraction")
+    spec = analyst.get_mode_spec(mode)
     with pytest.raises(NotImplementedError) as exc_info:
-        analyst.run("claim_extraction", _input_context())
+        analyst.run(mode, _input_context())
 
     message = str(exc_info.value)
     assert spec.status == "planned"
-    assert spec.output_schema == "ClaimProposalV1"
+    assert spec.output_schema == output_schema
     assert provider.requests == []
-    assert "claim_extraction" in message
+    assert mode in message
     assert "planned" in message
     assert "secret-test-source" not in message
     assert "secret-test-key" not in message

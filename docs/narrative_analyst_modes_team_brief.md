@@ -96,7 +96,7 @@ mode 是 `NarrativeAnalyst` 内部能力分支，不再作为额外顶层 Agent 
 
 ```text
 统一入口: comic_agent/agents/narrative_analyst.py
-统一 mode registry: event/entity 已实现，后续 mode 已登记 planned
+统一 mode registry: event/entity/claim 已实现，后续 mode 已登记 planned
 统一运行接口: NarrativeAnalyst.run(mode, input_context)
 统一查询接口: list_modes(), get_mode_spec(mode)
 ```
@@ -106,12 +106,12 @@ mode 是 `NarrativeAnalyst` 内部能力分支，不再作为额外顶层 Agent 
 ```text
 event_extraction -> EventProposalV1
 entity_extraction -> EntityProposalV1
+claim_extraction -> ClaimProposalV1
 ```
 
 当前 planned / not implemented modes：
 
 ```text
-claim_extraction -> ClaimProposalV1
 knowledge_state_extraction -> KnowledgeStateProposalV1
 state_change_extraction -> StateChangeProposalV1
 relationship_signal_extraction -> planned_without_schema
@@ -122,7 +122,7 @@ shell 的意义：
 ```text
 1. 后续 workflow/API 只需要接一个 NarrativeAnalyst 入口。
 2. 所有 mode 的状态、output_schema、EvidenceRef 要求和 max_context_chunks 有统一注册表。
-3. event/entity 继续复用现有 Agent，不复制 prompt 逻辑。
+3. event/entity/claim 继续复用各自 Agent，不复制 prompt 逻辑。
 4. planned mode 调用时返回脱敏 not implemented 错误，不调用 provider。
 5. 本次没有新增真实 LLM 调用，没有新增 schema，没有写 StoryBible。
 ```
@@ -255,11 +255,14 @@ EntityProposalV1
 
 中文名：主张抽取
 
+当前状态：v0.1 已实现，已接入 NarrativeAnalyst mode shell，自动测试使用 fake provider。
+
 开发文件：
 
 ```text
 comic_agent/agents/claim_extraction.py
 tests/test_claim_extraction_agent.py
+scripts/smoke_narrative_analyst.py
 ```
 
 功能：
@@ -297,19 +300,20 @@ ClaimProposalV1
 “xx隐瞒了真相。”
 ```
 
-完成步骤：
+完成情况：
 
 ```text
-1. 新建 claim_extraction.py
-2. 参照 event_extraction.py 编写 ClaimExtractionAgent
+1. claim_extraction.py 已创建
+2. ClaimExtractionAgent v0.1 已实现
 3. prompt 要求 exactly one claim
-4. 不把 claim 当成客观事实
+4. prompt 区分 claim 与 EventProposalV1 / EntityProposalV1
 5. 输出 ClaimProposalV1
-6. 编写 FakeProvider 测试
-7. 测试 claim_text、claim_type、source_type、evidence_refs
-8. 自动测试阶段不接真实 LLM
-9. 自动测试通过后，再由负责人手动做真实 LLM 小规模评估
-10. 不写 StoryBible
+6. FakeProvider 自动测试已实现
+7. NarrativeAnalyst.run("claim_extraction", input_context) 已接入
+8. smoke_narrative_analyst.py 支持 --mode claim_extraction
+9. 自动测试阶段不接真实 LLM
+10. 真实 LLM eval 由负责人手动执行
+11. 不写 StoryBible
 ```
 
 ### 4. knowledge_state_extraction
