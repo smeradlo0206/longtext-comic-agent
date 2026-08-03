@@ -25,6 +25,34 @@ from comic_agent.services.id_service import checksum_text
 
 DEFAULT_MAX_CHARS_PER_CHUNK = 1200
 
+FAILURE_RECOMMENDED_ACTIONS = {
+    "PROVIDER_TIMEOUT": "increase timeout or reduce max_chars_per_chunk",
+    "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT": (
+        "reduce max_chars_per_chunk before raising max output tokens"
+    ),
+    "PROVIDER_CONTENT_MISSING": "disable response_format or reduce input budget",
+    "SCHEMA_VALIDATION_FAILED": "inspect provider JSON shape and mode boundary",
+    "EVIDENCE_VALIDATION_FAILED": "manual review evidence fields against selected context",
+    "QUOTE_NOT_MATCHED": "tighten exact quote prompt and use shorter verbatim quote",
+    "CHAR_RANGE_NOT_MATCHED": "tighten exact quote prompt or omit uncertain char ranges",
+    "MODE_NOT_IMPLEMENTED": "select an implemented NarrativeAnalyst mode",
+    "UNKNOWN_ERROR": "manual review sanitized error diagnostics",
+}
+
+SANITIZED_DIAGNOSTIC_KEYS = {
+    "finish_reason",
+    "response_has_choices",
+    "choices_count",
+    "message_keys",
+    "content_type",
+    "content_length",
+    "has_reasoning_content",
+    "has_tool_calls",
+    "usage_prompt_tokens",
+    "usage_completion_tokens",
+    "usage_total_tokens",
+}
+
 
 def run_smoke(
     *,
@@ -105,11 +133,25 @@ def run_smoke(
                 and first_import.document.document_id == second_import.document.document_id
             ),
             "context_chunk_ids": [],
+            "agent_run_saved": False,
+            "agent_run_id": None,
             "agent_run_status": None,
+            "provider_result_id": None,
             "evidence_validation_passed": None,
             "provider_success": None,
+            "provider_error_diagnostics": None,
+            "usage_prompt_tokens": None,
+            "usage_completion_tokens": None,
+            "usage_total_tokens": None,
             "output_schema": mode_spec.output_schema,
             "schema_validation_passed": None,
+            "quote_matched": None,
+            "char_range_matched": None,
+            "error_message": None,
+            "manual_score": None,
+            "manual_issue": None,
+            "failure_category": None,
+            "recommended_action": None,
         }
 
         if not selected_chunks:
@@ -188,12 +230,26 @@ def _run_analyst(
             selected_chunks=selected_chunks,
         )
         _add_provider_diagnostics(summary, exc)
+        _set_failure(summary, _classify_exception(exc))
+        return
+    except Exception as exc:
+        summary["agent_run_status"] = "FAILED"
+        summary["provider_success"] = False
+        summary["schema_validation_passed"] = False
+        summary["evidence_validation_passed"] = False
+        summary["error_message"] = _sanitize_error_message(
+            str(exc),
+            settings=settings,
+            selected_chunks=selected_chunks,
+        )
+        _set_failure(summary, "UNKNOWN_ERROR")
         return
 
     summary["agent_run_status"] = "SUCCEEDED"
     summary["provider_success"] = True
     summary["schema_validation_passed"] = True
     _add_proposal_details(summary=summary, proposal=proposal, selected_chunks=visible_chunks)
+    _classify_evidence_result(summary)
 
 
 def _visible_context_chunks(
@@ -245,6 +301,7 @@ def _add_proposal_details(
     if isinstance(proposal, EventProposalV1):
         summary["proposal_id"] = proposal.proposal_id
         summary["event_type"] = proposal.event_type
+        summary["actor_resolution_status"] = proposal.actor_resolution_status
         summary["confidence"] = proposal.confidence
         summary.update(_validate_evidence(proposal.evidence_refs, selected_chunks))
         return
@@ -323,14 +380,54 @@ def _add_provider_diagnostics(summary: dict[str, Any], exc: BaseException) -> No
     diagnostics = getattr(exc, "diagnostics", None)
     if not isinstance(diagnostics, dict):
         return
-    summary["provider_error_diagnostics"] = diagnostics
+    sanitized_diagnostics = {
+        key: value for key, value in diagnostics.items() if key in SANITIZED_DIAGNOSTIC_KEYS
+    }
+    summary["provider_error_diagnostics"] = sanitized_diagnostics
     for key in (
         "usage_prompt_tokens",
         "usage_completion_tokens",
         "usage_total_tokens",
     ):
-        if key in diagnostics:
-            summary[key] = diagnostics[key]
+        if key in sanitized_diagnostics:
+            summary[key] = sanitized_diagnostics[key]
+
+
+def _classify_exception(exc: BaseException) -> str:
+    if isinstance(exc, TimeoutError):
+        return "PROVIDER_TIMEOUT"
+    if isinstance(exc, NotImplementedError):
+        return "MODE_NOT_IMPLEMENTED"
+
+    diagnostics = getattr(exc, "diagnostics", None)
+    finish_reason = diagnostics.get("finish_reason") if isinstance(diagnostics, dict) else None
+    content_type = diagnostics.get("content_type") if isinstance(diagnostics, dict) else None
+    message = str(exc).lower()
+
+    if finish_reason == "length" or "exceeded max output tokens" in message:
+        return "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT"
+    if "content is missing" in message or content_type == "NoneType":
+        return "PROVIDER_CONTENT_MISSING"
+    if "schema validation" in message or "validation" in message:
+        return "SCHEMA_VALIDATION_FAILED"
+    return "UNKNOWN_ERROR"
+
+
+def _classify_evidence_result(summary: dict[str, Any]) -> None:
+    if summary.get("evidence_validation_passed") is not False:
+        return
+    if summary.get("quote_matched") is False:
+        _set_failure(summary, "QUOTE_NOT_MATCHED")
+        return
+    if summary.get("char_range_matched") is False:
+        _set_failure(summary, "CHAR_RANGE_NOT_MATCHED")
+        return
+    _set_failure(summary, "EVIDENCE_VALIDATION_FAILED")
+
+
+def _set_failure(summary: dict[str, Any], category: str) -> None:
+    summary["failure_category"] = category
+    summary["recommended_action"] = FAILURE_RECOMMENDED_ACTIONS[category]
 
 
 def _sanitize_error_message(

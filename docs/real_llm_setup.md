@@ -219,6 +219,73 @@ the imported `SourceChunkV1` records or write source text to the summary. The
 summary records sanitized diagnostics such as `chunk_limit`, `chunk_offset`,
 `max_chars_per_chunk`, `input_chars_total`, and `truncated_chunks_count`.
 
+The unified NarrativeAnalyst smoke summary uses one sanitized evaluation matrix
+for `event_extraction`, `entity_extraction`, and `claim_extraction`:
+
+```text
+project_id
+mode
+dry_run
+real_llm_requested
+real_llm_enabled
+real_llm_called
+provider_name
+model
+import_idempotent
+context_chunk_ids
+chunk_limit
+chunk_offset
+selected_chunks_count
+max_chars_per_chunk
+input_chars_total
+truncated_chunks_count
+agent_run_saved
+agent_run_id
+agent_run_status
+provider_result_id
+provider_success
+provider_error_diagnostics
+usage_prompt_tokens
+usage_completion_tokens
+usage_total_tokens
+output_schema
+schema_validation_passed
+evidence_validation_passed
+quote_matched
+char_range_matched
+error_message
+manual_score
+manual_issue
+failure_category
+recommended_action
+```
+
+Mode-specific sanitized fields are added when a proposal is available:
+
+```text
+event_extraction: proposal_id, event_type, actor_resolution_status, confidence, evidence_chunk_id
+entity_extraction: proposal_id, entity_type, canonical_name, aliases_count, confidence, evidence_chunk_id
+claim_extraction: proposal_id, claim_type, source_type, verification_status, confidence, evidence_chunk_id
+```
+
+`manual_score` and `manual_issue` are placeholders for the human evaluator.
+They remain null in automated output unless a reviewer edits a local copy of the
+summary. Do not commit edited summaries from `output/`.
+
+Failure categories are intentionally coarse and sanitized:
+
+```text
+PROVIDER_TIMEOUT
+PROVIDER_LENGTH_BEFORE_FINAL_CONTENT
+PROVIDER_CONTENT_MISSING
+SCHEMA_VALIDATION_FAILED
+EVIDENCE_VALIDATION_FAILED
+QUOTE_NOT_MATCHED
+CHAR_RANGE_NOT_MATCHED
+MODE_NOT_IMPLEMENTED
+UNKNOWN_ERROR
+```
+
 When `deepseek-v4-pro` returns `finish_reason=length` with missing `content` and
 `has_reasoning_content=true`, first lower the input budget or try a nearby
 `--chunk-offset`. Avoid blindly raising `LLM_MAX_OUTPUT_TOKENS`, because the
