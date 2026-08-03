@@ -361,6 +361,10 @@ Current website views:
 - Full Proposal JSON display for manual review.
 - Manual Review Checklist display with null placeholders for human scoring.
 
+Local Web Console access does not require an access code by default. For a
+shared hosted demo, set `INTERNAL_DEMO_REQUIRE_ACCESS_CODE=true` and keep
+`INTERNAL_DEMO_ACCESS_CODE` only in local environment.
+
 The Narrative Analyst Console has two gates for real provider calls:
 
 ```text
@@ -373,6 +377,23 @@ readiness metadata and input-budget diagnostics only. A real opt-in run can save
 an AgentRun and return a full Proposal for manual evaluation. Do not copy
 `quote_text`, `claim_text`, raw provider responses, source text, API keys, or
 local output files into commits, issues, PRs, or chat.
+
+For browser-based Narrative Analyst tests, always select 1-3 chunks explicitly
+before running. Do not leave Chunk IDs empty in the web console and rely on
+`chunk_offset` / `chunk_limit`, especially after reusing one project for
+multiple TXT imports. The API fallback remains available for scripted callers,
+but the web console requires explicit chunk IDs to avoid accidentally evaluating
+older project chunks.
+
+When manually testing a new TXT file:
+
+- prefer a fresh `project_id` for each test file;
+- after import, click View Chapters and select the intended chunks again;
+- check the Selected input chunks preview before running;
+- verify that Full Proposal evidence quotes correspond to the selected input
+  chunks;
+- do not paste source text, `quote_text`, `claim_text`, raw provider responses,
+  `message.content`, or API keys into docs, issues, PRs, or chat.
 
 Use `failure_category` and `recommended_action` as triage hints:
 
