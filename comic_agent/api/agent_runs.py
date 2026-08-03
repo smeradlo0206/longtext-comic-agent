@@ -16,6 +16,7 @@ from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.workflow import AgentRunV1
 from comic_agent.services.id_service import checksum_text, stable_id
 from comic_agent.workflows.mock_event_workflow import MockEventWorkflow
+from comic_agent.workflows.narrative_analyst_workflow import NarrativeAnalystWorkflow
 from comic_agent.workflows.real_event_workflow import RealEventWorkflow
 
 router = APIRouter()
@@ -107,6 +108,49 @@ def run_real_event(
     )
     result = workflow.run(project_id=project_id, chunk_ids=chunk_ids)
     return _real_event_summary(result.agent_run, result.proposal, chunks)
+
+
+@router.post(
+    "/projects/{project_id}/agent-runs/narrative-analyst",
+    status_code=status.HTTP_201_CREATED,
+)
+def run_narrative_analyst(
+    project_id: str,
+    payload: Annotated[dict[str, Any], Body()],
+    source_repository: SourceRepositoryDep,
+    agent_run_repository: AgentRunRepositoryDep,
+    request: Request,
+    _: Annotated[None, Depends(require_demo_access_code)],
+) -> dict[str, Any]:
+    """Run the unified NarrativeAnalyst console workflow."""
+
+    settings = get_settings()
+    mode = str(payload.get("mode", ""))
+    chunk_ids_payload = payload.get("chunk_ids")
+    chunk_ids = (
+        [str(chunk_id) for chunk_id in chunk_ids_payload]
+        if isinstance(chunk_ids_payload, list)
+        else None
+    )
+    workflow = NarrativeAnalystWorkflow(
+        settings=settings,
+        source_repository=source_repository,
+        agent_run_repository=agent_run_repository,
+        provider=getattr(request.app.state, "narrative_analyst_provider", None),
+    )
+    try:
+        result = workflow.run(
+            project_id=project_id,
+            mode=mode,
+            chunk_ids=chunk_ids,
+            chunk_limit=int(payload.get("chunk_limit", 3)),
+            chunk_offset=int(payload.get("chunk_offset", 0)),
+            max_chars_per_chunk=int(payload.get("max_chars_per_chunk", 1200)),
+            real_llm_requested=bool(payload.get("real_llm_requested", False)),
+        )
+    except (ValueError, NotImplementedError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return result.response_payload()
 
 
 @router.get("/agent-runs/{agent_run_id}")

@@ -162,6 +162,59 @@ UNKNOWN_ERROR
 `manual_score` / `manual_issue` 是人工评估占位字段，自动输出保持 null。
 如果负责人在本地填写人工评分，只能保存在 ignored 的本地输出目录，不提交。
 
+## Narrative Analyst Console
+
+`web_console/index.html` 已新增 Narrative Analyst Console。后端 endpoint：
+
+```text
+POST /projects/{project_id}/agent-runs/narrative-analyst
+```
+
+当前支持：
+
+```text
+event_extraction -> EventProposalV1
+entity_extraction -> EntityProposalV1
+claim_extraction -> ClaimProposalV1
+```
+
+Console 能设置：
+
+```text
+mode
+project_id
+chunk_ids
+chunk_limit
+chunk_offset
+max_chars_per_chunk
+real_llm_requested
+```
+
+dry-run 不调用 provider，不保存 AgentRun，只返回上下文 readiness 和预算 summary。
+real opt-in 需要同时满足：
+
+```text
+ENABLE_REAL_LLM=true
+real_llm_requested=true
+```
+
+测试中通过 fake provider 覆盖 real opt-in 路径，不调用真实 LLM。
+成功运行会保存 AgentRun，并可通过 AgentRun detail 和 evidence API 继续审计。
+
+Console 默认展示脱敏 summary；Full Proposal JSON 折叠展示，供人工评估
+`claim_text`、`quote_text` 和 EvidenceRef。不要把 Proposal 中的原文 quote、
+claim_text、完整 chunk text、raw provider response、message.content、API key
+或本地输出文件提交或粘贴到 PR / issue / chat。
+
+Manual Review Checklist 目前只展示 null 占位，不写回数据库：
+
+```text
+event: is_event, event_type_correct, evidence_supports_event, salient_event
+entity: is_entity, entity_type_correct, canonical_name_correct, evidence_supports_entity, salient_entity
+claim: is_claim, claim_type_correct, source_type_correct, evidence_supports_claim, salient_claim
+common: manual_score, manual_issue
+```
+
 ## Mode 分工
 
 ## NarrativeAnalyst 顶层入口

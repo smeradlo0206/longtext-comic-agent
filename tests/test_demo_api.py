@@ -38,7 +38,13 @@ def test_demo_status_reports_sanitized_runtime_state(
         "model": "deepseek-v4-pro",
         "api_key_configured": True,
         "api_key_non_empty": True,
-        "supported_modes": ["mock", "real_event"],
+        "supported_modes": [
+            "mock",
+            "real_event",
+            "event_extraction",
+            "entity_extraction",
+            "claim_extraction",
+        ],
     }
     assert "secret-demo-code" not in serialized
     assert "secret-test-key" not in serialized

@@ -17,41 +17,22 @@ from comic_agent.database.base import Base
 from comic_agent.database.session import make_engine, make_session_factory
 from comic_agent.providers.openai_compatible import OpenAICompatibleLLMProvider
 from comic_agent.repositories.source_repository import SourceRepository
-from comic_agent.schemas.narrative import ClaimProposalV1, EntityProposalV1, EventProposalV1
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.services.context_builder import AgentContext, ContextBuilder
 from comic_agent.services.document_parser import DocumentParser
 from comic_agent.services.id_service import checksum_text
-
-DEFAULT_MAX_CHARS_PER_CHUNK = 1200
-
-FAILURE_RECOMMENDED_ACTIONS = {
-    "PROVIDER_TIMEOUT": "increase timeout or reduce max_chars_per_chunk",
-    "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT": (
-        "reduce max_chars_per_chunk before raising max output tokens"
-    ),
-    "PROVIDER_CONTENT_MISSING": "disable response_format or reduce input budget",
-    "SCHEMA_VALIDATION_FAILED": "inspect provider JSON shape and mode boundary",
-    "EVIDENCE_VALIDATION_FAILED": "manual review evidence fields against selected context",
-    "QUOTE_NOT_MATCHED": "tighten exact quote prompt and use shorter verbatim quote",
-    "CHAR_RANGE_NOT_MATCHED": "tighten exact quote prompt or omit uncertain char ranges",
-    "MODE_NOT_IMPLEMENTED": "select an implemented NarrativeAnalyst mode",
-    "UNKNOWN_ERROR": "manual review sanitized error diagnostics",
-}
-
-SANITIZED_DIAGNOSTIC_KEYS = {
-    "finish_reason",
-    "response_has_choices",
-    "choices_count",
-    "message_keys",
-    "content_type",
-    "content_length",
-    "has_reasoning_content",
-    "has_tool_calls",
-    "usage_prompt_tokens",
-    "usage_completion_tokens",
-    "usage_total_tokens",
-}
+from comic_agent.services.narrative_analyst_summary import (
+    DEFAULT_MAX_CHARS_PER_CHUNK,
+    add_proposal_details,
+    add_provider_diagnostics,
+    base_eval_summary,
+    classify_evidence_result,
+    classify_exception,
+    sanitize_error_message,
+    set_failure,
+    slim_input_context,
+    visible_context_chunks,
+)
 
 
 def run_smoke(
@@ -95,31 +76,34 @@ def run_smoke(
         second_import = source_repository.import_parsed_document(parsed)
         chunks = source_repository.list_document_chunks(first_import.document.document_id)
         selected_chunks = chunks[chunk_offset : chunk_offset + chunk_limit]
-        input_budget = _input_budget_summary(selected_chunks, max_chars_per_chunk)
         analyst = NarrativeAnalyst(_NoopProvider())
         mode_spec = analyst.get_mode_spec(mode)
 
-        summary: dict[str, Any] = {
-            "project_id": project_id,
-            "mode": mode,
-            "dry_run": not enable_real_llm,
-            "real_llm_requested": enable_real_llm,
-            "real_llm_enabled": active_settings.enable_real_llm,
-            "real_llm_called": False,
-            "provider_name": active_settings.llm_provider_name,
-            "model": active_settings.llm_model,
-            "chunk_limit": chunk_limit,
-            "chunk_offset": chunk_offset,
-            "max_chars_per_chunk": max_chars_per_chunk,
-            "source_file_hash": checksum_text(text),
-            "total_chars": len(text),
-            "chapters_count": len(parsed.chapters),
-            "chunks_count": len(chunks),
-            "selected_chunks_count": len(selected_chunks),
-            "input_chars_total": input_budget["input_chars_total"],
-            "truncated_chunks_count": input_budget["truncated_chunks_count"],
-            "selected_chunk_ids": [chunk.chunk_id for chunk in selected_chunks],
-            "selected_chunk_ranges": [
+        summary = base_eval_summary(
+            project_id=project_id,
+            mode=mode,
+            real_llm_requested=enable_real_llm,
+            real_llm_enabled=active_settings.enable_real_llm,
+            provider_name=active_settings.llm_provider_name,
+            model=active_settings.llm_model,
+            chunk_limit=chunk_limit,
+            chunk_offset=chunk_offset,
+            max_chars_per_chunk=max_chars_per_chunk,
+            selected_chunks=selected_chunks,
+            output_schema=mode_spec.output_schema,
+            import_idempotent=(
+                second_import.status == "existing"
+                and first_import.document.document_id == second_import.document.document_id
+            ),
+        )
+        summary.update(
+            {
+                "source_file_hash": checksum_text(text),
+                "total_chars": len(text),
+                "chapters_count": len(parsed.chapters),
+                "chunks_count": len(chunks),
+                "selected_chunk_ids": [chunk.chunk_id for chunk in selected_chunks],
+                "selected_chunk_ranges": [
                 {
                     "chunk_id": chunk.chunk_id,
                     "char_start": chunk.char_start,
@@ -127,32 +111,9 @@ def run_smoke(
                     "chunk_hash": chunk.checksum,
                 }
                 for chunk in selected_chunks
-            ],
-            "import_idempotent": (
-                second_import.status == "existing"
-                and first_import.document.document_id == second_import.document.document_id
-            ),
-            "context_chunk_ids": [],
-            "agent_run_saved": False,
-            "agent_run_id": None,
-            "agent_run_status": None,
-            "provider_result_id": None,
-            "evidence_validation_passed": None,
-            "provider_success": None,
-            "provider_error_diagnostics": None,
-            "usage_prompt_tokens": None,
-            "usage_completion_tokens": None,
-            "usage_total_tokens": None,
-            "output_schema": mode_spec.output_schema,
-            "schema_validation_passed": None,
-            "quote_matched": None,
-            "char_range_matched": None,
-            "error_message": None,
-            "manual_score": None,
-            "manual_issue": None,
-            "failure_category": None,
-            "recommended_action": None,
-        }
+                ],
+            }
+        )
 
         if not selected_chunks:
             summary["agent_run_status"] = "BLOCKED"
@@ -217,234 +178,39 @@ def _run_analyst(
         )
         analyst = NarrativeAnalyst(provider)
         summary["real_llm_called"] = True
-        visible_chunks = _visible_context_chunks(context.chunks, max_chars_per_chunk)
-        proposal = analyst.run(mode, _slim_input_context(context, visible_chunks))
+        visible_chunks = visible_context_chunks(context.chunks, max_chars_per_chunk)
+        proposal = analyst.run(mode, slim_input_context(context, visible_chunks))
     except (TimeoutError, ValueError, NotImplementedError) as exc:
         summary["agent_run_status"] = "FAILED"
         summary["provider_success"] = False
         summary["schema_validation_passed"] = False
         summary["evidence_validation_passed"] = False
-        summary["error_message"] = _sanitize_error_message(
+        summary["error_message"] = sanitize_error_message(
             str(exc),
             settings=settings,
             selected_chunks=selected_chunks,
         )
-        _add_provider_diagnostics(summary, exc)
-        _set_failure(summary, _classify_exception(exc))
+        add_provider_diagnostics(summary, exc)
+        set_failure(summary, classify_exception(exc))
         return
     except Exception as exc:
         summary["agent_run_status"] = "FAILED"
         summary["provider_success"] = False
         summary["schema_validation_passed"] = False
         summary["evidence_validation_passed"] = False
-        summary["error_message"] = _sanitize_error_message(
+        summary["error_message"] = sanitize_error_message(
             str(exc),
             settings=settings,
             selected_chunks=selected_chunks,
         )
-        _set_failure(summary, "UNKNOWN_ERROR")
+        set_failure(summary, "UNKNOWN_ERROR")
         return
 
     summary["agent_run_status"] = "SUCCEEDED"
     summary["provider_success"] = True
     summary["schema_validation_passed"] = True
-    _add_proposal_details(summary=summary, proposal=proposal, selected_chunks=visible_chunks)
-    _classify_evidence_result(summary)
-
-
-def _visible_context_chunks(
-    chunks: list[SourceChunkV1],
-    max_chars_per_chunk: int,
-) -> list[SourceChunkV1]:
-    return [
-        chunk.model_copy(update={"text": chunk.text[:max_chars_per_chunk]})
-        for chunk in chunks
-    ]
-
-
-def _input_budget_summary(
-    chunks: list[SourceChunkV1],
-    max_chars_per_chunk: int,
-) -> dict[str, int]:
-    return {
-        "input_chars_total": sum(min(len(chunk.text), max_chars_per_chunk) for chunk in chunks),
-        "truncated_chunks_count": sum(len(chunk.text) > max_chars_per_chunk for chunk in chunks),
-    }
-
-
-def _slim_input_context(
-    context: AgentContext,
-    visible_chunks: list[SourceChunkV1],
-) -> dict[str, object]:
-    return {
-        "project_id": context.project_id,
-        "source_chunk_ids": context.source_chunk_ids,
-        "source_chunks": [
-            {
-                "chunk_id": chunk.chunk_id,
-                "chapter_id": chunk.chapter_id,
-                "char_start": chunk.char_start,
-                "char_end": chunk.char_end,
-                "text": chunk.text,
-            }
-            for chunk in visible_chunks
-        ],
-    }
-
-
-def _add_proposal_details(
-    *,
-    summary: dict[str, Any],
-    proposal: BaseModel,
-    selected_chunks: list[SourceChunkV1],
-) -> None:
-    if isinstance(proposal, EventProposalV1):
-        summary["proposal_id"] = proposal.proposal_id
-        summary["event_type"] = proposal.event_type
-        summary["actor_resolution_status"] = proposal.actor_resolution_status
-        summary["confidence"] = proposal.confidence
-        summary.update(_validate_evidence(proposal.evidence_refs, selected_chunks))
-        return
-    if isinstance(proposal, EntityProposalV1):
-        summary["proposal_id"] = proposal.proposal_id
-        summary["entity_type"] = proposal.entity_type
-        summary["canonical_name"] = proposal.canonical_name
-        summary["aliases_count"] = len(proposal.aliases)
-        summary["confidence"] = proposal.confidence
-        summary.update(_validate_evidence(proposal.evidence_refs, selected_chunks))
-        return
-    if isinstance(proposal, ClaimProposalV1):
-        summary["proposal_id"] = proposal.proposal_id
-        summary["claim_type"] = str(proposal.claim_type)
-        summary["source_type"] = str(proposal.source_type)
-        summary["verification_status"] = str(proposal.verification_status)
-        summary["confidence"] = proposal.confidence
-        summary.update(_validate_evidence(proposal.evidence_refs, selected_chunks))
-
-
-def _validate_evidence(
-    evidence_refs: list[Any],
-    selected_chunks: list[SourceChunkV1],
-) -> dict[str, Any]:
-    if not evidence_refs:
-        return {
-            "evidence_validation_passed": False,
-            "evidence_chunk_id": None,
-            "quote_matched": None,
-            "char_range_matched": None,
-        }
-
-    evidence_ref = evidence_refs[0]
-    evidence_chunk = next(
-        (chunk for chunk in selected_chunks if chunk.chunk_id == evidence_ref.chunk_id),
-        None,
-    )
-    result: dict[str, Any] = {
-        "evidence_chunk_id": evidence_ref.chunk_id,
-        "quote_matched": None,
-        "char_range_matched": None,
-    }
-    if evidence_chunk is None:
-        result["evidence_validation_passed"] = False
-        result["quote_matched"] = False if evidence_ref.quote_text is not None else None
-        result["char_range_matched"] = False if evidence_ref.quote_start is not None else None
-        return result
-
-    evidence_valid = True
-    if evidence_ref.quote_text is not None:
-        quote_matched = evidence_ref.quote_text in evidence_chunk.text
-        result["quote_matched"] = quote_matched
-        evidence_valid = evidence_valid and quote_matched
-
-    has_range = evidence_ref.quote_start is not None and evidence_ref.quote_end is not None
-    if has_range:
-        quote_start = evidence_ref.quote_start
-        quote_end = evidence_ref.quote_end
-        range_in_bounds = 0 <= quote_start <= quote_end <= len(evidence_chunk.text)
-        if not range_in_bounds:
-            result["char_range_matched"] = False
-            result["evidence_validation_passed"] = False
-            return result
-        ranged_text = evidence_chunk.text[quote_start:quote_end]
-        char_range_matched = (
-            ranged_text == evidence_ref.quote_text if evidence_ref.quote_text is not None else True
-        )
-        result["char_range_matched"] = char_range_matched
-        evidence_valid = evidence_valid and char_range_matched
-
-    result["evidence_validation_passed"] = evidence_valid
-    return result
-
-
-def _add_provider_diagnostics(summary: dict[str, Any], exc: BaseException) -> None:
-    diagnostics = getattr(exc, "diagnostics", None)
-    if not isinstance(diagnostics, dict):
-        return
-    sanitized_diagnostics = {
-        key: value for key, value in diagnostics.items() if key in SANITIZED_DIAGNOSTIC_KEYS
-    }
-    summary["provider_error_diagnostics"] = sanitized_diagnostics
-    for key in (
-        "usage_prompt_tokens",
-        "usage_completion_tokens",
-        "usage_total_tokens",
-    ):
-        if key in sanitized_diagnostics:
-            summary[key] = sanitized_diagnostics[key]
-
-
-def _classify_exception(exc: BaseException) -> str:
-    if isinstance(exc, TimeoutError):
-        return "PROVIDER_TIMEOUT"
-    if isinstance(exc, NotImplementedError):
-        return "MODE_NOT_IMPLEMENTED"
-
-    diagnostics = getattr(exc, "diagnostics", None)
-    finish_reason = diagnostics.get("finish_reason") if isinstance(diagnostics, dict) else None
-    content_type = diagnostics.get("content_type") if isinstance(diagnostics, dict) else None
-    message = str(exc).lower()
-
-    if finish_reason == "length" or "exceeded max output tokens" in message:
-        return "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT"
-    if "content is missing" in message or content_type == "NoneType":
-        return "PROVIDER_CONTENT_MISSING"
-    if "schema validation" in message or "validation" in message:
-        return "SCHEMA_VALIDATION_FAILED"
-    return "UNKNOWN_ERROR"
-
-
-def _classify_evidence_result(summary: dict[str, Any]) -> None:
-    if summary.get("evidence_validation_passed") is not False:
-        return
-    if summary.get("quote_matched") is False:
-        _set_failure(summary, "QUOTE_NOT_MATCHED")
-        return
-    if summary.get("char_range_matched") is False:
-        _set_failure(summary, "CHAR_RANGE_NOT_MATCHED")
-        return
-    _set_failure(summary, "EVIDENCE_VALIDATION_FAILED")
-
-
-def _set_failure(summary: dict[str, Any], category: str) -> None:
-    summary["failure_category"] = category
-    summary["recommended_action"] = FAILURE_RECOMMENDED_ACTIONS[category]
-
-
-def _sanitize_error_message(
-    message: str,
-    *,
-    settings: Settings,
-    selected_chunks: list[SourceChunkV1],
-) -> str:
-    sanitized = message
-    if settings.llm_api_key is not None:
-        secret_value = settings.llm_api_key.get_secret_value()
-        if secret_value:
-            sanitized = sanitized.replace(secret_value, "[redacted-secret]")
-    for chunk in selected_chunks:
-        if chunk.text:
-            sanitized = sanitized.replace(chunk.text, "[redacted-source-text]")
-    return sanitized
+    add_proposal_details(summary=summary, proposal=proposal, selected_chunks=visible_chunks)
+    classify_evidence_result(summary)
 
 
 def _write_summary(output_dir: Path, summary: dict[str, Any]) -> None:

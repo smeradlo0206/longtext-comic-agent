@@ -27,6 +27,7 @@ API:
 - `GET /demo/status`
 - `POST /demo/verify-access`
 - `POST /projects/{project_id}/agent-runs/real-event`
+- `POST /projects/{project_id}/agent-runs/narrative-analyst`
 
 Website-ready audit surfaces:
 
@@ -35,6 +36,8 @@ Website-ready audit surfaces:
 - Evidence audit
 - LLM status
 - Sanitized real eval summary
+- Narrative Analyst Console for `event_extraction`, `entity_extraction`, and
+  `claim_extraction`
 
 Internal hosted demo console:
 
@@ -42,10 +45,14 @@ Internal hosted demo console:
 - Start the API with `uv run uvicorn comic_agent.main:app --reload`.
 - Configure demo access through `INTERNAL_DEMO_REQUIRE_ACCESS_CODE` and
   `INTERNAL_DEMO_ACCESS_CODE`.
-- Real Event Agent calls use the server-side configured provider key and still
-  require `ENABLE_REAL_LLM=true`.
-- The demo does not expose Claim, KnowledgeState, multi-agent orchestration, or
-  canonical story-data writes.
+- Real Event and Narrative Analyst real calls use the server-side configured
+  provider key and still require both `ENABLE_REAL_LLM=true` and an explicit
+  request-level opt-in.
+- The Narrative Analyst Console can show full Proposal JSON for manual review,
+  but it does not show API keys, raw provider responses, complete source chunk
+  text, or canonical story-data writes.
+- The demo does not expose KnowledgeState, multi-agent orchestration, or
+  canonical StoryBible writes.
 
 ## 项目文档
 

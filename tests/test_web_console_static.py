@@ -10,6 +10,22 @@ def test_web_console_static_html_exposes_demo_controls_without_local_secrets() -
     assert 'id="verifyAccess"' in html
     assert 'id="runMock"' in html
     assert 'id="runRealEvent"' in html
+    assert 'id="narrativeMode"' in html
+    assert 'id="narrativeChunkIds"' in html
+    assert 'id="narrativeChunkLimit"' in html
+    assert 'id="narrativeChunkOffset"' in html
+    assert 'id="narrativeMaxChars"' in html
+    assert 'id="narrativeRealLlmRequested"' in html
+    assert 'id="runNarrativeAnalyst"' in html
+    assert 'id="narrativeSummary"' in html
+    assert 'id="narrativeProposal"' in html
+    assert 'id="narrativeEvidenceStatus"' in html
+    assert 'id="narrativeProviderDiagnostics"' in html
+    assert 'id="manualReviewChecklist"' in html
+    assert "event_extraction" in html
+    assert "entity_extraction" in html
+    assert "claim_extraction" in html
+    assert "/agent-runs/narrative-analyst" in html
     assert "X-Demo-Access-Code" in html
     assert "local_eval" not in html
     assert "output/" not in html
@@ -19,5 +35,8 @@ def test_web_console_static_html_exposes_demo_controls_without_local_secrets() -
     assert "pretty(chunk)" not in html
     assert "highlightQuote(chunk.text" not in html
     assert "sanitizeRunDetail" in html
+    assert "sanitizeNarrativeResponse" in html
+    assert "renderManualReviewChecklist" in html
     assert "sanitizedChunkDetail" in html
     assert "evidenceSnippet" in html
+    assert "raw_output" in html
