@@ -12,7 +12,8 @@ bounded proposal-only agent:
 - outputs only `EntityProposalV1`;
 - requires at least one `EvidenceRefV1`;
 - does not write canonical StoryBible data;
-- does not implement workflow, API, or web console entrypoints.
+- is available through the unified NarrativeAnalyst workflow/API/web console
+  entrypoints.
 
 ## Current Implementation
 
@@ -24,10 +25,31 @@ Implemented:
 - `EntityExtractionAgent.run(input_context) -> EntityProposalV1`;
 - fake provider tests in `tests/test_entity_extraction_agent.py`;
 - dry-run / real opt-in smoke path in `scripts/smoke_real_entity_agent.py`;
+- unified NarrativeAnalyst mode execution in `scripts/smoke_narrative_analyst.py`;
+- internal console endpoint
+  `POST /projects/{project_id}/agent-runs/narrative-analyst`;
+- `web_console/index.html` Narrative Analyst Console mode selector;
 - smoke-script regression tests in `tests/test_real_entity_smoke.py`.
 
 The prompt asks for exactly one source-grounded entity and requires conservative
 handling of names, aliases, entity type, and evidence quotes.
+
+## Prompt Hardening
+
+The v0.1 prompt is now strengthened around:
+
+- output boundary: only `EntityProposalV1`, no Event, Claim, KnowledgeState, or
+  canonical StoryBible data;
+- entity type decision labels: `CHARACTER`, `LOCATION`, `ORGANIZATION`,
+  `OBJECT / PROP`, `ABILITY / TECHNIQUE`, and `CONCEPT / WORLD_RULE`;
+- selection strategy: choose one specific reusable entity that affects later
+  story understanding, not ordinary nouns, actions, event results, or claims;
+- `canonical_name`: source-supported, short, stable, and not invented or expanded;
+- `aliases`: explicit aliases or forms of address only; inferred aliases and
+  descriptions are rejected;
+- `EvidenceRefV1`: shortest exact quote, no paraphrase, with optional char range
+  only when confident;
+- no step-by-step reasoning, no candidate lists, and no explanations.
 
 ## Test Status
 
@@ -36,6 +58,10 @@ Automatic tests use a fake provider only. They cover:
 - provider call wiring;
 - `EntityProposalV1` return validation;
 - prompt boundaries and forbidden output types;
+- entity type decision labels;
+- canonical name and aliases anti-invention rules;
+- exact quote and no-paraphrase requirements;
+- no step-by-step reasoning and no candidate list rules;
 - bounded proposal-only `AgentSpec`;
 - TXT import and idempotency dry-run;
 - `ContextBuilder` selected chunk wiring;
@@ -48,6 +74,24 @@ entity type, canonical name, aliases count, first evidence chunk id, quote match
 char-range match, sanitized provider diagnostics, and token counts when present.
 It does not write canonical StoryBible data and does not include source text,
 quote text, aliases, API keys, raw provider responses, or `message.content`.
+
+The unified NarrativeAnalyst API/console summary for `entity_extraction`
+includes only sanitized mode-specific fields:
+
+```text
+proposal_id
+entity_type
+canonical_name
+aliases_count
+confidence
+evidence_chunk_id
+quote_matched
+char_range_matched
+```
+
+The full Proposal JSON may be shown in the console's collapsible Proposal area
+for the user's manual evaluation. Do not commit or paste Proposal quotes,
+complete source text, raw provider responses, or API keys.
 
 ## Manual Real Eval Status
 
@@ -82,6 +126,26 @@ Recommended manual sequence:
 Each run should record only sanitized status fields such as schema validity,
 evidence validity, quote match, entity type quality, canonical name quality, and
 overall pass/fail.
+
+Manual quality checklist:
+
+```text
+is_entity
+entity_type_correct
+canonical_name_correct
+evidence_supports_entity
+salient_entity
+manual_score
+manual_issue
+```
+
+Prompt triage hints:
+
+- aliases invented: tighten aliases rules;
+- canonical_name too long or invented: tighten canonical_name rules;
+- wrong entity_type: update the type decision table;
+- `quote_matched=false`: tighten exact quote and no-paraphrase rules;
+- event or claim extracted as entity: tighten mode boundary and selection rules.
 
 Dry-run command:
 

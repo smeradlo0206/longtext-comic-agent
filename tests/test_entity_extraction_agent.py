@@ -89,6 +89,81 @@ def test_entity_extraction_agent_prompt_sets_entity_boundaries() -> None:
         assert expected in prompt
 
 
+def test_entity_extraction_agent_prompt_prevents_long_reasoning() -> None:
+    provider = FakeProvider()
+    agent = EntityExtractionAgent(provider)
+
+    agent.run(
+        {
+            "project_id": "project-1",
+            "source_chunk_ids": ["chunk-1"],
+            "source_chunks": [{"chunk_id": "chunk-1", "text": "Young Master Lin."}],
+        }
+    )
+
+    prompt = str(provider.requests[0]["system_prompt"])
+    for expected in [
+        "Do not reason step by step.",
+        "Do not list candidate entities.",
+        "Do not explain your choice.",
+        "Return EntityProposalV1 JSON only.",
+    ]:
+        assert expected in prompt
+
+
+def test_entity_extraction_agent_prompt_defines_entity_type_decision_table() -> None:
+    provider = FakeProvider()
+    agent = EntityExtractionAgent(provider)
+
+    agent.run(
+        {
+            "project_id": "project-1",
+            "source_chunk_ids": ["chunk-1"],
+            "source_chunks": [{"chunk_id": "chunk-1", "text": "Young Master Lin."}],
+        }
+    )
+
+    prompt = str(provider.requests[0]["system_prompt"])
+    for expected in [
+        "CHARACTER: people, beasts, monsters, or actor-like beings",
+        "LOCATION: places, regions, sect sites, or spaces",
+        "ORGANIZATION: sects, dynasties, factions, families, or teams",
+        "OBJECT / PROP: objects, artifacts, weapons, tokens, pills, or props",
+        "ABILITY / TECHNIQUE: cultivation methods, source arts, moves",
+        "CONCEPT / WORLD_RULE: world rules, cultivation concepts, systems",
+        "Do not treat ordinary actions, event results, or character judgments as entities.",
+    ]:
+        assert expected in prompt
+
+
+def test_entity_extraction_agent_prompt_hardens_names_aliases_and_evidence() -> None:
+    provider = FakeProvider()
+    agent = EntityExtractionAgent(provider)
+
+    agent.run(
+        {
+            "project_id": "project-1",
+            "source_chunk_ids": ["chunk-1"],
+            "source_chunks": [{"chunk_id": "chunk-1", "text": "Young Master Lin."}],
+        }
+    )
+
+    prompt = str(provider.requests[0]["system_prompt"])
+    for expected in [
+        "canonical_name must come from source text or be directly supported by source text.",
+        "Do not invent or complete missing names.",
+        "Do not use a long description as canonical_name.",
+        "aliases may only contain explicit aliases or forms of address present in source text.",
+        "Do not infer aliases.",
+        "Do not put identity descriptions, adjectives, or relationship descriptions in aliases.",
+        "If there are no explicit aliases, use aliases=[].",
+        "quote_text must be copied verbatim from the selected source chunk.",
+        "Do not paraphrase, summarize, translate, merge, or rewrite quote_text.",
+        "Prefer a 2-40 Chinese character quote",
+    ]:
+        assert expected in prompt
+
+
 def test_entity_extraction_agent_spec_is_bounded_and_proposal_only() -> None:
     spec = EntityExtractionAgent.spec
 

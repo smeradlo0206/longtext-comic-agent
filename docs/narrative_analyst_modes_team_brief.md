@@ -309,7 +309,7 @@ web_console 测试页面已接入
 
 中文名：实体抽取
 
-当前状态：v0.1 已完成，fake provider 自动测试、smoke dry-run/real opt-in 路径、1/2/3 chunk 手动真实 LLM 评估均已通过。
+当前状态：v0.1 已完成并强化，fake provider 自动测试、smoke dry-run/real opt-in 路径、统一 NarrativeAnalyst API/Console 路径、1/2/3 chunk 手动真实 LLM 评估均已通过。
 
 开发文件：
 
@@ -365,7 +365,9 @@ EntityProposalV1
 8. smoke dry-run 覆盖 TXT 导入、import idempotency、ContextBuilder、脱敏 summary
 9. real smoke 只在 ENABLE_REAL_LLM=true 且显式 --enable-real-llm 时调用 provider
 10. deepseek-v4-pro 手动真实 LLM 1/2/3 chunk eval 已通过
-11. 不写 StoryBible
+11. prompt 已强化 entity_type 决策、canonical_name、aliases、exact quote、no reasoning 规则
+12. Narrative Analyst Console 已支持 entity_extraction，并提供 entity 人工评估 checklist
+13. 不写 StoryBible
 ```
 
 手动真实 LLM 评估结论：
@@ -379,6 +381,28 @@ EntityProposalV1
 6. char_range_matched 在 quote_start/quote_end 省略时可以为 null。
 7. 观察到 CHARACTER 和 ORGANIZATION；canonical_name 非空；本轮 aliases_count=0。
 8. 只记录脱敏结果，不粘贴 API key、真实原文、长 quote、raw provider response 或 message.content。
+```
+
+人工评估 checklist：
+
+```text
+is_entity
+entity_type_correct
+canonical_name_correct
+evidence_supports_entity
+salient_entity
+manual_score
+manual_issue
+```
+
+失败后 prompt triage：
+
+```text
+aliases 被编造 -> 修 aliases 规则
+canonical_name 太长/编造 -> 修 canonical_name 规则
+entity_type 错 -> 修 type decision table
+quote_matched=false -> 修 exact quote
+把事件/claim 当实体 -> 修 mode boundary
 ```
 
 ### 3. claim_extraction
@@ -624,7 +648,7 @@ tests/test_relationship_signal_extraction_agent.py
 ```text
 1. event_extraction: 已完成
 2. entity_extraction: 已完成
-3. claim_extraction
+3. claim_extraction: 已完成
 4. knowledge_state_extraction
 5. state_change_extraction
 6. relationship_signal_extraction

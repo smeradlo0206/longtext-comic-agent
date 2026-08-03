@@ -268,6 +268,18 @@ entity_extraction: proposal_id, entity_type, canonical_name, aliases_count, conf
 claim_extraction: proposal_id, claim_type, source_type, verification_status, confidence, evidence_chunk_id
 ```
 
+For `entity_extraction`, manual review should score:
+
+```text
+is_entity
+entity_type_correct
+canonical_name_correct
+evidence_supports_entity
+salient_entity
+manual_score
+manual_issue
+```
+
 `manual_score` and `manual_issue` are placeholders for the human evaluator.
 They remain null in automated output unless a reviewer edits a local copy of the
 summary. Do not commit edited summaries from `output/`.
@@ -371,6 +383,10 @@ Use `failure_category` and `recommended_action` as triage hints:
   constraints;
 - schema failures usually mean inspecting mode boundaries or provider JSON
   compatibility.
+- entity aliases invented: tighten aliases rules;
+- entity canonical name too long or invented: tighten canonical_name rules;
+- wrong entity type: refine the entity type decision table;
+- event or claim extracted as entity: tighten NarrativeAnalyst mode boundaries.
 
 ## Current Boundary
 
