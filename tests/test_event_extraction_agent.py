@@ -139,6 +139,70 @@ def test_event_extraction_user_prompt_is_concise_and_context_focused() -> None:
     assert "ClaimProposalV1" not in user_prompt
 
 
+def test_event_extraction_prompt_requires_summary_supported_by_quote() -> None:
+    provider = FakeProvider()
+    agent = EventExtractionAgent(provider)
+
+    agent.run(
+        {
+            "project_id": "project-1",
+            "source_chunk_ids": ["chunk-1"],
+            "source_chunks": [{"chunk_id": "chunk-1", "text": "First source chunk."}],
+        }
+    )
+
+    prompt = str(provider.requests[0]["system_prompt"])
+    assert (
+        "summary must only state facts directly supported by "
+        "evidence_refs[0].quote_text"
+    ) in prompt
+    assert "Every actor, action, object, and outcome mentioned in summary" in prompt
+    assert "directly inferable from the quote" in prompt
+    assert "If the quote only supports part of a larger event, narrow the summary" in prompt
+
+
+def test_event_extraction_prompt_forbids_merged_adjacent_events() -> None:
+    provider = FakeProvider()
+    agent = EventExtractionAgent(provider)
+
+    agent.run(
+        {
+            "project_id": "project-1",
+            "source_chunk_ids": ["chunk-1"],
+            "source_chunks": [{"chunk_id": "chunk-1", "text": "First source chunk."}],
+        }
+    )
+
+    prompt = str(provider.requests[0]["system_prompt"])
+    assert "Return exactly one event." in prompt
+    assert "Do not merge adjacent events into one proposal." in prompt
+    assert "choose the single most salient event" in prompt
+    assert "directly supported by one short quote" in prompt
+    assert (
+        "Do not combine action + later explanation/announcement/reaction into one event"
+        in prompt
+    )
+
+
+def test_event_extraction_prompt_discourages_joined_event_type_labels() -> None:
+    provider = FakeProvider()
+    agent = EventExtractionAgent(provider)
+
+    agent.run(
+        {
+            "project_id": "project-1",
+            "source_chunk_ids": ["chunk-1"],
+            "source_chunks": [{"chunk_id": "chunk-1", "text": "First source chunk."}],
+        }
+    )
+
+    prompt = str(provider.requests[0]["system_prompt"])
+    assert "event_type should name the single event" in prompt
+    assert "not a merged category" in prompt
+    assert "suppression_and_announcement" in prompt
+    assert "Avoid joined labels" in prompt
+
+
 def test_event_extraction_agent_spec_is_bounded_and_proposal_only() -> None:
     spec = EventExtractionAgent.spec
 
