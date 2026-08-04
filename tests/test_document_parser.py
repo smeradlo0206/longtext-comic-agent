@@ -171,6 +171,65 @@ def test_parser_preserves_existing_long_mixed_fixture() -> None:
     assert len(parsed.chunks) == LONG_EXPECTED_CHUNKS
 
 
+def test_parser_splits_long_webnovel_paragraph_into_reasonable_chunks() -> None:
+    long_body = "少年望向山门，听见钟声回荡。" * 240
+    parsed = DocumentParser().parse_txt(
+        project_id="project-1",
+        filename="webnovel.txt",
+        text=f"第一章 蟒雀吞龙\n\n{long_body}",
+    )
+
+    assert [chapter.title for chapter in parsed.chapters] == ["第一章 蟒雀吞龙"]
+    assert len(parsed.chunks) >= 3
+    assert all(0 < len(chunk.text) <= 1200 for chunk in parsed.chunks)
+    assert [chunk.order for chunk in parsed.chunks] == list(range(len(parsed.chunks)))
+
+
+def test_parser_prefers_sentence_boundaries_for_long_chunks() -> None:
+    long_body = "他停下脚步，确认石阶尽头仍有灯火。" * 260
+    parsed = DocumentParser().parse_txt(
+        project_id="project-1",
+        filename="webnovel.txt",
+        text=f"第一章 蟒雀吞龙\n\n{long_body}",
+    )
+
+    assert len(parsed.chunks) >= 3
+    sentence_endings = tuple("。！？；”’")
+    non_final_chunks = parsed.chunks[:-1]
+    assert non_final_chunks
+    assert sum(chunk.text.endswith(sentence_endings) for chunk in non_final_chunks) >= (
+        len(non_final_chunks) - 1
+    )
+
+
+def test_parser_char_ranges_survive_long_paragraph_splitting() -> None:
+    text = "第一章 蟒雀吞龙\r\n\r\n" + ("少年走过长街，风声从檐下掠过。" * 230)
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    parsed = DocumentParser().parse_txt(
+        project_id="project-1",
+        filename="webnovel.txt",
+        text=text,
+    )
+
+    assert len(parsed.chunks) >= 3
+    for chunk in parsed.chunks:
+        assert chunk.char_start is not None
+        assert chunk.char_end is not None
+        assert normalized[chunk.char_start : chunk.char_end] == chunk.text
+
+
+def test_parser_preserves_blank_paragraph_chunking_for_short_text() -> None:
+    parsed = DocumentParser().parse_txt(
+        project_id="project-1",
+        filename="demo.txt",
+        text="第一章 蟒雀吞龙\n\n第一段。\n\n第二段。\n\n第三段。",
+    )
+
+    assert [chunk.text for chunk in parsed.chunks] == ["第一段。", "第二段。", "第三段。"]
+    assert [chunk.order for chunk in parsed.chunks] == [0, 1, 2]
+
+
 def test_parser_detects_standalone_roman_numeral_chapters_without_toc_matches() -> None:
     parsed = DocumentParser().parse_txt(
         project_id="project-1",
