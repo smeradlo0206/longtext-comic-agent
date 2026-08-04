@@ -8,6 +8,10 @@ from comic_agent.services.id_service import checksum_text, stable_id
 
 _CHINESE_NUMERAL = "零〇一二三四五六七八九十百千万两0-9０-９"
 _TITLE_MAX_CHARS = 80
+_MIN_SENTENCE_CHUNK_CHARS = 800
+_MAX_CHARS_PER_CHUNK = 1200
+_MAX_SENTENCE_LOOKAHEAD_CHARS = 1500
+_SENTENCE_ENDINGS = frozenset("。！？；”’。!?;.")
 _NOISE_PREFIX_RE = re.compile(r"^(?:正文卷|正文|VIP章节|免费章节)\s*")
 CHAPTER_RE = re.compile(
     rf"^(?:"
@@ -165,25 +169,81 @@ class DocumentParser:
     ) -> list[SourceChunkV1]:
         body = text[start:end]
         chunks: list[SourceChunkV1] = []
-        for match in re.finditer(r"\S(?:.*(?:\n(?!\s*\n).*)*)", body):
-            chunk_text = match.group(0).strip("\n")
-            if not chunk_text.strip():
-                continue
-            char_start = start + match.start()
-            char_end = char_start + len(chunk_text)
-            order = starting_order + len(chunks)
-            chunks.append(
-                SourceChunkV1(
-                    chunk_id=stable_id("chunk", document_id, order, checksum_text(chunk_text)),
-                    document_id=document_id,
-                    chapter_id=stable_id("chapter", document_id, chapter_order, chapter_title),
-                    project_id=project_id,
-                    order=order,
-                    text=chunk_text,
-                    source_page=None,
-                    char_start=char_start,
-                    char_end=char_end,
-                    checksum=checksum_text(chunk_text),
+        for paragraph_start, paragraph_text in self._paragraph_spans(body):
+            for span_start, span_end in self._split_long_span(paragraph_text):
+                chunk_text = paragraph_text[span_start:span_end].strip("\n")
+                if not chunk_text.strip():
+                    continue
+                leading_newlines = len(paragraph_text[span_start:span_end]) - len(
+                    paragraph_text[span_start:span_end].lstrip("\n")
                 )
-            )
+                trailing_newlines = len(paragraph_text[span_start:span_end]) - len(
+                    paragraph_text[span_start:span_end].rstrip("\n")
+                )
+                char_start = start + paragraph_start + span_start + leading_newlines
+                char_end = start + paragraph_start + span_end - trailing_newlines
+                order = starting_order + len(chunks)
+                chunks.append(
+                    SourceChunkV1(
+                        chunk_id=stable_id(
+                            "chunk",
+                            document_id,
+                            order,
+                            checksum_text(chunk_text),
+                        ),
+                        document_id=document_id,
+                        chapter_id=stable_id("chapter", document_id, chapter_order, chapter_title),
+                        project_id=project_id,
+                        order=order,
+                        text=chunk_text,
+                        source_page=None,
+                        char_start=char_start,
+                        char_end=char_end,
+                        checksum=checksum_text(chunk_text),
+                    )
+                )
         return chunks
+
+    def _paragraph_spans(self, body: str) -> list[tuple[int, str]]:
+        spans: list[tuple[int, str]] = []
+        for match in re.finditer(r"\S(?:.*(?:\n(?!\s*\n).*)*)", body):
+            raw_text = match.group(0)
+            leading_newlines = len(raw_text) - len(raw_text.lstrip("\n"))
+            trailing_newlines = len(raw_text) - len(raw_text.rstrip("\n"))
+            paragraph_text = raw_text.strip("\n")
+            if not paragraph_text.strip():
+                continue
+            paragraph_start = match.start() + leading_newlines
+            paragraph_end = match.end() - trailing_newlines
+            spans.append((paragraph_start, body[paragraph_start:paragraph_end]))
+        return spans
+
+    def _split_long_span(self, text: str) -> list[tuple[int, int]]:
+        spans: list[tuple[int, int]] = []
+        start = 0
+        while start < len(text):
+            remaining = len(text) - start
+            if remaining <= _MAX_CHARS_PER_CHUNK:
+                spans.append((start, len(text)))
+                break
+
+            split_at = self._find_sentence_boundary(text, start)
+            spans.append((start, split_at))
+            start = split_at
+            while start < len(text) and text[start] == "\n":
+                start += 1
+        return spans
+
+    def _find_sentence_boundary(self, text: str, start: int) -> int:
+        preferred_start = min(start + _MIN_SENTENCE_CHUNK_CHARS, len(text))
+        preferred_end = min(start + _MAX_CHARS_PER_CHUNK, len(text))
+        for index in range(preferred_end - 1, preferred_start - 1, -1):
+            if text[index] in _SENTENCE_ENDINGS:
+                return index + 1
+
+        lookahead_end = min(start + _MAX_SENTENCE_LOOKAHEAD_CHARS, len(text))
+        for index in range(preferred_end, lookahead_end):
+            if text[index] in _SENTENCE_ENDINGS:
+                return min(index + 1, start + _MAX_CHARS_PER_CHUNK)
+
+        return min(start + _MAX_CHARS_PER_CHUNK, len(text))
