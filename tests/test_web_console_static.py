@@ -49,3 +49,27 @@ def test_web_console_static_html_exposes_demo_controls_without_local_secrets() -
     assert "sanitizedChunkDetail" in html
     assert "evidenceSnippet" in html
     assert "raw_output" in html
+
+
+def test_web_console_does_not_default_to_demo_project_after_refresh() -> None:
+    html = Path("web_console/index.html").read_text(encoding="utf-8")
+
+    assert 'id="projectId" value="demo-project"' not in html
+    assert "initializeProjectId" in html
+    assert "localStorage" in html
+    assert "comic-agent-project-id" in html
+
+
+def test_web_console_can_restore_narrative_proposal_from_agent_run_detail() -> None:
+    html = Path("web_console/index.html").read_text(encoding="utf-8")
+
+    assert "renderNarrativeResultFromRunDetail" in html
+    assert 'data.agent_name.startsWith("narrative-analyst:")' in html
+    assert "data.proposal ?? data.provider_result?.structured_output ?? null" in html
+
+
+def test_web_console_manual_review_empty_values_are_explained_in_chinese() -> None:
+    html = Path("web_console/index.html").read_text(encoding="utf-8")
+
+    assert "待人工填写" in html
+    assert "? \"manual\"" not in html
