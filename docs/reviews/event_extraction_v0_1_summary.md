@@ -107,6 +107,19 @@ Do not paste or commit:
 Use `docs/reviews/event_extraction_eval_template.md` for future sanitized
 manual-evaluation reports.
 
+## Manual Evidence Alignment
+
+`quote_matched=true` only proves that `EvidenceRefV1.quote_text` exists in the
+selected chunk. Human review must also check whether the quote fully supports
+the event summary.
+
+For `evidence_supports_event`, verify that the quote directly supports every
+actor, action, object, and outcome named in `summary`. If the quote supports
+only part of the proposed event, mark the item as partial and keep
+`manual_score <= 4`. If the summary merges adjacent events, such as an action
+plus a later explanation, announcement, or reaction, record `manual_issue` and
+treat the proposal as needing prompt or selection review.
+
 ## Website-Ready Audit APIs
 
 A future committed website can consume the existing backend audit APIs:
