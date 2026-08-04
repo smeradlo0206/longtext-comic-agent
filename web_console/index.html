@@ -425,7 +425,7 @@
           <input id="apiBase" value="http://127.0.0.1:8000" />
         </label>
         <label>Project ID
-          <input id="projectId" value="demo-project" />
+          <input id="projectId" placeholder="manual-eval-YYYYMMDD" />
         </label>
         <label>访问码
           <input id="accessCode" type="password" autocomplete="off" />
@@ -563,6 +563,7 @@
               </div>
               <div>
                 <h3>Manual Review Checklist</h3>
+                <p class="muted">这些字段需要人工复核，不是模型自动判断结果。</p>
                 <div id="manualReviewChecklist"></div>
               </div>
             </div>
@@ -627,6 +628,7 @@
     const api = () => $("apiBase").value.replace(/\/$/, "");
     const projectId = () => $("projectId").value.trim();
     const accessCode = () => $("accessCode").value;
+    const projectStorageKey = "comic-agent-project-id";
 
     const capabilities = [
       ["TXT import", "UTF-8 text upload"],
@@ -678,6 +680,24 @@
       return JSON.stringify(data, null, 2);
     }
 
+    function defaultProjectId() {
+      const now = new Date();
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, "0");
+      const dd = String(now.getDate()).padStart(2, "0");
+      return `manual-eval-${yyyy}${mm}${dd}`;
+    }
+
+    function initializeProjectId() {
+      const saved = localStorage.getItem(projectStorageKey);
+      $("projectId").value = saved || defaultProjectId();
+    }
+
+    function rememberProjectId() {
+      const value = projectId();
+      if (value) localStorage.setItem(projectStorageKey, value);
+    }
+
     async function refreshStatus() {
       const data = await request("/demo/status");
       state.requireAccessCode = data.require_access_code;
@@ -712,6 +732,7 @@
     }
 
     async function createProject() {
+      rememberProjectId();
       const data = await request("/projects", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
@@ -723,6 +744,7 @@
     async function importTxt() {
       const file = $("txtFile").files[0];
       if (!file) throw new Error("请选择 TXT 文件。");
+      rememberProjectId();
       const form = new FormData();
       form.append("file", file);
       const data = await request(`/projects/${encodeURIComponent(projectId())}/documents/import`, {
@@ -735,6 +757,7 @@
     }
 
     async function loadChapters() {
+      rememberProjectId();
       const chapters = await request(`/projects/${encodeURIComponent(projectId())}/chapters`);
       state.chapters = chapters;
       $("chapterTable").innerHTML = table(
@@ -1005,7 +1028,7 @@
     function renderManualReviewChecklist(checklist) {
       const rows = Object.entries(checklist).map(([key, value]) => [
         `<span class="mono">${escapeHtml(key)}</span>`,
-        value === null || value === undefined ? "manual" : escapeHtml(value)
+        value === null || value === undefined ? "待人工填写" : escapeHtml(value)
       ]);
       $("manualReviewChecklist").innerHTML = table(["field", "value"], rows);
     }
@@ -1031,7 +1054,72 @@
     async function loadRunDetail(agentRunId) {
       const data = await request(`/agent-runs/${encodeURIComponent(agentRunId)}`);
       $("runDetail").textContent = pretty(sanitizeRunDetail(data));
+      if (data.agent_name.startsWith("narrative-analyst:")) {
+        renderNarrativeResultFromRunDetail(data);
+      }
       await loadEvidence(agentRunId);
+    }
+
+    function renderNarrativeResultFromRunDetail(data) {
+      const mode = String(data.agent_name || "").replace("narrative-analyst:", "");
+      const proposal = data.proposal ?? data.provider_result?.structured_output ?? null;
+      renderNarrativeResult({
+        mode,
+        dry_run: false,
+        agent_run_saved: true,
+        agent_run_id: data.agent_run_id,
+        agent_run_status: data.status,
+        provider_result_id: data.provider_result?.provider_result_id ?? null,
+        provider_success: data.provider_result?.success ?? null,
+        provider_error_diagnostics: null,
+        output_schema: data.output_schema,
+        schema_validation_passed: proposal !== null,
+        evidence_validation_passed: data.evidence_validation_passed,
+        quote_matched: null,
+        char_range_matched: null,
+        error_message: data.error_message,
+        failure_category: data.status === "FAILED" ? "SEE_AGENT_RUN_DETAIL" : null,
+        recommended_action: data.status === "FAILED" ? "查看 AgentRun 审计中的 error_message" : null,
+        proposal,
+        manual_review_checklist: manualReviewTemplateForMode(mode)
+      });
+      showLog("已将 Narrative AgentRun 详情回填到 Full Proposal JSON。");
+    }
+
+    function manualReviewTemplateForMode(mode) {
+      if (mode === "event_extraction") {
+        return {
+          is_event: null,
+          event_type_correct: null,
+          evidence_supports_event: null,
+          salient_event: null,
+          manual_score: null,
+          manual_issue: null
+        };
+      }
+      if (mode === "entity_extraction") {
+        return {
+          is_entity: null,
+          entity_type_correct: null,
+          canonical_name_correct: null,
+          evidence_supports_entity: null,
+          salient_entity: null,
+          manual_score: null,
+          manual_issue: null
+        };
+      }
+      if (mode === "claim_extraction") {
+        return {
+          is_claim: null,
+          claim_type_correct: null,
+          source_type_correct: null,
+          evidence_supports_claim: null,
+          salient_claim: null,
+          manual_score: null,
+          manual_issue: null
+        };
+      }
+      return {manual_score: null, manual_issue: null};
     }
 
     function sanitizeRunDetail(data) {
@@ -1108,8 +1196,12 @@
     $("refreshNarrativeRuns").addEventListener("click", () => loadRuns().catch((error) => showLog(error.message)));
     $("loadRuns").addEventListener("click", () => loadRuns().catch((error) => showLog(error.message)));
     $("narrativeChunkIds").addEventListener("input", () => renderNarrativeSelectedChunks());
-    $("projectId").addEventListener("input", () => clearSelectedChunks());
+    $("projectId").addEventListener("input", () => {
+      rememberProjectId();
+      clearSelectedChunks();
+    });
 
+    initializeProjectId();
     renderCapabilities();
     renderSelected();
     refreshStatus().catch(() => showLog("后端未启动。请先运行 uv run uvicorn comic_agent.main:app --reload"));
