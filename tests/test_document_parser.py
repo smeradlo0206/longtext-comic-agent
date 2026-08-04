@@ -64,6 +64,113 @@ def test_parser_detects_english_chapters() -> None:
     ]
 
 
+def test_parser_detects_webnovel_prefixed_chapters() -> None:
+    parsed = DocumentParser().parse_txt(
+        project_id="project-1",
+        filename="webnovel.txt",
+        text=(
+            "正文 第一章 蟒雀吞龙\n\n"
+            "第一段。\n\n"
+            "正文 第二章 源纹\n\n"
+            "第二段。\n\n"
+            "正文 第一百六十章 风雷成，夭夭伤\n\n"
+            "第三段。"
+        ),
+    )
+
+    assert [chapter.title for chapter in parsed.chapters] == [
+        "第一章 蟒雀吞龙",
+        "第二章 源纹",
+        "第一百六十章 风雷成，夭夭伤",
+    ]
+    assert [chunk.text for chunk in parsed.chunks] == ["第一段。", "第二段。", "第三段。"]
+
+
+def test_parser_detects_webnovel_volume_and_preface_headings() -> None:
+    parsed = DocumentParser().parse_txt(
+        project_id="project-1",
+        filename="webnovel.txt",
+        text=(
+            "\ufeff楔子\n\n"
+            "楔子正文。\n\n"
+            "序章\n\n"
+            "序章正文。\n\n"
+            "卷一 少年游\n\n"
+            "卷一正文。\n\n"
+            "第一卷 少年游\n\n"
+            "第一卷正文。\n\n"
+            "第一篇 开端\n\n"
+            "第一篇正文。"
+        ),
+    )
+
+    assert [chapter.title for chapter in parsed.chapters] == [
+        "楔子",
+        "序章",
+        "卷一 少年游",
+        "第一卷 少年游",
+        "第一篇 开端",
+    ]
+
+
+def test_parser_detects_hui_and_section_headings() -> None:
+    parsed = DocumentParser().parse_txt(
+        project_id="project-1",
+        filename="webnovel.txt",
+        text=(
+            "第一回 风起\n\n"
+            "第一回正文。\n\n"
+            "第1回 风起\n\n"
+            "第1回正文。\n\n"
+            "第一节 课堂\n\n"
+            "第一节正文。\n\n"
+            "第1节 课堂\n\n"
+            "第1节正文。"
+        ),
+    )
+
+    assert [chapter.title for chapter in parsed.chapters] == [
+        "第一回 风起",
+        "第1回 风起",
+        "第一节 课堂",
+        "第1节 课堂",
+    ]
+
+
+def test_parser_does_not_detect_chapter_words_inside_body() -> None:
+    parsed = DocumentParser().parse_txt(
+        project_id="project-1",
+        filename="body.txt",
+        text=(
+            "他说，第一章并不等于真相。\n\n"
+            "她在笔记里写下 Chapter 9 is not a heading.\n\n"
+            "他翻到第一章时已经天亮。\n\n"
+            "“正文 第一章”这几个字只是出现在对话里。"
+        ),
+    )
+
+    assert [chapter.title for chapter in parsed.chapters] == ["Default Chapter"]
+    assert [chunk.text for chunk in parsed.chunks] == [
+        "他说，第一章并不等于真相。",
+        "她在笔记里写下 Chapter 9 is not a heading.",
+        "他翻到第一章时已经天亮。",
+        "“正文 第一章”这几个字只是出现在对话里。",
+    ]
+
+
+def test_parser_preserves_existing_long_mixed_fixture() -> None:
+    text = LONG_FIXTURE.read_text(encoding="utf-8")
+
+    parsed = DocumentParser().parse_txt(
+        project_id="project-1",
+        filename="long_mixed_chapters.txt",
+        text=text,
+    )
+
+    assert [chapter.title for chapter in parsed.chapters] == LONG_EXPECTED_TITLES
+    assert len(parsed.chunks) == LONG_EXPECTED_CHUNKS
+
+
 def test_parser_detects_standalone_roman_numeral_chapters_without_toc_matches() -> None:
     parsed = DocumentParser().parse_txt(
         project_id="project-1",

@@ -6,9 +6,18 @@ from dataclasses import dataclass
 from comic_agent.schemas.source import SourceChapterV1, SourceChunkV1, SourceDocumentV1
 from comic_agent.services.id_service import checksum_text, stable_id
 
+_CHINESE_NUMERAL = "零〇一二三四五六七八九十百千万两0-9０-９"
+_TITLE_MAX_CHARS = 80
+_NOISE_PREFIX_RE = re.compile(r"^(?:正文卷|正文|VIP章节|免费章节)\s*")
 CHAPTER_RE = re.compile(
-    r"^\s*(第[一二三四五六七八九十百千0-9]+章.*|Chapter\s+\d+\b.*|Chapter\s+[IVXLCDM]+)\s*$",
-    re.IGNORECASE | re.MULTILINE,
+    rf"^(?:"
+    rf"(?:第[{_CHINESE_NUMERAL}]+[章节回卷篇]|卷[{_CHINESE_NUMERAL}]+)"
+    rf"(?:\s+\S.*)?"
+    rf"|(?:楔子|序章|前言|引子)(?:\s+\S.*)?"
+    rf"|Chapter\s+\d+\b(?:\s+\S.*)?"
+    rf"|Chapter\s+[IVXLCDM]+"
+    rf")$",
+    re.IGNORECASE,
 )
 
 
@@ -102,22 +111,46 @@ class DocumentParser:
         raise NotImplementedError("PDF parsing is reserved for a later MVP slice")
 
     def _find_chapters(self, text: str) -> list[_ChapterDraft]:
-        matches = list(CHAPTER_RE.finditer(text))
-        if not matches:
+        headings = self._find_heading_lines(text)
+        if not headings:
             return [_ChapterDraft(title="Default Chapter", start=0, end=len(text), order=0)]
 
         drafts: list[_ChapterDraft] = []
-        for index, match in enumerate(matches):
-            next_start = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        for index, (title, _title_start, body_start) in enumerate(headings):
+            next_start = headings[index + 1][1] if index + 1 < len(headings) else len(text)
             drafts.append(
                 _ChapterDraft(
-                    title=match.group(1).strip(),
-                    start=match.end(),
+                    title=title,
+                    start=body_start,
                     end=next_start,
                     order=index,
                 )
             )
         return drafts
+
+    def _find_heading_lines(self, text: str) -> list[tuple[str, int, int]]:
+        headings: list[tuple[str, int, int]] = []
+        offset = 0
+        for line in text.splitlines(keepends=True):
+            title = self._normalize_heading(line)
+            if title is not None:
+                headings.append((title, offset, offset + len(line)))
+            offset += len(line)
+        if offset < len(text):
+            title = self._normalize_heading(text[offset:])
+            if title is not None:
+                headings.append((title, offset, len(text)))
+        return headings
+
+    def _normalize_heading(self, line: str) -> str | None:
+        title = line.strip().lstrip("\ufeff").strip()
+        title = re.sub(r"[\s\u3000]+", " ", title)
+        title = _NOISE_PREFIX_RE.sub("", title).strip()
+        if not title or len(title) > _TITLE_MAX_CHARS:
+            return None
+        if CHAPTER_RE.fullmatch(title) is None:
+            return None
+        return title
 
     def _chunks_for_chapter(
         self,

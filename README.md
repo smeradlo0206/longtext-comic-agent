@@ -53,6 +53,8 @@ Internal hosted demo console:
 
 - Open `web_console/index.html` in a browser.
 - Start the API with `uv run uvicorn comic_agent.main:app --reload`.
+- TXT import recognizes common webnovel headings such as `正文 第一章 ...`,
+  `楔子`, `卷一 ...`, and `第一回 ...`.
 - Local demo access does not require an access code by default. For a shared
   hosted demo, set `INTERNAL_DEMO_REQUIRE_ACCESS_CODE=true` and configure
   `INTERNAL_DEMO_ACCESS_CODE` in local environment only.
