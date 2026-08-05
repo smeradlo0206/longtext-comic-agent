@@ -13,6 +13,7 @@ from comic_agent.providers.llm import LLMProvider
 from comic_agent.providers.openai_compatible import OpenAICompatibleLLMProvider
 from comic_agent.repositories.agent_run_repository import AgentRunRepository
 from comic_agent.repositories.source_repository import SourceRepository
+from comic_agent.schemas.narrative import EventProposalBatchV1
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.workflow import AgentRunStatus, AgentRunV1, ProviderResultV1, ProviderType
 from comic_agent.services.context_builder import AgentContext, ContextBuilder
@@ -378,8 +379,7 @@ class NarrativeAnalystWorkflow:
         provider_error_diagnostics: dict[str, object] | None,
         max_chars_per_chunk: int,
     ) -> AgentRunV1:
-        proposal_id = getattr(proposal, "proposal_id", None) if proposal is not None else None
-        output_proposal_ids = [str(proposal_id)] if proposal_id is not None else []
+        output_proposal_ids = self._proposal_ids(proposal)
         payload = {
             "input_context": {
                 "project_id": project_id,
@@ -451,6 +451,14 @@ class NarrativeAnalystWorkflow:
         summary["agent_run_id"] = agent_run.agent_run_id
         summary["agent_run_status"] = str(status)
         summary["provider_result_id"] = provider_result.provider_result_id
+
+    def _proposal_ids(self, proposal: BaseModel | None) -> list[str]:
+        if proposal is None:
+            return []
+        if isinstance(proposal, EventProposalBatchV1):
+            return [event.proposal_id for event in proposal.events]
+        proposal_id = getattr(proposal, "proposal_id", None)
+        return [str(proposal_id)] if proposal_id is not None else []
 
     def _stable_json(self, payload: dict[str, Any]) -> str:
         return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

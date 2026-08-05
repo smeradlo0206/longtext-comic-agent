@@ -4,7 +4,11 @@ from typing import Any
 
 from comic_agent.config import Settings
 from comic_agent.schemas.base import EvidenceRefV1, RealityLayer
-from comic_agent.schemas.narrative import ActorResolutionStatus, EventProposalV1
+from comic_agent.schemas.narrative import (
+    ActorResolutionStatus,
+    EventProposalBatchV1,
+    EventProposalV1,
+)
 from comic_agent.schemas.workflow import AgentRunStatus, AgentRunV1, ProviderResultV1, ProviderType
 from comic_agent.workflows.real_event_workflow import DETERMINISTIC_REAL_AUDIT_TIME
 from scripts.smoke_real_event_agent import run_smoke
@@ -116,13 +120,14 @@ class FakeSuccessfulWorkflow:
             confidence=0.82,
             reality_layer=RealityLayer.PRIMARY,
         )
+        batch = EventProposalBatchV1(batch_id="event-batch-smoke-1", events=[proposal])
         provider_result = ProviderResultV1(
             provider_result_id="provider-result-smoke-1",
             provider_name="ustc-openai-compatible",
             provider_type=ProviderType.LLM,
             model_name="deepseek-v4-pro",
-            output_schema="EventProposalV1",
-            structured_output=proposal.model_dump(mode="json"),
+            output_schema="EventProposalBatchV1",
+            structured_output=batch.model_dump(mode="json"),
             success=True,
             created_at=DETERMINISTIC_REAL_AUDIT_TIME,
         )
@@ -132,7 +137,7 @@ class FakeSuccessfulWorkflow:
             agent_name="event-extraction-agent",
             input_chunk_ids=chunk_ids,
             output_proposal_ids=[proposal.proposal_id],
-            output_schema="EventProposalV1",
+            output_schema="EventProposalBatchV1",
             provider_result_id=provider_result.provider_result_id,
             provider_result=provider_result,
             status=AgentRunStatus.SUCCEEDED,
@@ -140,11 +145,11 @@ class FakeSuccessfulWorkflow:
             completed_at=DETERMINISTIC_REAL_AUDIT_TIME,
             payload={
                 "provider_result": provider_result.model_dump(mode="json"),
-                "proposal": proposal.model_dump(mode="json"),
+                "proposal": batch.model_dump(mode="json"),
                 "evidence_validation_passed": True,
             },
         )
-        return type("FakeWorkflowResult", (), {"agent_run": agent_run, "proposal": proposal})()
+        return type("FakeWorkflowResult", (), {"agent_run": agent_run, "proposal": batch})()
 
 
 class FakeFailedDiagnosticWorkflow:
@@ -169,7 +174,7 @@ class FakeFailedDiagnosticWorkflow:
             provider_name="ustc-openai-compatible",
             provider_type=ProviderType.LLM,
             model_name="deepseek-v4-pro",
-            output_schema="EventProposalV1",
+            output_schema="EventProposalBatchV1",
             success=False,
             error_message="LLM provider response content is missing",
             created_at=DETERMINISTIC_REAL_AUDIT_TIME,
@@ -179,7 +184,7 @@ class FakeFailedDiagnosticWorkflow:
             project_id=project_id,
             agent_name="event-extraction-agent",
             input_chunk_ids=chunk_ids,
-            output_schema="EventProposalV1",
+            output_schema="EventProposalBatchV1",
             provider_result_id=provider_result.provider_result_id,
             provider_result=provider_result,
             status=AgentRunStatus.FAILED,
@@ -224,11 +229,11 @@ def test_smoke_real_event_agent_summary_includes_sanitized_success_details(
     assert summary["agent_run_status"] == "SUCCEEDED"
     assert summary["provider_result_id"] == "provider-result-smoke-1"
     assert summary["provider_success"] is True
-    assert summary["proposal_id"] == "proposal-smoke-1"
-    assert summary["confidence"] == 0.82
-    assert summary["actor_resolution_status"] == "KNOWN"
+    assert summary["batch_id"] == "event-batch-smoke-1"
+    assert summary["events_count"] == 1
+    assert summary["event_proposal_ids"] == ["proposal-smoke-1"]
+    assert summary["primary_event_type"] == "discovery"
     assert summary["schema_validation_passed"] is True
-    assert summary["evidence_chunk_id"] == summary["selected_chunk_ids"][0]
     assert summary["quote_matched"] is True
     assert summary["char_range_matched"] is True
     assert "secret-test-key" not in serialized

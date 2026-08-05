@@ -9,7 +9,8 @@ Phase 1. It remains bounded and proposal-only:
 
 - reads selected `SourceChunkV1` context through `ContextBuilder`;
 - calls external models only through the `LLMProvider` interface;
-- outputs only `EventProposalV1`;
+- outputs only `EventProposalBatchV1`, with 1 or more `EventProposalV1` records
+  in `events[]`;
 - does not write canonical StoryBible data;
 - validates evidence through `CommitService` in `RealEventWorkflow`;
 - records auditable `AgentRunV1` and `ProviderResultV1` data.
@@ -44,6 +45,12 @@ Sanitized campus-network manual evaluation results:
   it passed with schema, evidence, quote, and char-range validation.
 
 Conclusion: `EventExtractionAgent` v0.1 real eval passed up to 3 chunks.
+
+Current output contract: `event_extraction` always returns
+`EventProposalBatchV1`. The `events[]` count follows actual story events, not
+chunk count. One chunk may yield multiple events, while several chunks may yield
+one continuous event. Timeline and downstream agents should consume
+`proposal.events[]`.
 
 ## Recommended Manual Eval Settings
 
@@ -109,16 +116,18 @@ manual-evaluation reports.
 
 ## Manual Evidence Alignment
 
-`quote_matched=true` only proves that `EvidenceRefV1.quote_text` exists in the
-selected chunk. Human review must also check whether the quote fully supports
-the event summary.
+`quote_matched=true` only proves that each `EvidenceRefV1.quote_text` exists in
+the selected chunk. Human review must also check whether each quote fully
+supports its event summary.
 
-For `evidence_supports_event`, verify that the quote directly supports every
-actor, action, object, and outcome named in `summary`. If the quote supports
-only part of the proposed event, mark the item as partial and keep
-`manual_score <= 4`. If the summary merges adjacent events, such as an action
-plus a later explanation, announcement, or reaction, record `manual_issue` and
-treat the proposal as needing prompt or selection review.
+For batch review, score whether `events[]` covers the major plot points, whether
+the event count is reasonable, whether duplicate or invented events appear, and
+whether every event has supporting evidence. For each event, verify that the
+quote directly supports every actor, action, object, and outcome named in
+`summary`. If the quote supports only part of the proposed event, mark the item
+as partial and keep `manual_score <= 4`. If the summary merges adjacent events,
+such as an action plus a later explanation, announcement, or reaction, record
+`manual_issue` and treat the proposal as needing prompt or selection review.
 
 ## Website-Ready Audit APIs
 

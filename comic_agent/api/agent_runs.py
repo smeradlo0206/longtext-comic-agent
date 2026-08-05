@@ -11,7 +11,7 @@ from comic_agent.providers.mocks import MockLLMProvider
 from comic_agent.repositories.agent_run_repository import AgentRunRepository
 from comic_agent.repositories.source_repository import SourceRepository
 from comic_agent.schemas.base import RealityLayer
-from comic_agent.schemas.narrative import EventProposalV1
+from comic_agent.schemas.narrative import EventProposalBatchV1
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.workflow import AgentRunV1
 from comic_agent.services.id_service import checksum_text, stable_id
@@ -179,9 +179,10 @@ def get_agent_run_evidence(
         raise HTTPException(status_code=404, detail="AgentRun not found")
 
     proposal = run.payload.get("proposal")
-    evidence_refs = proposal.get("evidence_refs", []) if isinstance(proposal, dict) else []
+    evidence_refs = _proposal_evidence_refs(proposal)
     items = []
-    for evidence in evidence_refs:
+    for evidence_item in evidence_refs:
+        evidence = evidence_item["evidence"]
         if not isinstance(evidence, dict):
             continue
         chunk_id = str(evidence.get("chunk_id", ""))
@@ -200,6 +201,8 @@ def get_agent_run_evidence(
                 char_end = char_start + len(quote_text)
         items.append(
             {
+                "proposal_id": evidence_item.get("proposal_id"),
+                "event_type": evidence_item.get("event_type"),
                 "chunk_id": chunk_id,
                 "quote": quote_text[:40],
                 "char_start": char_start,
@@ -208,6 +211,34 @@ def get_agent_run_evidence(
             }
         )
     return {"items": items}
+
+
+def _proposal_evidence_refs(proposal: object) -> list[dict[str, Any]]:
+    if not isinstance(proposal, dict):
+        return []
+    events = proposal.get("events")
+    if isinstance(events, list):
+        items: list[dict[str, Any]] = []
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            for evidence in event.get("evidence_refs", []):
+                items.append(
+                    {
+                        "proposal_id": event.get("proposal_id"),
+                        "event_type": event.get("event_type"),
+                        "evidence": evidence,
+                    }
+                )
+        return items
+    return [
+        {
+            "proposal_id": proposal.get("proposal_id"),
+            "event_type": proposal.get("event_type"),
+            "evidence": evidence,
+        }
+        for evidence in proposal.get("evidence_refs", [])
+    ]
 
 
 def _project_chunks(
@@ -226,10 +257,11 @@ def _project_chunks(
 
 def _real_event_summary(
     agent_run: AgentRunV1,
-    proposal: EventProposalV1 | None,
+    proposal: EventProposalBatchV1 | None,
     selected_chunks: list[SourceChunkV1],
 ) -> dict[str, Any]:
     provider_result = agent_run.provider_result
+    first_event = proposal.events[0] if proposal else None
     summary: dict[str, Any] = {
         "agent_run_id": agent_run.agent_run_id,
         "agent_run_status": agent_run.status,
@@ -237,19 +269,24 @@ def _real_event_summary(
         "provider_success": provider_result.success if provider_result else None,
         "output_schema": agent_run.output_schema,
         "schema_validation_passed": proposal is not None,
-        "proposal_id": proposal.proposal_id if proposal else None,
-        "confidence": proposal.confidence if proposal else None,
-        "actor_resolution_status": proposal.actor_resolution_status if proposal else None,
+        "batch_id": proposal.batch_id if proposal else None,
+        "events_count": len(proposal.events) if proposal else None,
+        "event_proposal_ids": [event.proposal_id for event in proposal.events] if proposal else [],
+        "proposal_id": first_event.proposal_id if first_event else None,
+        "confidence": first_event.confidence if first_event else None,
+        "actor_resolution_status": (
+            first_event.actor_resolution_status if first_event else None
+        ),
         "evidence_validation_passed": agent_run.payload.get("evidence_validation_passed"),
         "evidence_chunk_id": None,
         "quote_matched": None,
         "char_range_matched": None,
         "error_message": agent_run.error_message,
     }
-    if proposal is None or not proposal.evidence_refs:
+    if first_event is None or not first_event.evidence_refs:
         return summary
 
-    evidence = proposal.evidence_refs[0]
+    evidence = first_event.evidence_refs[0]
     summary["evidence_chunk_id"] = evidence.chunk_id
     evidence_chunk = next(
         (chunk for chunk in selected_chunks if chunk.chunk_id == evidence.chunk_id),

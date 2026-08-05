@@ -41,15 +41,20 @@ class FakeProvider:
         chunk_id = str(request["input_context"]["source_chunk_ids"][0])  # type: ignore[index]
         return output_model.model_validate(
             {
-                "proposal_id": "proposal-1",
-                "event_type": "handoff",
-                "summary": "陈野把伞递给林夏。",
-                "participant_ids": ["char-chen", "char-lin"],
-                "actor_resolution_status": "KNOWN",
-                "location_id": None,
-                "evidence_refs": [{"chunk_id": chunk_id, "quote_text": self.quote_text}],
-                "confidence": 0.9,
-                "reality_layer": "PRIMARY",
+                "batch_id": "event-batch-1",
+                "events": [
+                    {
+                        "proposal_id": "proposal-1",
+                        "event_type": "handoff",
+                        "summary": "陈野把伞递给林夏。",
+                        "participant_ids": ["char-chen", "char-lin"],
+                        "actor_resolution_status": "KNOWN",
+                        "location_id": None,
+                        "evidence_refs": [{"chunk_id": chunk_id, "quote_text": self.quote_text}],
+                        "confidence": 0.9,
+                        "reality_layer": "PRIMARY",
+                    }
+                ],
             }
         )
 
