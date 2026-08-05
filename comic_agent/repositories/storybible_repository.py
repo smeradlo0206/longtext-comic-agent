@@ -1,0 +1,360 @@
+"""Project-scoped persistence for StoryBible resources and candidate plans."""
+
+from sqlalchemy import or_, select
+from sqlalchemy.orm import Session
+
+from comic_agent.database.models import (
+    CandidateCommitPlanModel,
+    StoryEntityProfileModel,
+    StoryEntityStateModel,
+    StoryRelationshipModel,
+    WorldRuleModel,
+)
+from comic_agent.schemas.storybible import (
+    CommitPlanV1,
+    ProfileUpdateProposalV1,
+    RelationshipUpdateProposalV1,
+    StateUpdateProposalV1,
+    StoryEntityProfileV1,
+    StoryEntityStateV1,
+    StoryRelationshipV1,
+    WorldRuleUpdateProposalV1,
+    WorldRuleV1,
+)
+
+type CanonicalResource = (
+    StoryEntityProfileV1 | StoryEntityStateV1 | StoryRelationshipV1 | WorldRuleV1
+)
+type CanonicalUpdate = (
+    ProfileUpdateProposalV1
+    | StateUpdateProposalV1
+    | RelationshipUpdateProposalV1
+    | WorldRuleUpdateProposalV1
+)
+type RelatedResource = StoryEntityStateV1 | StoryRelationshipV1
+UPDATE_TYPES = (
+    ProfileUpdateProposalV1,
+    StateUpdateProposalV1,
+    RelationshipUpdateProposalV1,
+    WorldRuleUpdateProposalV1,
+)
+
+
+class StoryBibleRepository:
+    """Data access layer that keeps all StoryBible queries project-scoped."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def save_candidate_plan(self, plan: CommitPlanV1) -> CommitPlanV1:
+        """Persist a candidate once per project and deterministic content hash."""
+
+        existing_hash = self._session.scalar(
+            select(CandidateCommitPlanModel).where(
+                CandidateCommitPlanModel.project_id == plan.project_id,
+                CandidateCommitPlanModel.content_hash == plan.content_hash,
+            )
+        )
+        if existing_hash is not None:
+            return self._plan_from_row(existing_hash)
+
+        existing_id = self._session.get(CandidateCommitPlanModel, plan.commit_plan_id)
+        if existing_id is not None:
+            if (
+                existing_id.project_id == plan.project_id
+                and existing_id.content_hash == plan.content_hash
+            ):
+                return self._plan_from_row(existing_id)
+            raise ValueError("commit_plan_id already belongs to a different plan")
+
+        self._session.add(
+            CandidateCommitPlanModel(
+                commit_plan_id=plan.commit_plan_id,
+                project_id=plan.project_id,
+                source_proposal_id=plan.source_proposal_id,
+                content_hash=plan.content_hash,
+                status="CANDIDATE",
+                payload=plan.model_dump(mode="json"),
+            )
+        )
+        self._session.commit()
+        return plan
+
+    def save_committed_plan(self, plan: CommitPlanV1) -> CommitPlanV1:
+        """Persist a plan if needed and mark it as committed idempotently."""
+
+        stored = self.save_candidate_plan(plan)
+        row = self._session.get(CandidateCommitPlanModel, stored.commit_plan_id)
+        if row is None:  # pragma: no cover - guarded by save_candidate_plan
+            raise RuntimeError("candidate plan was not persisted")
+        if row.status != "COMMITTED":
+            row.status = "COMMITTED"
+            self._session.commit()
+        return self._plan_from_row(row)
+
+    def get_plan(self, project_id: str, plan_id: str) -> CommitPlanV1 | None:
+        """Return a plan only when it belongs to the requested project."""
+
+        row = self._session.scalar(
+            select(CandidateCommitPlanModel).where(
+                CandidateCommitPlanModel.project_id == project_id,
+                CandidateCommitPlanModel.commit_plan_id == plan_id,
+            )
+        )
+        return None if row is None else self._plan_from_row(row)
+
+    def get_plan_by_content_hash(
+        self, project_id: str, content_hash: str
+    ) -> CommitPlanV1 | None:
+        """Return the existing project plan for a deterministic content hash."""
+
+        row = self._session.scalar(
+            select(CandidateCommitPlanModel).where(
+                CandidateCommitPlanModel.project_id == project_id,
+                CandidateCommitPlanModel.content_hash == content_hash,
+            )
+        )
+        return None if row is None else self._plan_from_row(row)
+
+    def get_profile(self, project_id: str, profile_id: str) -> StoryEntityProfileV1 | None:
+        """Return one profile only when it belongs to the requested project."""
+
+        row = self._session.scalar(
+            select(StoryEntityProfileModel).where(
+                StoryEntityProfileModel.project_id == project_id,
+                StoryEntityProfileModel.profile_id == profile_id,
+            )
+        )
+        return None if row is None else self._profile_from_row(row)
+
+    def find_profiles(self, project_id: str, query: str) -> list[StoryEntityProfileV1]:
+        """Find exact case-insensitive canonical-name or alias matches in one project."""
+
+        rows = self._session.scalars(
+            select(StoryEntityProfileModel)
+            .where(StoryEntityProfileModel.project_id == project_id)
+            .order_by(StoryEntityProfileModel.profile_id)
+        ).all()
+        normalized_query = query.casefold()
+        return [
+            profile
+            for profile in map(self._profile_from_row, rows)
+            if normalized_query
+            in {
+                profile.canonical_name.casefold(),
+                *(alias.casefold() for alias in profile.aliases),
+            }
+        ]
+
+    def list_states_at_event(
+        self,
+        project_id: str,
+        event_order: int,
+        profile_id: str | None = None,
+    ) -> list[StoryEntityStateV1]:
+        """Return states active at an inclusive story event order."""
+
+        statement = select(StoryEntityStateModel).where(
+            StoryEntityStateModel.project_id == project_id,
+            or_(
+                StoryEntityStateModel.valid_from_order.is_(None),
+                StoryEntityStateModel.valid_from_order <= event_order,
+            ),
+            or_(
+                StoryEntityStateModel.valid_until_order.is_(None),
+                StoryEntityStateModel.valid_until_order >= event_order,
+            ),
+        )
+        if profile_id is not None:
+            statement = statement.where(StoryEntityStateModel.profile_id == profile_id)
+        rows = self._session.scalars(statement.order_by(StoryEntityStateModel.state_id)).all()
+        return [StoryEntityStateV1.model_validate(row.payload) for row in rows]
+
+    def list_related_resources(
+        self, project_id: str, profile_id: str
+    ) -> list[RelatedResource]:
+        """Return canonical states and relationships connected to one profile."""
+
+        state_rows = self._session.scalars(
+            select(StoryEntityStateModel)
+            .where(
+                StoryEntityStateModel.project_id == project_id,
+                StoryEntityStateModel.profile_id == profile_id,
+            )
+            .order_by(StoryEntityStateModel.state_id)
+        ).all()
+        relationship_rows = self._session.scalars(
+            select(StoryRelationshipModel)
+            .where(
+                StoryRelationshipModel.project_id == project_id,
+                or_(
+                    StoryRelationshipModel.source_profile_id == profile_id,
+                    StoryRelationshipModel.target_profile_id == profile_id,
+                ),
+            )
+            .order_by(StoryRelationshipModel.relationship_id)
+        ).all()
+        states = [StoryEntityStateV1.model_validate(row.payload) for row in state_rows]
+        relationships = [
+            StoryRelationshipV1.model_validate(row.payload) for row in relationship_rows
+        ]
+        return [*states, *relationships]
+
+    def list_world_rules(self, project_id: str) -> list[WorldRuleV1]:
+        """Return canonical world rules owned by one project."""
+
+        rows = self._session.scalars(
+            select(WorldRuleModel)
+            .where(WorldRuleModel.project_id == project_id)
+            .order_by(WorldRuleModel.rule_id)
+        ).all()
+        return [WorldRuleV1.model_validate(row.payload) for row in rows]
+
+    def apply_canonical_update(
+        self, update: CanonicalResource | CanonicalUpdate, plan_id: str
+    ) -> CanonicalResource:
+        """Insert or revision-gate one canonical update idempotently."""
+
+        resource = self._unwrap_update(update)
+        if isinstance(update, UPDATE_TYPES) and update.project_id != resource.project_id:
+            raise ValueError("update and canonical resource must belong to the same project")
+        if isinstance(resource, StoryEntityProfileV1):
+            return self._apply_profile(resource, plan_id)
+        if isinstance(resource, StoryEntityStateV1):
+            return self._apply_state(resource, plan_id)
+        if isinstance(resource, StoryRelationshipV1):
+            return self._apply_relationship(resource, plan_id)
+        return self._apply_world_rule(resource, plan_id)
+
+    @staticmethod
+    def _unwrap_update(update: CanonicalResource | CanonicalUpdate) -> CanonicalResource:
+        if isinstance(update, ProfileUpdateProposalV1):
+            return update.profile
+        if isinstance(update, StateUpdateProposalV1):
+            return update.state
+        if isinstance(update, RelationshipUpdateProposalV1):
+            return update.relationship
+        if isinstance(update, WorldRuleUpdateProposalV1):
+            return update.world_rule
+        return update
+
+    def _apply_profile(
+        self, profile: StoryEntityProfileV1, plan_id: str
+    ) -> StoryEntityProfileV1:
+        row = self._session.get(StoryEntityProfileModel, profile.profile_id)
+        if row is None:
+            row = StoryEntityProfileModel(
+                profile_id=profile.profile_id,
+                project_id=profile.project_id,
+                entity_kind=str(profile.entity_kind),
+                canonical_name=profile.canonical_name,
+                revision=profile.revision,
+                last_plan_id=plan_id,
+                payload=profile.model_dump(mode="json"),
+            )
+            self._session.add(row)
+        else:
+            self._guard_project(row.project_id, profile.project_id)
+            if row.revision >= profile.revision:
+                return self._profile_from_row(row)
+            row.entity_kind = str(profile.entity_kind)
+            row.canonical_name = profile.canonical_name
+            row.revision = profile.revision
+            row.last_plan_id = plan_id
+            row.payload = profile.model_dump(mode="json")
+        self._session.commit()
+        return profile
+
+    def _apply_state(self, state: StoryEntityStateV1, plan_id: str) -> StoryEntityStateV1:
+        row = self._session.get(StoryEntityStateModel, state.state_id)
+        if row is None:
+            row = StoryEntityStateModel(
+                state_id=state.state_id,
+                project_id=state.project_id,
+                profile_id=state.profile_id,
+                valid_from_order=state.valid_from_order,
+                valid_until_order=state.valid_until_order,
+                revision=state.revision,
+                last_plan_id=plan_id,
+                payload=state.model_dump(mode="json"),
+            )
+            self._session.add(row)
+        else:
+            self._guard_project(row.project_id, state.project_id)
+            if row.revision >= state.revision:
+                return StoryEntityStateV1.model_validate(row.payload)
+            row.profile_id = state.profile_id
+            row.valid_from_order = state.valid_from_order
+            row.valid_until_order = state.valid_until_order
+            row.revision = state.revision
+            row.last_plan_id = plan_id
+            row.payload = state.model_dump(mode="json")
+        self._session.commit()
+        return state
+
+    def _apply_relationship(
+        self, relationship: StoryRelationshipV1, plan_id: str
+    ) -> StoryRelationshipV1:
+        row = self._session.get(StoryRelationshipModel, relationship.relationship_id)
+        if row is None:
+            row = StoryRelationshipModel(
+                relationship_id=relationship.relationship_id,
+                project_id=relationship.project_id,
+                source_profile_id=relationship.source_profile_id,
+                target_profile_id=relationship.target_profile_id,
+                valid_from_order=relationship.valid_from_order,
+                valid_until_order=relationship.valid_until_order,
+                revision=relationship.revision,
+                last_plan_id=plan_id,
+                payload=relationship.model_dump(mode="json"),
+            )
+            self._session.add(row)
+        else:
+            self._guard_project(row.project_id, relationship.project_id)
+            if row.revision >= relationship.revision:
+                return StoryRelationshipV1.model_validate(row.payload)
+            row.source_profile_id = relationship.source_profile_id
+            row.target_profile_id = relationship.target_profile_id
+            row.valid_from_order = relationship.valid_from_order
+            row.valid_until_order = relationship.valid_until_order
+            row.revision = relationship.revision
+            row.last_plan_id = plan_id
+            row.payload = relationship.model_dump(mode="json")
+        self._session.commit()
+        return relationship
+
+    def _apply_world_rule(self, rule: WorldRuleV1, plan_id: str) -> WorldRuleV1:
+        row = self._session.get(WorldRuleModel, rule.rule_id)
+        if row is None:
+            row = WorldRuleModel(
+                rule_id=rule.rule_id,
+                project_id=rule.project_id,
+                name=rule.name,
+                revision=rule.revision,
+                last_plan_id=plan_id,
+                payload=rule.model_dump(mode="json"),
+            )
+            self._session.add(row)
+        else:
+            self._guard_project(row.project_id, rule.project_id)
+            if row.revision >= rule.revision:
+                return WorldRuleV1.model_validate(row.payload)
+            row.name = rule.name
+            row.revision = rule.revision
+            row.last_plan_id = plan_id
+            row.payload = rule.model_dump(mode="json")
+        self._session.commit()
+        return rule
+
+    @staticmethod
+    def _guard_project(stored_project_id: str, incoming_project_id: str) -> None:
+        if stored_project_id != incoming_project_id:
+            raise ValueError("canonical resource id already belongs to another project")
+
+    @staticmethod
+    def _profile_from_row(row: StoryEntityProfileModel) -> StoryEntityProfileV1:
+        return StoryEntityProfileV1.model_validate(row.payload)
+
+    @staticmethod
+    def _plan_from_row(row: CandidateCommitPlanModel) -> CommitPlanV1:
+        return CommitPlanV1.model_validate(row.payload)
