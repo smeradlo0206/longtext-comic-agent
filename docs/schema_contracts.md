@@ -23,3 +23,16 @@ All V1 schemas use `schema_version = "1.0"` and live in `comic_agent/schemas`.
 | AgentRunV1 | Immutable record of one agent execution. | run id, project, input chunk, agent, status | Links one input chunk to an optional output proposal | API, audit services | Agent runner | N/A |
 
 Field types are implemented directly in Pydantic. The JSON Schema export script is the authoritative machine-readable contract.
+
+## StoryBible Task 1 Compatibility and Migration Note
+
+Task 1 additively introduces the public `schema_version = "1.0"` StoryBible contracts:
+`StoryBibleContextV1`, `StoryEntityProfileV1`, `StoryEntityStateV1`,
+`StoryRelationshipV1`, `WorldRuleV1`, the four StoryBible update proposal types,
+`StoryBibleUpdateV1`, `ConflictV1`, `CommitPlanV1`, and
+`StoryBibleCuratorProposalV1`. Existing V1 schemas and fields are unchanged, so this is a
+backward-compatible schema addition.
+
+Task 1 defines and exports Pydantic and JSON Schema contracts only. It makes no database
+schema change and requires no database migration. StoryBible persistence tables and their
+migration are deferred to the persistence task.
