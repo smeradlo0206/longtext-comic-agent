@@ -140,7 +140,7 @@ recommended_action
 mode-specific 字段：
 
 ```text
-event_extraction: proposal_id, event_type, actor_resolution_status, confidence, evidence_chunk_id
+event_extraction: batch_id, events_count, event_proposal_ids, primary_event_type, primary_event_summary, event_evidence_results
 entity_extraction: proposal_id, entity_type, canonical_name, aliases_count, confidence, evidence_chunk_id
 claim_extraction: proposal_id, claim_type, source_type, verification_status, confidence, evidence_chunk_id
 ```
@@ -173,7 +173,7 @@ POST /projects/{project_id}/agent-runs/narrative-analyst
 当前支持：
 
 ```text
-event_extraction -> EventProposalV1
+event_extraction -> EventProposalBatchV1
 entity_extraction -> EntityProposalV1
 claim_extraction -> ClaimProposalV1
 ```
@@ -221,7 +221,7 @@ claim_text、完整 chunk text、raw provider response、message.content、API k
 Manual Review Checklist 目前只展示 null 占位，不写回数据库：
 
 ```text
-event: is_event, event_type_correct, evidence_supports_event, salient_event
+event: events_cover_major_plot_points, event_count_reasonable, no_duplicate_events, no_invented_events, every_event_has_supporting_evidence, event_summaries_supported_by_quotes
 entity: is_entity, entity_type_correct, canonical_name_correct, evidence_supports_entity, salient_entity
 claim: is_claim, claim_type_correct, source_type_correct, evidence_supports_claim, salient_claim
 common: manual_score, manual_issue
@@ -246,7 +246,7 @@ mode 是 `NarrativeAnalyst` 内部能力分支，不再作为额外顶层 Agent 
 当前 implemented modes：
 
 ```text
-event_extraction -> EventProposalV1
+event_extraction -> EventProposalBatchV1
 entity_extraction -> EntityProposalV1
 claim_extraction -> ClaimProposalV1
 ```
@@ -291,7 +291,7 @@ tests/test_event_extraction_agent.py
 输出：
 
 ```text
-EventProposalV1
+EventProposalBatchV1
 ```
 
 输出内容：
@@ -305,6 +305,12 @@ EventProposalV1
 证据 EvidenceRef
 置信度
 ```
+
+`event_extraction` 统一返回一个 batch。batch 的 `events[]` 才是下游
+Timeline / temporal solver / state-change agent 应消费的事件列表。一个 chunk
+可以输出多个事件；多个 chunks 如果只叙述一个连续事件，也可以只输出一个事件。人工
+评估应检查事件覆盖率、数量是否合理、是否去重、是否无臆造，以及每个 summary 是否
+被自己的 quote_text 直接支持。
 
 当前完成情况：
 

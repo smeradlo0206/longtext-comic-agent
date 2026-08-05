@@ -11,7 +11,7 @@ from comic_agent.providers.llm import LLMProvider
 from comic_agent.providers.openai_compatible import OpenAICompatibleLLMProvider
 from comic_agent.repositories.agent_run_repository import AgentRunRepository
 from comic_agent.repositories.source_repository import SourceRepository
-from comic_agent.schemas.narrative import EventProposalV1
+from comic_agent.schemas.narrative import EventProposalBatchV1
 from comic_agent.schemas.workflow import AgentRunStatus, AgentRunV1, ProviderResultV1, ProviderType
 from comic_agent.services.commit_service import CommitService
 from comic_agent.services.context_builder import AgentContext, ContextBuilder
@@ -25,7 +25,7 @@ class RealEventWorkflowResult:
     """Result of one real event workflow attempt."""
 
     agent_run: AgentRunV1
-    proposal: EventProposalV1 | None
+    proposal: EventProposalBatchV1 | None
 
 
 class RealEventWorkflow:
@@ -64,7 +64,7 @@ class RealEventWorkflow:
             saved = self._agent_run_repository.save_agent_run(agent_run)
             return RealEventWorkflowResult(agent_run=saved, proposal=None)
 
-        proposal: EventProposalV1 | None = None
+        proposal: EventProposalBatchV1 | None = None
         provider_result: ProviderResultV1
         evidence_validation_passed = False
         error_message: str | None = None
@@ -75,7 +75,9 @@ class RealEventWorkflow:
             provider = self._provider or self._build_provider()
             proposal = EventExtractionAgent(provider).run(input_context)
             provider_result = self._provider_result(success=True, proposal=proposal)
-            CommitService(self._source_repository).validate_story_proposal_evidence(proposal)
+            commit_service = CommitService(self._source_repository)
+            for event in proposal.events:
+                commit_service.validate_story_proposal_evidence(event)
             evidence_validation_passed = True
         except (TimeoutError, ValueError) as exc:
             error_message = str(exc)
@@ -135,7 +137,7 @@ class RealEventWorkflow:
     def _provider_result(
         self,
         success: bool,
-        proposal: EventProposalV1 | None = None,
+        proposal: EventProposalBatchV1 | None = None,
         error_message: str | None = None,
     ) -> ProviderResultV1:
         structured_output = proposal.model_dump(mode="json") if proposal is not None else None
@@ -153,7 +155,7 @@ class RealEventWorkflow:
             provider_name=self._settings.llm_provider_name,
             provider_type=ProviderType.LLM,
             model_name=self._settings.llm_model,
-            output_schema="EventProposalV1",
+            output_schema=EventExtractionAgent.spec.output_schema,
             structured_output=structured_output,
             success=success,
             error_message=error_message,
@@ -185,13 +187,13 @@ class RealEventWorkflow:
         chunk_ids: list[str],
         input_context: dict[str, object],
         provider_result: ProviderResultV1,
-        proposal: EventProposalV1 | None,
+        proposal: EventProposalBatchV1 | None,
         status: AgentRunStatus,
         evidence_validation_passed: bool,
         error_message: str | None,
         provider_error_diagnostics: dict[str, object] | None,
     ) -> AgentRunV1:
-        output_proposal_ids = [proposal.proposal_id] if proposal is not None else []
+        output_proposal_ids = [event.proposal_id for event in proposal.events] if proposal else []
         payload = {
             "input_context": {
                 "project_id": project_id,
@@ -224,7 +226,7 @@ class RealEventWorkflow:
             agent_name=self._agent_id,
             input_chunk_ids=chunk_ids,
             output_proposal_ids=output_proposal_ids,
-            output_schema="EventProposalV1",
+            output_schema=EventExtractionAgent.spec.output_schema,
             provider_result_id=provider_result.provider_result_id,
             provider_result=provider_result,
             status=status,

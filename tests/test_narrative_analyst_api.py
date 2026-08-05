@@ -8,7 +8,11 @@ from pydantic import BaseModel
 
 from comic_agent.config import get_settings
 from comic_agent.main import create_app
-from comic_agent.schemas.narrative import ClaimProposalV1, EntityProposalV1, EventProposalV1
+from comic_agent.schemas.narrative import (
+    ClaimProposalV1,
+    EntityProposalV1,
+    EventProposalBatchV1,
+)
 
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
 
@@ -92,25 +96,48 @@ class FakeNarrativeProvider:
         quote = str(source_chunk["text"])[:3]
         chunk_id = str(source_chunk["chunk_id"])
 
-        if output_model is EventProposalV1:
+        if output_model is EventProposalBatchV1:
             return output_model.model_validate(
                 {
-                    "proposal_id": "event-console-1",
-                    "event_type": "demo_event",
-                    "summary": "开门",
-                    "participant_ids": [],
-                    "actor_resolution_status": "UNKNOWN",
-                    "location_id": None,
-                    "evidence_refs": [
+                    "batch_id": "event-batch-console-1",
+                    "events": [
                         {
-                            "chunk_id": chunk_id,
-                            "quote_start": 0,
-                            "quote_end": len(quote),
-                            "quote_text": quote,
-                        }
+                            "proposal_id": "event-console-1",
+                            "event_type": "demo_event",
+                            "summary": "开门",
+                            "participant_ids": [],
+                            "actor_resolution_status": "UNKNOWN",
+                            "location_id": None,
+                            "evidence_refs": [
+                                {
+                                    "chunk_id": chunk_id,
+                                    "quote_start": 0,
+                                    "quote_end": len(quote),
+                                    "quote_text": quote,
+                                }
+                            ],
+                            "confidence": 0.88,
+                            "reality_layer": "PRIMARY",
+                        },
+                        {
+                            "proposal_id": "event-console-2",
+                            "event_type": "second_event",
+                            "summary": "门后异响",
+                            "participant_ids": [],
+                            "actor_resolution_status": "UNKNOWN",
+                            "location_id": None,
+                            "evidence_refs": [
+                                {
+                                    "chunk_id": chunk_id,
+                                    "quote_start": 1,
+                                    "quote_end": len(quote),
+                                    "quote_text": quote[1:],
+                                }
+                            ],
+                            "confidence": 0.76,
+                            "reality_layer": "PRIMARY",
+                        },
                     ],
-                    "confidence": 0.88,
-                    "reality_layer": "PRIMARY",
                 }
             )
 
@@ -209,9 +236,9 @@ def import_text_and_collect_chunks(
 
 
 @pytest.mark.parametrize(
-    ("mode", "schema_name", "checklist_key"),
+        ("mode", "schema_name", "checklist_key"),
     [
-        ("event_extraction", "EventProposalV1", "is_event"),
+        ("event_extraction", "EventProposalBatchV1", "events_cover_major_plot_points"),
         ("entity_extraction", "EntityProposalV1", "is_entity"),
         ("claim_extraction", "ClaimProposalV1", "is_claim"),
     ],
@@ -263,10 +290,127 @@ def test_narrative_analyst_api_supports_implemented_modes(
     assert payload["quote_matched"] is True
     assert payload["proposal"] is not None
     assert payload["manual_review_checklist"][checklist_key] is None
+    if mode == "event_extraction":
+        assert payload["proposal"]["batch_id"] == "event-batch-console-1"
+        assert len(payload["proposal"]["events"]) == 2
+        assert payload["batch_id"] == "event-batch-console-1"
+        assert payload["events_count"] == 2
+        assert payload["event_proposal_ids"] == ["event-console-1", "event-console-2"]
+        assert payload["primary_event_type"] == "demo_event"
+        assert payload["primary_event_summary"] == "开门"
+        assert payload["event_evidence_results"] == [
+            {
+                "proposal_id": "event-console-1",
+                "event_type": "demo_event",
+                "evidence_chunk_id": chunks[0]["chunk_id"],
+                "quote_matched": True,
+                "char_range_matched": True,
+            },
+            {
+                "proposal_id": "event-console-2",
+                "event_type": "second_event",
+                "evidence_chunk_id": chunks[0]["chunk_id"],
+                "quote_matched": True,
+                "char_range_matched": True,
+            },
+        ]
+        assert detail_response.json()["proposal"]["events"][1]["proposal_id"] == "event-console-2"
+        assert len(evidence_response.json()["items"]) == 2
     assert detail_response.status_code == 200
     assert evidence_response.status_code == 200
     assert evidence_response.json()["items"]
     assert provider.calls == 1
+
+
+def test_narrative_analyst_api_event_batch_quote_mismatch_is_classified(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class FakeBatchMismatchProvider(FakeNarrativeProvider):
+        def structured_generate(
+            self,
+            request: dict[str, object],
+            output_model: type[OutputModelT],
+        ) -> OutputModelT:
+            self.calls += 1
+            input_context = request["input_context"]
+            assert isinstance(input_context, dict)
+            source_chunks = input_context["source_chunks"]
+            assert isinstance(source_chunks, list)
+            source_chunk = source_chunks[0]
+            assert isinstance(source_chunk, dict)
+            if output_model is EventProposalBatchV1:
+                return output_model.model_validate(
+                    {
+                        "batch_id": "event-batch-mismatch",
+                        "events": [
+                            {
+                                "proposal_id": "event-ok",
+                                "event_type": "demo_event",
+                                "summary": "开门",
+                                "participant_ids": [],
+                                "actor_resolution_status": "UNKNOWN",
+                                "location_id": None,
+                                "evidence_refs": [
+                                    {"chunk_id": source_chunk["chunk_id"], "quote_text": "林夏"}
+                                ],
+                                "confidence": 0.7,
+                                "reality_layer": "PRIMARY",
+                            },
+                            {
+                                "proposal_id": "event-bad",
+                                "event_type": "bad_event",
+                                "summary": "不存在事件",
+                                "participant_ids": [],
+                                "actor_resolution_status": "UNKNOWN",
+                                "location_id": None,
+                                "evidence_refs": [
+                                    {
+                                        "chunk_id": source_chunk["chunk_id"],
+                                        "quote_text": "not present in visible input",
+                                    }
+                                ],
+                                "confidence": 0.7,
+                                "reality_layer": "PRIMARY",
+                            },
+                        ],
+                    }
+                )
+            raise AssertionError(f"Unexpected output model: {output_model}")
+
+    provider = FakeBatchMismatchProvider(max_text_length=80)
+    try:
+        with create_test_client(
+            tmp_path,
+            monkeypatch,
+            enable_real_llm=True,
+            provider=provider,
+        ) as client:
+            chunks = setup_imported_project(client)
+            response = client.post(
+                "/projects/demo-project/agent-runs/narrative-analyst",
+                json={
+                    "mode": "event_extraction",
+                    "chunk_ids": [chunks[0]["chunk_id"]],
+                    "max_chars_per_chunk": 80,
+                    "real_llm_requested": True,
+                },
+            )
+    finally:
+        get_settings.cache_clear()
+
+    payload = response.json()
+    summary_only = dict(payload)
+    summary_only.pop("proposal", None)
+    summary_only.pop("manual_review_checklist", None)
+    serialized_summary = json.dumps(summary_only, ensure_ascii=False)
+    assert response.status_code == 201
+    assert payload["events_count"] == 2
+    assert payload["evidence_validation_passed"] is False
+    assert payload["quote_matched"] is False
+    assert payload["failure_category"] == "QUOTE_NOT_MATCHED"
+    assert payload["event_evidence_results"][1]["quote_matched"] is False
+    assert "not present in visible input" not in serialized_summary
 
 
 def test_narrative_analyst_api_claim_summary_is_sanitized_but_proposal_is_available(

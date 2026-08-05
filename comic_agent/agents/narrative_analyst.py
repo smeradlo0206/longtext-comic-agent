@@ -14,7 +14,7 @@ from comic_agent.providers.llm import LLMProvider
 from comic_agent.schemas.narrative import (
     ClaimProposalV1,
     EntityProposalV1,
-    EventProposalV1,
+    EventProposalBatchV1,
     KnowledgeStateProposalV1,
     StateChangeProposalV1,
 )
@@ -90,7 +90,7 @@ NARRATIVE_ANALYST_MODE_REGISTRY: dict[str, NarrativeAnalystModeSpec] = {
         description_zh="事件抽取",
         status="implemented",
         output_schema=EventExtractionAgent.spec.output_schema,
-        schema_class=EventProposalV1,
+        schema_class=EventProposalBatchV1,
         max_context_chunks=EventExtractionAgent.spec.max_context_chunks,
         requires_evidence=EventExtractionAgent.spec.requires_evidence,
         proposal_only=not EventExtractionAgent.spec.can_write_canonical_data,

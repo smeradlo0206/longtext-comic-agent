@@ -43,22 +43,27 @@ class FakeEventProvider:
         quote = str(chunk["text"])[:3]
         return output_model.model_validate(
             {
-                "proposal_id": "proposal-demo-real-event",
-                "event_type": "demo_event",
-                "summary": "林夏推开门。",
-                "participant_ids": [],
-                "actor_resolution_status": "UNKNOWN",
-                "location_id": None,
-                "evidence_refs": [
+                "batch_id": "event-batch-demo-real-event",
+                "events": [
                     {
-                        "chunk_id": chunk_id,
-                        "quote_start": 0,
-                        "quote_end": len(quote),
-                        "quote_text": quote,
+                        "proposal_id": "proposal-demo-real-event",
+                        "event_type": "demo_event",
+                        "summary": "林夏推开门。",
+                        "participant_ids": [],
+                        "actor_resolution_status": "UNKNOWN",
+                        "location_id": None,
+                        "evidence_refs": [
+                            {
+                                "chunk_id": chunk_id,
+                                "quote_start": 0,
+                                "quote_end": len(quote),
+                                "quote_text": quote,
+                            }
+                        ],
+                        "confidence": 0.88,
+                        "reality_layer": "PRIMARY",
                     }
                 ],
-                "confidence": 0.88,
-                "reality_layer": "PRIMARY",
             }
         )
 
@@ -185,8 +190,11 @@ def test_real_event_api_returns_sanitized_success_with_fake_provider(
     serialized = json.dumps(payload, ensure_ascii=False)
     assert payload["agent_run_status"] == "SUCCEEDED"
     assert payload["provider_success"] is True
-    assert payload["output_schema"] == "EventProposalV1"
+    assert payload["output_schema"] == "EventProposalBatchV1"
     assert payload["schema_validation_passed"] is True
+    assert payload["batch_id"] == "event-batch-demo-real-event"
+    assert payload["events_count"] == 1
+    assert payload["event_proposal_ids"] == ["proposal-demo-real-event"]
     assert payload["proposal_id"] == "proposal-demo-real-event"
     assert payload["confidence"] == 0.88
     assert payload["actor_resolution_status"] == "UNKNOWN"

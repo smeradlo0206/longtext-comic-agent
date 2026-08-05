@@ -82,7 +82,8 @@ Security rules:
 ## Minimal Real Event Agent
 
 The minimal real agent skeleton is `EventExtractionAgent`. It reads bounded
-`SourceChunkV1` context and may only output `EventProposalV1`. It does not write
+`SourceChunkV1` context and may only output `EventProposalBatchV1`. The batch
+contains 1 or more `EventProposalV1` records in `events[]`. It does not write
 canonical story data.
 
 The workflow wrapper is `RealEventWorkflow`:
@@ -263,10 +264,15 @@ recommended_action
 Mode-specific sanitized fields are added when a proposal is available:
 
 ```text
-event_extraction: proposal_id, event_type, actor_resolution_status, confidence, evidence_chunk_id
+event_extraction: batch_id, events_count, event_proposal_ids, primary_event_type, primary_event_summary, event_evidence_results
 entity_extraction: proposal_id, entity_type, canonical_name, aliases_count, confidence, evidence_chunk_id
 claim_extraction: proposal_id, claim_type, source_type, verification_status, confidence, evidence_chunk_id
 ```
+
+For `event_extraction`, the number of `events[]` is based on actual story
+events, not chunk count. One chunk can produce multiple events, and several
+chunks can produce one continuous event. Timeline and downstream agents should
+consume `proposal.events[]`, not a single top-level `EventProposalV1`.
 
 For `entity_extraction`, manual review should score:
 

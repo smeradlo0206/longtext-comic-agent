@@ -5,7 +5,12 @@ from typing import Any
 from pydantic import BaseModel
 
 from comic_agent.config import Settings
-from comic_agent.schemas.narrative import ClaimProposalV1, EntityProposalV1, EventProposalV1
+from comic_agent.schemas.narrative import (
+    ClaimProposalV1,
+    EntityProposalV1,
+    EventProposalBatchV1,
+    EventProposalV1,
+)
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.services.context_builder import AgentContext
 
@@ -195,6 +200,13 @@ def add_proposal_details(
 ) -> None:
     """Add mode-specific sanitized proposal metadata to a summary."""
 
+    if isinstance(proposal, EventProposalBatchV1):
+        add_event_batch_details(
+            summary=summary,
+            batch=proposal,
+            selected_chunks=selected_chunks,
+        )
+        return
     if isinstance(proposal, EventProposalV1):
         summary["proposal_id"] = proposal.proposal_id
         summary["event_type"] = proposal.event_type
@@ -217,6 +229,57 @@ def add_proposal_details(
         summary["verification_status"] = str(proposal.verification_status)
         summary["confidence"] = proposal.confidence
         summary.update(validate_evidence(proposal.evidence_refs, selected_chunks))
+
+
+def add_event_batch_details(
+    *,
+    summary: dict[str, Any],
+    batch: EventProposalBatchV1,
+    selected_chunks: list[SourceChunkV1],
+) -> None:
+    """Add sanitized EventProposalBatchV1 metadata to a summary."""
+
+    first_event = batch.events[0]
+    evidence_results = [
+        _event_evidence_summary(event, selected_chunks)
+        for event in batch.events
+    ]
+    summary["batch_id"] = batch.batch_id
+    summary["events_count"] = len(batch.events)
+    summary["event_proposal_ids"] = [event.proposal_id for event in batch.events]
+    summary["primary_event_type"] = first_event.event_type
+    summary["primary_event_summary"] = _safe_summary(first_event.summary)
+    summary["event_evidence_results"] = [
+        {
+            "proposal_id": result["proposal_id"],
+            "event_type": result["event_type"],
+            "evidence_chunk_id": result["evidence_chunk_id"],
+            "quote_matched": result["quote_matched"],
+            "char_range_matched": result["char_range_matched"],
+        }
+        for result in evidence_results
+    ]
+    summary["evidence_validation_passed"] = all(
+        result["evidence_validation_passed"] is True for result in evidence_results
+    )
+    summary["quote_matched"] = _combine_tristate(
+        [result["quote_matched"] for result in evidence_results]
+    )
+    summary["char_range_matched"] = _combine_tristate(
+        [result["char_range_matched"] for result in evidence_results]
+    )
+
+
+def _event_evidence_summary(
+    event: EventProposalV1,
+    selected_chunks: list[SourceChunkV1],
+) -> dict[str, Any]:
+    validation = validate_evidence_refs(event.evidence_refs, selected_chunks)
+    return {
+        "proposal_id": event.proposal_id,
+        "event_type": event.event_type,
+        **validation,
+    }
 
 
 def validate_evidence(
@@ -273,6 +336,48 @@ def validate_evidence(
 
     result["evidence_validation_passed"] = evidence_valid
     return result
+
+
+def validate_evidence_refs(
+    evidence_refs: list[Any],
+    selected_chunks: list[SourceChunkV1],
+) -> dict[str, Any]:
+    """Validate all EvidenceRef records and aggregate sanitized status."""
+
+    if not evidence_refs:
+        return {
+            "evidence_validation_passed": False,
+            "evidence_chunk_id": None,
+            "quote_matched": None,
+            "char_range_matched": None,
+        }
+
+    results = [validate_evidence([evidence_ref], selected_chunks) for evidence_ref in evidence_refs]
+    return {
+        "evidence_validation_passed": all(
+            result["evidence_validation_passed"] is True for result in results
+        ),
+        "evidence_chunk_id": results[0]["evidence_chunk_id"],
+        "quote_matched": _combine_tristate([result["quote_matched"] for result in results]),
+        "char_range_matched": _combine_tristate(
+            [result["char_range_matched"] for result in results]
+        ),
+    }
+
+
+def _combine_tristate(values: list[Any]) -> bool | None:
+    if any(value is False for value in values):
+        return False
+    if any(value is True for value in values):
+        return True
+    return None
+
+
+def _safe_summary(summary: str, limit: int = 80) -> str:
+    compact = " ".join(summary.split())
+    if len(compact) > limit:
+        return compact[:limit].rstrip()
+    return compact
 
 
 def add_provider_diagnostics(summary: dict[str, Any], exc: BaseException) -> None:
@@ -369,10 +474,12 @@ def manual_review_checklist(mode: str) -> dict[str, Any]:
 
     if mode == "event_extraction":
         return {
-            "is_event": None,
-            "event_type_correct": None,
-            "evidence_supports_event": None,
-            "salient_event": None,
+            "events_cover_major_plot_points": None,
+            "event_count_reasonable": None,
+            "no_duplicate_events": None,
+            "no_invented_events": None,
+            "every_event_has_supporting_evidence": None,
+            "event_summaries_supported_by_quotes": None,
             "manual_score": None,
             "manual_issue": None,
         }

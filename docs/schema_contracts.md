@@ -38,6 +38,14 @@ impact: none. This does not add canonical story tables, database persistence,
 Claim merge, KnowledgeState lifecycle management, `NarrativePerspectiveV1`, or
 CommitService conflict arbitration.
 
+2026-08-05 EventExtractionAgent output contract update: `event_extraction` now
+returns `EventProposalBatchV1` as its stable outer proposal. The batch contains
+1 or more `EventProposalV1` records in `events[]`, and batch-level
+`proposal_id` duplication is rejected by schema validation. This changes the
+agent/workflow output contract for event extraction but does not change
+`EventProposalV1` fields or require a database migration. Older AgentRun payloads
+with a single `EventProposalV1` remain readable by evidence audit APIs.
+
 | Schema | Purpose | Required Fields | Evidence | Readers | Proposal Producer | Canonical Commit |
 | --- | --- | --- | --- | --- | --- | --- |
 | BaseRecordV1 | Common record metadata. | id, project_id, revision, status, timestamps, created_by | N/A | Services | Services | CommitService |
@@ -47,8 +55,8 @@ CommitService conflict arbitration.
 | SourceChapterV1 | Chapter boundary. | chapter_id, document_id, order | N/A | Agents, API | DocumentParser | SourceRepository |
 | SourceChunkV1 | Evidence atom. | chunk_id, document_id, chapter_id, text, checksum | Self | All agents | DocumentParser | SourceRepository |
 | EntityProposalV1 | Candidate entity. | proposal_id, type, name, evidence_refs, confidence | Required | Merge services | Entity agents | CommitService later |
-| EventProposalV1 | Candidate event. | proposal_id, type, non-empty summary, non-empty evidence_refs, confidence | At least one reference required; persisted with CANDIDATE status | Temporal/state agents | Event agent | CommitService later |
 | EventProposalV1 | Candidate event, including explicit actor-resolution state. | proposal_id, type, non-empty summary, non-empty evidence_refs, confidence | At least one reference required; persisted with CANDIDATE status | Temporal/state agents | Event agent | CommitService later |
+| EventProposalBatchV1 | Stable event-extraction outer proposal containing source-ordered events. | batch_id, events | Required through each event | Timeline, temporal/state agents, review UI | Event agent | CommitService validates each event later |
 | ClaimProposalV1 | Candidate assertion, denial, accusation, hypothesis, memory, interpretation, or prediction. | proposal_id, claim_type, claim_text, source_type, verification_status, evidence_refs, confidence, reality_layer | Required | CommitService, review, knowledge agents | Claim/knowledge agents | CommitService later |
 | KnowledgeStateProposalV1 | Candidate character knowledge or belief state. | proposal_id, character_id, knowledge_target_id, epistemic_status, reality_layer, evidence_refs, confidence | Required | Dialogue, panel, review, knowledge agents | Knowledge agents | CommitService later |
 | TemporalRelationProposalV1 | Candidate event relation. | proposal_id, source, target, relation, confidence | Required unless UNKNOWN | Temporal solver | Temporal agent | CommitService later |

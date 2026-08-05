@@ -513,7 +513,7 @@
               <div class="form-grid">
                 <label>Mode
                   <select id="narrativeMode">
-                    <option value="event_extraction">event_extraction · EventProposalV1</option>
+                    <option value="event_extraction">event_extraction · EventProposalBatchV1</option>
                     <option value="entity_extraction">entity_extraction · EntityProposalV1</option>
                     <option value="claim_extraction">claim_extraction · ClaimProposalV1</option>
                   </select>
@@ -553,6 +553,10 @@
                 <summary>Full Proposal JSON</summary>
                 <pre id="narrativeProposal">null</pre>
               </details>
+              <div>
+                <h3>Proposal List</h3>
+                <div id="narrativeProposalList"></div>
+              </div>
               <div>
                 <h3>Evidence / Validation</h3>
                 <pre id="narrativeEvidenceStatus">{}</pre>
@@ -982,11 +986,16 @@
       delete summary.manual_review_checklist;
       $("narrativeSummary").textContent = pretty(summary);
       $("narrativeProposal").textContent = pretty(sanitized.proposal ?? null);
+      renderProposalList(sanitized.proposal);
       $("narrativeEvidenceStatus").textContent = pretty({
+        batch_id: sanitized.batch_id,
+        events_count: sanitized.events_count,
+        event_proposal_ids: sanitized.event_proposal_ids,
         evidence_validation_passed: sanitized.evidence_validation_passed,
         evidence_chunk_id: sanitized.evidence_chunk_id,
         quote_matched: sanitized.quote_matched,
-        char_range_matched: sanitized.char_range_matched
+        char_range_matched: sanitized.char_range_matched,
+        event_evidence_results: sanitized.event_evidence_results
       });
       $("narrativeProviderDiagnostics").textContent = pretty(sanitized.provider_error_diagnostics ?? null);
       renderManualReviewChecklist(sanitized.manual_review_checklist || {});
@@ -1003,6 +1012,33 @@
         delete copy.provider_error_diagnostics[messageContentKey];
       }
       return copy;
+    }
+
+    function renderProposalList(proposal) {
+      if (!proposal) {
+        $("narrativeProposalList").innerHTML = `<span class="muted">暂无 proposal。</span>`;
+        return;
+      }
+      const events = Array.isArray(proposal.events) ? proposal.events : null;
+      const rows = events ? events.map((event) => proposalRow(event)) : [proposalRow(proposal)];
+      $("narrativeProposalList").innerHTML = table(
+        ["proposal_id", "type", "summary/name", "confidence", "evidence chunk", "quote preview"],
+        rows
+      );
+    }
+
+    function proposalRow(proposal) {
+      const evidence = Array.isArray(proposal.evidence_refs) ? proposal.evidence_refs[0] : null;
+      const title = proposal.summary ?? proposal.canonical_name ?? proposal.claim_text ?? "-";
+      const type = proposal.event_type ?? proposal.entity_type ?? proposal.claim_type ?? "-";
+      return [
+        escapeHtml(proposal.proposal_id ?? "-"),
+        escapeHtml(type),
+        escapeHtml(shortPreview(title, 48)),
+        escapeHtml(proposal.confidence ?? "-"),
+        escapeHtml(evidence?.chunk_id ?? "-"),
+        escapeHtml(shortPreview(evidence?.quote_text ?? "", 40))
+      ];
     }
 
     function renderNarrativeOutcome(data) {
@@ -1063,6 +1099,7 @@
     function renderNarrativeResultFromRunDetail(data) {
       const mode = String(data.agent_name || "").replace("narrative-analyst:", "");
       const proposal = data.proposal ?? data.provider_result?.structured_output ?? null;
+      const events = Array.isArray(proposal?.events) ? proposal.events : [];
       renderNarrativeResult({
         mode,
         dry_run: false,
@@ -1075,6 +1112,11 @@
         output_schema: data.output_schema,
         schema_validation_passed: proposal !== null,
         evidence_validation_passed: data.evidence_validation_passed,
+        batch_id: proposal?.batch_id ?? null,
+        events_count: events.length || null,
+        event_proposal_ids: events.map((event) => event.proposal_id),
+        primary_event_type: events[0]?.event_type ?? null,
+        primary_event_summary: events[0]?.summary ?? null,
         quote_matched: null,
         char_range_matched: null,
         error_message: data.error_message,
@@ -1089,10 +1131,12 @@
     function manualReviewTemplateForMode(mode) {
       if (mode === "event_extraction") {
         return {
-          is_event: null,
-          event_type_correct: null,
-          evidence_supports_event: null,
-          salient_event: null,
+          events_cover_major_plot_points: null,
+          event_count_reasonable: null,
+          no_duplicate_events: null,
+          no_invented_events: null,
+          every_event_has_supporting_evidence: null,
+          event_summaries_supported_by_quotes: null,
           manual_score: null,
           manual_issue: null
         };

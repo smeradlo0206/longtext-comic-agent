@@ -15,12 +15,13 @@ from comic_agent.database.base import Base
 from comic_agent.database.session import make_engine, make_session_factory
 from comic_agent.repositories.agent_run_repository import AgentRunRepository
 from comic_agent.repositories.source_repository import SourceRepository
-from comic_agent.schemas.narrative import EventProposalV1
+from comic_agent.schemas.narrative import EventProposalBatchV1
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.workflow import AgentRunV1
 from comic_agent.services.context_builder import ContextBuilder
 from comic_agent.services.document_parser import DocumentParser
 from comic_agent.services.id_service import checksum_text
+from comic_agent.services.narrative_analyst_summary import add_proposal_details
 from comic_agent.workflows.real_event_workflow import RealEventWorkflow
 
 
@@ -141,7 +142,7 @@ def _add_agent_run_details(
     *,
     summary: dict[str, Any],
     agent_run: AgentRunV1,
-    proposal: EventProposalV1 | None,
+    proposal: EventProposalBatchV1 | None,
     selected_chunks: list[SourceChunkV1],
 ) -> None:
     provider_result = agent_run.provider_result
@@ -164,45 +165,7 @@ def _add_agent_run_details(
     if proposal is None:
         return
 
-    summary["proposal_id"] = proposal.proposal_id
-    summary["confidence"] = proposal.confidence
-    summary["actor_resolution_status"] = str(proposal.actor_resolution_status)
-
-    if not proposal.evidence_refs:
-        return
-
-    evidence_ref = proposal.evidence_refs[0]
-    summary["evidence_chunk_id"] = evidence_ref.chunk_id
-    evidence_chunk = next(
-        (chunk for chunk in selected_chunks if chunk.chunk_id == evidence_ref.chunk_id),
-        None,
-    )
-    if evidence_chunk is None:
-        summary["quote_matched"] = False if evidence_ref.quote_text is not None else None
-        summary["char_range_matched"] = False if evidence_ref.quote_start is not None else None
-        return
-
-    if evidence_ref.quote_text is not None:
-        summary["quote_matched"] = evidence_ref.quote_text in evidence_chunk.text
-    else:
-        summary["quote_matched"] = None
-
-    has_range = evidence_ref.quote_start is not None and evidence_ref.quote_end is not None
-    if not has_range:
-        summary["char_range_matched"] = None
-        return
-
-    quote_start = evidence_ref.quote_start
-    quote_end = evidence_ref.quote_end
-    range_in_bounds = 0 <= quote_start <= quote_end <= len(evidence_chunk.text)
-    if not range_in_bounds:
-        summary["char_range_matched"] = False
-        return
-
-    ranged_text = evidence_chunk.text[quote_start:quote_end]
-    summary["char_range_matched"] = (
-        ranged_text == evidence_ref.quote_text if evidence_ref.quote_text is not None else True
-    )
+    add_proposal_details(summary=summary, proposal=proposal, selected_chunks=selected_chunks)
 
 
 def _write_summary(output_dir: Path, summary: dict[str, Any]) -> None:

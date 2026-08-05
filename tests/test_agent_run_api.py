@@ -1,9 +1,15 @@
 import json
 from pathlib import Path
+from typing import TypeVar
 
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
+from comic_agent.config import get_settings
 from comic_agent.main import create_app
+from comic_agent.schemas.narrative import EventProposalBatchV1
+
+OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
 
 PROJECT_PAYLOAD = {"project_id": "demo-project", "name": "Demo Project"}
 SAMPLE_TEXT = """第一章 开端
@@ -158,3 +164,83 @@ def test_get_agent_run_evidence_returns_short_quotes_only(tmp_path: Path) -> Non
     assert items[0]["validation_status"] == "passed"
     assert len(items[0]["quote"]) <= 40
     assert items[0]["quote"] in chunks[0]["text"]
+
+
+def test_get_agent_run_evidence_expands_event_batch_proposal(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class FakeBatchProvider:
+        def structured_generate(
+            self,
+            request: dict[str, object],
+            output_model: type[OutputModelT],
+        ) -> OutputModelT:
+            assert output_model is EventProposalBatchV1
+            input_context = request["input_context"]
+            assert isinstance(input_context, dict)
+            source_chunks = input_context["source_chunks"]
+            assert isinstance(source_chunks, list)
+            source_chunk = source_chunks[0]
+            assert isinstance(source_chunk, dict)
+            return output_model.model_validate(
+                {
+                    "batch_id": "event-batch-api-1",
+                    "events": [
+                        {
+                            "proposal_id": "event-api-1",
+                            "event_type": "key_placed",
+                            "summary": "放下钥匙",
+                            "participant_ids": [],
+                            "actor_resolution_status": "UNKNOWN",
+                            "location_id": None,
+                            "evidence_refs": [
+                                {"chunk_id": source_chunk["chunk_id"], "quote_text": "铜钥匙"}
+                            ],
+                            "confidence": 0.8,
+                            "reality_layer": "PRIMARY",
+                        },
+                        {
+                            "proposal_id": "event-api-2",
+                            "event_type": "table_targeted",
+                            "summary": "放在桌上",
+                            "participant_ids": [],
+                            "actor_resolution_status": "UNKNOWN",
+                            "location_id": None,
+                            "evidence_refs": [
+                                {"chunk_id": source_chunk["chunk_id"], "quote_text": "桌上"}
+                            ],
+                            "confidence": 0.75,
+                            "reality_layer": "PRIMARY",
+                        },
+                    ],
+                }
+            )
+
+    monkeypatch.setenv("ENABLE_REAL_LLM", "true")
+    monkeypatch.setenv("INTERNAL_DEMO_REQUIRE_ACCESS_CODE", "false")
+    get_settings.cache_clear()
+    try:
+        with create_test_client(tmp_path) as client:
+            client.app.state.narrative_analyst_provider = FakeBatchProvider()
+            chunks = setup_imported_project(client)
+            run_response = client.post(
+                "/projects/demo-project/agent-runs/narrative-analyst",
+                json={
+                    "mode": "event_extraction",
+                    "chunk_ids": [chunks[0]["chunk_id"]],
+                    "max_chars_per_chunk": 80,
+                    "real_llm_requested": True,
+                },
+            )
+            assert run_response.status_code == 201
+            agent_run_id = run_response.json()["agent_run_id"]
+
+            response = client.get(f"/agent-runs/{agent_run_id}/evidence")
+    finally:
+        get_settings.cache_clear()
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert [item["quote"] for item in items] == ["铜钥匙", "桌上"]
+    assert [item["validation_status"] for item in items] == ["passed", "passed"]

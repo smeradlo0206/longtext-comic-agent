@@ -4,7 +4,11 @@ import pytest
 from pydantic import BaseModel
 
 from comic_agent.agents.narrative_analyst import NarrativeAnalyst
-from comic_agent.schemas.narrative import ClaimProposalV1, EntityProposalV1, EventProposalV1
+from comic_agent.schemas.narrative import (
+    ClaimProposalV1,
+    EntityProposalV1,
+    EventProposalBatchV1,
+)
 
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
 
@@ -21,18 +25,25 @@ class FakeProvider:
     ) -> OutputModelT:
         self.requests.append(request)
         self.output_models.append(output_model)
-        if output_model is EventProposalV1:
+        if output_model is EventProposalBatchV1:
             return output_model.model_validate(
                 {
-                    "proposal_id": "event-1",
-                    "event_type": "handoff",
-                    "summary": "A concise supported event.",
-                    "participant_ids": [],
-                    "actor_resolution_status": "UNKNOWN",
-                    "location_id": None,
-                    "evidence_refs": [{"chunk_id": "chunk-1", "quote_text": "door opened"}],
-                    "confidence": 0.86,
-                    "reality_layer": "PRIMARY",
+                    "batch_id": "event-batch-1",
+                    "events": [
+                        {
+                            "proposal_id": "event-1",
+                            "event_type": "handoff",
+                            "summary": "A concise supported event.",
+                            "participant_ids": [],
+                            "actor_resolution_status": "UNKNOWN",
+                            "location_id": None,
+                            "evidence_refs": [
+                                {"chunk_id": "chunk-1", "quote_text": "door opened"}
+                            ],
+                            "confidence": 0.86,
+                            "reality_layer": "PRIMARY",
+                        }
+                    ],
                 }
             )
         if output_model is EntityProposalV1:
@@ -87,11 +98,11 @@ def test_narrative_analyst_routes_event_extraction_to_existing_agent() -> None:
     provider = FakeProvider()
     analyst = NarrativeAnalyst(provider)
 
-    proposal = analyst.run("event_extraction", _input_context())
+    batch = analyst.run("event_extraction", _input_context())
 
-    assert isinstance(proposal, EventProposalV1)
-    assert proposal.proposal_id == "event-1"
-    assert provider.output_models == [EventProposalV1]
+    assert isinstance(batch, EventProposalBatchV1)
+    assert batch.events[0].proposal_id == "event-1"
+    assert provider.output_models == [EventProposalBatchV1]
     assert provider.requests[0]["input_context"] == _input_context()
 
 
@@ -123,7 +134,7 @@ def test_narrative_analyst_routes_claim_extraction_to_existing_agent() -> None:
 @pytest.mark.parametrize(
     ("mode", "output_schema", "schema_class"),
     [
-        ("event_extraction", "EventProposalV1", EventProposalV1),
+        ("event_extraction", "EventProposalBatchV1", EventProposalBatchV1),
         ("entity_extraction", "EntityProposalV1", EntityProposalV1),
         ("claim_extraction", "ClaimProposalV1", ClaimProposalV1),
     ],

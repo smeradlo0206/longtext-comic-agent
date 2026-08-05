@@ -20,6 +20,7 @@ def test_web_console_static_html_exposes_demo_controls_without_local_secrets() -
     assert 'id="runNarrativeAnalyst"' in html
     assert 'id="narrativeSummary"' in html
     assert 'id="narrativeProposal"' in html
+    assert 'id="narrativeProposalList"' in html
     assert 'id="narrativeEvidenceStatus"' in html
     assert 'id="narrativeProviderDiagnostics"' in html
     assert 'id="manualReviewChecklist"' in html
@@ -27,6 +28,16 @@ def test_web_console_static_html_exposes_demo_controls_without_local_secrets() -
     assert "Selected input chunks" in html
     assert "本次输入 chunks" in html
     assert "event_extraction" in html
+    assert "event_extraction · EventProposalBatchV1" in html
+    assert "Proposal List" in html
+    assert "renderProposalList" in html
+    assert "event_evidence_results" in html
+    assert "events_cover_major_plot_points" in html
+    assert "event_count_reasonable" in html
+    assert "no_duplicate_events" in html
+    assert "no_invented_events" in html
+    assert "every_event_has_supporting_evidence" in html
+    assert "event_summaries_supported_by_quotes" in html
     assert "entity_extraction" in html
     assert "claim_extraction" in html
     assert "/agent-runs/narrative-analyst" in html

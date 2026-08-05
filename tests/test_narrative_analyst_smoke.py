@@ -8,7 +8,11 @@ from comic_agent.config import Settings
 from comic_agent.database.session import make_engine, make_session_factory
 from comic_agent.providers.openai_compatible import ProviderResponseError
 from comic_agent.repositories.source_repository import SourceRepository
-from comic_agent.schemas.narrative import ClaimProposalV1, EntityProposalV1, EventProposalV1
+from comic_agent.schemas.narrative import (
+    ClaimProposalV1,
+    EntityProposalV1,
+    EventProposalBatchV1,
+)
 from scripts.smoke_narrative_analyst import DEFAULT_MAX_CHARS_PER_CHUNK, run_smoke
 
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
@@ -196,18 +200,48 @@ class FakeSuccessfulProvider:
         assert len(str(source_chunk["text"])) <= 10
         self.seen_text_lengths.append(len(str(source_chunk["text"])))
         quote_text = str(source_chunk["text"])[:7]
-        if output_model is EventProposalV1:
+        if output_model is EventProposalBatchV1:
             return output_model.model_validate(
                 {
-                    "proposal_id": "event-smoke-1",
-                    "event_type": "claim",
-                    "summary": "A concise event.",
-                    "participant_ids": [],
-                    "actor_resolution_status": "UNKNOWN",
-                    "location_id": None,
-                    "evidence_refs": [{"chunk_id": source_chunk["chunk_id"]}],
-                    "confidence": 0.7,
-                    "reality_layer": "PRIMARY",
+                    "batch_id": "event-batch-smoke-1",
+                    "events": [
+                        {
+                            "proposal_id": "event-smoke-1",
+                            "event_type": "claim",
+                            "summary": "A concise event.",
+                            "participant_ids": [],
+                            "actor_resolution_status": "UNKNOWN",
+                            "location_id": None,
+                            "evidence_refs": [
+                                {
+                                    "chunk_id": source_chunk["chunk_id"],
+                                    "quote_start": 0,
+                                    "quote_end": len(quote_text),
+                                    "quote_text": quote_text,
+                                }
+                            ],
+                            "confidence": 0.7,
+                            "reality_layer": "PRIMARY",
+                        },
+                        {
+                            "proposal_id": "event-smoke-2",
+                            "event_type": "door_locked",
+                            "summary": "A second concise event.",
+                            "participant_ids": [],
+                            "actor_resolution_status": "UNKNOWN",
+                            "location_id": None,
+                            "evidence_refs": [
+                                {
+                                    "chunk_id": source_chunk["chunk_id"],
+                                    "quote_start": 1,
+                                    "quote_end": len(quote_text),
+                                    "quote_text": quote_text[1:],
+                                }
+                            ],
+                            "confidence": 0.65,
+                            "reality_layer": "PRIMARY",
+                        },
+                    ],
                 }
             )
         if output_model is EntityProposalV1:
@@ -406,11 +440,34 @@ def test_smoke_narrative_analyst_event_success_includes_mode_fields(
         ),
     )
 
-    assert summary["proposal_id"] == "event-smoke-1"
-    assert summary["event_type"] == "claim"
-    assert summary["actor_resolution_status"] == "UNKNOWN"
-    assert summary["confidence"] == 0.7
-    assert summary["evidence_chunk_id"] == summary["selected_chunk_ids"][0]
+    serialized = json.dumps(summary, ensure_ascii=False)
+    assert summary["output_schema"] == "EventProposalBatchV1"
+    assert summary["batch_id"] == "event-batch-smoke-1"
+    assert summary["events_count"] == 2
+    assert summary["event_proposal_ids"] == ["event-smoke-1", "event-smoke-2"]
+    assert summary["primary_event_type"] == "claim"
+    assert summary["primary_event_summary"] == "A concise event."
+    assert summary["evidence_validation_passed"] is True
+    assert summary["quote_matched"] is True
+    assert summary["char_range_matched"] is True
+    assert summary["event_evidence_results"] == [
+        {
+            "proposal_id": "event-smoke-1",
+            "event_type": "claim",
+            "evidence_chunk_id": summary["selected_chunk_ids"][0],
+            "quote_matched": True,
+            "char_range_matched": True,
+        },
+        {
+            "proposal_id": "event-smoke-2",
+            "event_type": "door_locked",
+            "evidence_chunk_id": summary["selected_chunk_ids"][0],
+            "quote_matched": True,
+            "char_range_matched": True,
+        },
+    ]
+    assert "The witness claimed the door was locked" not in serialized
+    assert "The wit" not in serialized
 
 
 def test_smoke_narrative_analyst_entity_success_includes_sanitized_mode_fields(

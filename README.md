@@ -66,6 +66,8 @@ Internal hosted demo console:
 - The Narrative Analyst Console can show full Proposal JSON for manual review,
   but it does not show API keys, raw provider responses, complete source chunk
   text, or canonical story-data writes.
+- `event_extraction` now returns `EventProposalBatchV1`; timeline and downstream
+  consumers should read event proposals from `proposal.events[]`.
 - In the Narrative Analyst Console, explicitly select 1-3 chunks before every
   run. The browser does not rely on an empty Chunk IDs field plus
   chunk_offset/chunk_limit, because that can accidentally reuse older chunks in
