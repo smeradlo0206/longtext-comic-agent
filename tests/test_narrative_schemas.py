@@ -8,6 +8,7 @@ from comic_agent.schemas.narrative import (
     ClaimSourceType,
     ClaimType,
     EpistemicStatus,
+    EventProposalBatchV1,
     EventProposalV1,
     KnowledgeStateProposalV1,
     StateChangeProposalV1,
@@ -36,6 +37,44 @@ def test_event_proposal_minimal_valid_example() -> None:
     assert event.evidence_refs[0].chunk_id == "chunk-1"
     assert event.confidence == 0.9
     assert event.actor_resolution_status == ActorResolutionStatus.UNSPECIFIED
+
+
+def test_event_proposal_batch_minimal_valid_example() -> None:
+    batch = EventProposalBatchV1(
+        batch_id="event-batch-1",
+        events=[
+            EventProposalV1(**event_payload()),
+            EventProposalV1(**(event_payload() | {"proposal_id": "proposal-event-2"})),
+        ],
+    )
+
+    assert batch.schema_version == "1.0"
+    assert batch.batch_id == "event-batch-1"
+    assert [event.proposal_id for event in batch.events] == [
+        "proposal-event-1",
+        "proposal-event-2",
+    ]
+
+
+def test_event_proposal_batch_requires_events() -> None:
+    with pytest.raises(ValidationError):
+        EventProposalBatchV1(batch_id="event-batch-1")
+
+
+def test_event_proposal_batch_rejects_empty_events() -> None:
+    with pytest.raises(ValidationError):
+        EventProposalBatchV1(batch_id="event-batch-1", events=[])
+
+
+def test_event_proposal_batch_rejects_duplicate_event_ids() -> None:
+    with pytest.raises(ValidationError):
+        EventProposalBatchV1(
+            batch_id="event-batch-1",
+            events=[
+                EventProposalV1(**event_payload()),
+                EventProposalV1(**event_payload()),
+            ],
+        )
 
 
 def test_event_proposal_requires_evidence_refs() -> None:
