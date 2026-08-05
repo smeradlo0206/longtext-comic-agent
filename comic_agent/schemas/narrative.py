@@ -146,6 +146,26 @@ class EventProposalV1(StrictBaseModel):
         return self
 
 
+class EventProposalBatchV1(StrictBaseModel):
+    """Candidate story events discovered from one bounded source context."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0", description="Schema version.")
+    batch_id: str = Field(description="Batch proposal id.")
+    events: list[EventProposalV1] = Field(
+        min_length=1,
+        description="Candidate event proposals in source order where possible.",
+    )
+
+    @model_validator(mode="after")
+    def validate_unique_event_ids(self) -> "EventProposalBatchV1":
+        """Keep batch outputs addressable by unique proposal id."""
+
+        proposal_ids = [event.proposal_id for event in self.events]
+        if len(set(proposal_ids)) != len(proposal_ids):
+            raise ValueError("events must have unique proposal_id values")
+        return self
+
+
 class ClaimProposalV1(StrictBaseModel):
     """Candidate claim, statement, denial, memory, or interpretation."""
 
