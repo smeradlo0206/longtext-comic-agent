@@ -9,8 +9,8 @@ from pydantic import BaseModel
 from comic_agent.config import get_settings
 from comic_agent.main import create_app
 from comic_agent.schemas.narrative import (
-    ClaimProposalV1,
-    EntityProposalV1,
+    ClaimProposalBatchV1,
+    EntityProposalBatchV1,
     EventProposalBatchV1,
 )
 
@@ -88,8 +88,6 @@ class FakeNarrativeProvider:
         assert set(source_chunk) == {
             "chunk_id",
             "chapter_id",
-            "char_start",
-            "char_end",
             "text",
         }
         assert len(str(source_chunk["text"])) <= self.max_text_length
@@ -141,31 +139,63 @@ class FakeNarrativeProvider:
                 }
             )
 
-        if output_model is EntityProposalV1:
+        if output_model is EntityProposalBatchV1:
             return output_model.model_validate(
                 {
-                    "proposal_id": "entity-console-1",
-                    "entity_type": "CHARACTER",
-                    "canonical_name": "林夏",
-                    "aliases": ["秘密别名"],
-                    "evidence_refs": [{"chunk_id": chunk_id, "quote_text": quote}],
-                    "confidence": 0.78,
+                    "batch_id": "entity-batch-console-1",
+                    "entities": [
+                        {
+                            "proposal_id": "entity-console-1",
+                            "entity_type": "CHARACTER",
+                            "canonical_name": "林夏",
+                            "aliases": ["秘密别名"],
+                            "evidence_refs": [{"chunk_id": chunk_id, "quote_text": quote}],
+                            "confidence": 0.78,
+                        },
+                        {
+                            "proposal_id": "entity-console-2",
+                            "entity_type": "ORGANIZATION",
+                            "canonical_name": "旧馆社",
+                            "aliases": [],
+                            "evidence_refs": [{"chunk_id": chunk_id, "quote_text": quote[1:]}],
+                            "confidence": 0.72,
+                        },
+                    ],
                 }
             )
 
-        if output_model is ClaimProposalV1:
+        if output_model is ClaimProposalBatchV1:
             return output_model.model_validate(
                 {
-                    "proposal_id": "claim-console-1",
-                    "claim_type": "ASSERTION",
-                    "claim_text": "林夏推开门。",
-                    "source_type": "NARRATOR",
-                    "source_id": None,
-                    "target_event_id": None,
-                    "verification_status": "UNVERIFIED",
-                    "evidence_refs": [{"chunk_id": chunk_id, "quote_text": quote}],
-                    "confidence": 0.68,
-                    "reality_layer": "PRIMARY",
+                    "batch_id": "claim-batch-console-1",
+                    "claims": [
+                        {
+                            "proposal_id": "claim-console-1",
+                            "claim_type": "FACTUAL_ASSERTION",
+                            "claim_text": "林夏推开门。",
+                            "source_type": "NARRATOR",
+                            "source_id": None,
+                            "target_event_id": None,
+                            "verification_status": "UNVERIFIED",
+                            "evidence_refs": [{"chunk_id": chunk_id, "quote_text": quote}],
+                            "confidence": 0.68,
+                            "reality_layer": "PRIMARY",
+                            "temporal_scope": "PRESENT",
+                        },
+                        {
+                            "proposal_id": "claim-console-2",
+                            "claim_type": "INTERPRETATION",
+                            "claim_text": "门后有异响。",
+                            "source_type": "NARRATOR",
+                            "source_id": None,
+                            "target_event_id": None,
+                            "verification_status": "UNVERIFIED",
+                            "evidence_refs": [{"chunk_id": chunk_id, "quote_text": quote[1:]}],
+                            "confidence": 0.61,
+                            "reality_layer": "PRIMARY",
+                            "temporal_scope": "PRESENT",
+                        },
+                    ],
                 }
             )
 
@@ -239,8 +269,8 @@ def import_text_and_collect_chunks(
         ("mode", "schema_name", "checklist_key"),
     [
         ("event_extraction", "EventProposalBatchV1", "events_cover_major_plot_points"),
-        ("entity_extraction", "EntityProposalV1", "is_entity"),
-        ("claim_extraction", "ClaimProposalV1", "is_claim"),
+        ("entity_extraction", "EntityProposalBatchV1", "entities_cover_major_entities"),
+        ("claim_extraction", "ClaimProposalBatchV1", "claims_cover_major_claims"),
     ],
 )
 def test_narrative_analyst_api_supports_implemented_modes(
@@ -315,7 +345,74 @@ def test_narrative_analyst_api_supports_implemented_modes(
             },
         ]
         assert detail_response.json()["proposal"]["events"][1]["proposal_id"] == "event-console-2"
+        assert detail_response.json()["output_proposal_ids"] == [
+            "event-console-1",
+            "event-console-2",
+        ]
         assert len(evidence_response.json()["items"]) == 2
+        assert evidence_response.json()["items"][0]["event_type"] == "demo_event"
+    if mode == "entity_extraction":
+        assert payload["proposal"]["batch_id"] == "entity-batch-console-1"
+        assert len(payload["proposal"]["entities"]) == 2
+        assert payload["batch_id"] == "entity-batch-console-1"
+        assert payload["entities_count"] == 2
+        assert payload["entity_proposal_ids"] == ["entity-console-1", "entity-console-2"]
+        assert payload["entity_evidence_results"] == [
+            {
+                "proposal_id": "entity-console-1",
+                "entity_type": "CHARACTER",
+                "evidence_chunk_id": chunks[0]["chunk_id"],
+                "quote_matched": True,
+                "char_range_matched": None,
+            },
+            {
+                "proposal_id": "entity-console-2",
+                "entity_type": "ORGANIZATION",
+                "evidence_chunk_id": chunks[0]["chunk_id"],
+                "quote_matched": True,
+                "char_range_matched": None,
+            },
+        ]
+        assert detail_response.json()["output_proposal_ids"] == [
+            "entity-console-1",
+            "entity-console-2",
+        ]
+        assert len(evidence_response.json()["items"]) == 2
+        assert evidence_response.json()["items"][0]["entity_type"] == "CHARACTER"
+    if mode == "claim_extraction":
+        assert payload["proposal"]["batch_id"] == "claim-batch-console-1"
+        assert len(payload["proposal"]["claims"]) == 2
+        assert payload["batch_id"] == "claim-batch-console-1"
+        assert payload["claims_count"] == 2
+        assert payload["claim_proposal_ids"] == ["claim-console-1", "claim-console-2"]
+        assert payload["claim_evidence_results"] == [
+            {
+                "proposal_id": "claim-console-1",
+                "claim_type": "FACTUAL_ASSERTION",
+                "source_type": "NARRATOR",
+                "temporal_scope": "PRESENT",
+                "evidence_chunk_id": chunks[0]["chunk_id"],
+                "quote_matched": True,
+                "char_range_matched": None,
+            },
+            {
+                "proposal_id": "claim-console-2",
+                "claim_type": "INTERPRETATION",
+                "source_type": "NARRATOR",
+                "temporal_scope": "PRESENT",
+                "evidence_chunk_id": chunks[0]["chunk_id"],
+                "quote_matched": True,
+                "char_range_matched": None,
+            },
+        ]
+        assert detail_response.json()["output_proposal_ids"] == [
+            "claim-console-1",
+            "claim-console-2",
+        ]
+        assert len(evidence_response.json()["items"]) == 2
+        assert evidence_response.json()["items"][0]["claim_type"] == "FACTUAL_ASSERTION"
+        assert evidence_response.json()["items"][0]["source_type"] == "NARRATOR"
+        assert evidence_response.json()["items"][0]["temporal_scope"] == "PRESENT"
     assert detail_response.status_code == 200
     assert evidence_response.status_code == 200
     assert evidence_response.json()["items"]
@@ -413,6 +510,143 @@ def test_narrative_analyst_api_event_batch_quote_mismatch_is_classified(
     assert "not present in visible input" not in serialized_summary
 
 
+@pytest.mark.parametrize(
+    ("mode", "output_model", "batch_payload", "count_key", "results_key"),
+    [
+        (
+            "entity_extraction",
+            EntityProposalBatchV1,
+            {
+                "batch_id": "entity-batch-mismatch",
+                "entities": [
+                    {
+                        "proposal_id": "entity-ok",
+                        "entity_type": "CHARACTER",
+                        "canonical_name": "林夏",
+                        "aliases": [],
+                        "evidence_refs": [{"chunk_id": "chunk-id", "quote_text": "林夏"}],
+                        "confidence": 0.7,
+                    },
+                    {
+                        "proposal_id": "entity-bad",
+                        "entity_type": "LOCATION",
+                        "canonical_name": "不存在地点",
+                        "aliases": [],
+                        "evidence_refs": [
+                            {"chunk_id": "chunk-id", "quote_text": "not present in visible input"}
+                        ],
+                        "confidence": 0.7,
+                    },
+                ],
+            },
+            "entities_count",
+            "entity_evidence_results",
+        ),
+        (
+            "claim_extraction",
+            ClaimProposalBatchV1,
+            {
+                "batch_id": "claim-batch-mismatch",
+                "claims": [
+                    {
+                        "proposal_id": "claim-ok",
+                        "claim_type": "FACTUAL_ASSERTION",
+                        "claim_text": "林夏推开门。",
+                        "source_type": "NARRATOR",
+                        "source_id": None,
+                        "target_event_id": None,
+                        "verification_status": "UNVERIFIED",
+                        "evidence_refs": [{"chunk_id": "chunk-id", "quote_text": "林夏"}],
+                        "confidence": 0.7,
+                        "reality_layer": "PRIMARY",
+                        "temporal_scope": "PRESENT",
+                    },
+                    {
+                        "proposal_id": "claim-bad",
+                        "claim_type": "DENIAL",
+                        "claim_text": "不存在主张。",
+                        "source_type": "NARRATOR",
+                        "source_id": None,
+                        "target_event_id": None,
+                        "verification_status": "UNVERIFIED",
+                        "evidence_refs": [
+                            {"chunk_id": "chunk-id", "quote_text": "not present in visible input"}
+                        ],
+                        "confidence": 0.7,
+                        "reality_layer": "PRIMARY",
+                        "temporal_scope": "PRESENT",
+                    },
+                ],
+            },
+            "claims_count",
+            "claim_evidence_results",
+        ),
+    ],
+)
+def test_narrative_analyst_api_entity_and_claim_batch_quote_mismatch_is_classified(
+    tmp_path: Path,
+    monkeypatch,
+    mode: str,
+    output_model: type[BaseModel],
+    batch_payload: dict[str, object],
+    count_key: str,
+    results_key: str,
+) -> None:
+    class FakeBatchMismatchProvider(FakeNarrativeProvider):
+        def structured_generate(
+            self,
+            request: dict[str, object],
+            requested_output_model: type[OutputModelT],
+        ) -> OutputModelT:
+            self.calls += 1
+            input_context = request["input_context"]
+            assert isinstance(input_context, dict)
+            source_chunks = input_context["source_chunks"]
+            assert isinstance(source_chunks, list)
+            source_chunk = source_chunks[0]
+            assert isinstance(source_chunk, dict)
+            assert requested_output_model is output_model
+            payload = json.loads(json.dumps(batch_payload))
+            collection_key = "entities" if "entities" in payload else "claims"
+            for item in payload[collection_key]:
+                item["evidence_refs"][0]["chunk_id"] = source_chunk["chunk_id"]
+            return requested_output_model.model_validate(payload)
+
+    provider = FakeBatchMismatchProvider(max_text_length=80)
+    try:
+        with create_test_client(
+            tmp_path,
+            monkeypatch,
+            enable_real_llm=True,
+            provider=provider,
+        ) as client:
+            chunks = setup_imported_project(client)
+            response = client.post(
+                "/projects/demo-project/agent-runs/narrative-analyst",
+                json={
+                    "mode": mode,
+                    "chunk_ids": [chunks[0]["chunk_id"]],
+                    "max_chars_per_chunk": 80,
+                    "real_llm_requested": True,
+                },
+            )
+    finally:
+        get_settings.cache_clear()
+
+    payload = response.json()
+    summary_only = dict(payload)
+    summary_only.pop("proposal", None)
+    summary_only.pop("manual_review_checklist", None)
+    serialized_summary = json.dumps(summary_only, ensure_ascii=False)
+    assert response.status_code == 201
+    assert payload[count_key] == 2
+    assert payload["evidence_validation_passed"] is False
+    assert payload["quote_matched"] is False
+    assert payload["failure_category"] == "QUOTE_NOT_MATCHED"
+    assert payload[results_key][1]["quote_matched"] is False
+    assert "not present in visible input" not in serialized_summary
+
+
 def test_narrative_analyst_api_claim_summary_is_sanitized_but_proposal_is_available(
     tmp_path: Path,
     monkeypatch,
@@ -442,11 +676,107 @@ def test_narrative_analyst_api_claim_summary_is_sanitized_but_proposal_is_availa
     serialized = json.dumps(payload, ensure_ascii=False)
     assert response.status_code == 201
     assert "claim_text" not in {key for key in payload if key != "proposal"}
-    assert payload["proposal"]["claim_text"] == "林夏推开门。"
+    assert payload["claims_count"] == 2
+    assert payload["proposal"]["claims"][0]["claim_text"] == "林夏推开门。"
     assert "platform-secret-key" not in serialized
     assert "message.content" not in serialized
     assert "raw provider" not in serialized
     assert "林夏推开门。\n\n陈野把伞递给林夏。" not in serialized
+
+
+def test_narrative_analyst_api_normalizes_unique_claim_evidence_across_three_chunks(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class FakeGlobalOffsetProvider:
+        def structured_generate(
+            self,
+            request: dict[str, object],
+            output_model: type[OutputModelT],
+        ) -> OutputModelT:
+            input_context = request["input_context"]
+            assert isinstance(input_context, dict)
+            source_chunks = input_context["source_chunks"]
+            assert isinstance(source_chunks, list)
+            assert output_model is ClaimProposalBatchV1
+            second_chunk = source_chunks[1]
+            assert isinstance(second_chunk, dict)
+            return output_model.model_validate(
+                {
+                    "batch_id": "claim-batch-normalized",
+                    "claims": [
+                        {
+                            "proposal_id": "claim-normalized",
+                            "claim_type": "FACTUAL_ASSERTION",
+                            "claim_text": "A source states the unique claim.",
+                            "temporal_scope": "PRESENT",
+                            "source_type": "NARRATOR",
+                            "source_id": None,
+                            "target_event_id": None,
+                            "verification_status": "UNVERIFIED",
+                            "evidence_refs": [
+                                {
+                                    "chunk_id": "incorrect-source-chunk",
+                                    "quote_start": 999,
+                                    "quote_end": 1017,
+                                    "quote_text": "UNIQUE_TARGET_CLAIM",
+                                }
+                            ],
+                            "confidence": 0.8,
+                            "reality_layer": "PRIMARY",
+                        }
+                    ],
+                }
+            )
+
+    provider = FakeGlobalOffsetProvider()
+    source_text = (
+        "Chapter 1\n\nFIRST_CHUNK_ONLY.\n\n"
+        "SECOND_CHUNK UNIQUE_TARGET_CLAIM appears here.\n\n"
+        "THIRD_CHUNK_ONLY."
+    )
+    try:
+        with create_test_client(
+            tmp_path,
+            monkeypatch,
+            enable_real_llm=True,
+            provider=provider,
+        ) as client:
+            project_response = client.post("/projects", json=PROJECT_PAYLOAD)
+            assert project_response.status_code == 201
+            _, chunks = import_text_and_collect_chunks(
+                client,
+                project_id="demo-project",
+                filename="three_chunks.txt",
+                text=source_text,
+            )
+            assert len(chunks) == 3
+            response = client.post(
+                "/projects/demo-project/agent-runs/narrative-analyst",
+                json={
+                    "mode": "claim_extraction",
+                    "chunk_ids": [chunk["chunk_id"] for chunk in chunks],
+                    "max_chars_per_chunk": 80,
+                    "real_llm_requested": True,
+                },
+            )
+    finally:
+        get_settings.cache_clear()
+
+    payload = response.json()
+    evidence = payload["proposal"]["claims"][0]["evidence_refs"][0]
+    assert response.status_code == 201
+    assert evidence["chunk_id"] == chunks[1]["chunk_id"]
+    assert evidence["quote_start"] == 13
+    assert evidence["quote_end"] == 32
+    assert payload["evidence_validation_passed"] is True
+    assert payload["quote_matched"] is True
+    assert payload["char_range_matched"] is True
+    assert payload["evidence_normalization"] == {
+        "rebound_chunk_ids": 1,
+        "rebased_quote_ranges": 1,
+        "cleared_quote_ranges": 0,
+    }
 
 
 def test_narrative_analyst_api_entity_summary_counts_aliases_without_listing_them(
@@ -476,9 +806,9 @@ def test_narrative_analyst_api_entity_summary_counts_aliases_without_listing_the
 
     payload = response.json()
     assert response.status_code == 201
-    assert payload["aliases_count"] == 1
+    assert payload["entities_count"] == 2
     assert "aliases" not in {key for key in payload if key != "proposal"}
-    assert payload["proposal"]["aliases"] == ["秘密别名"]
+    assert payload["proposal"]["entities"][0]["aliases"] == ["秘密别名"]
 
 
 def test_narrative_analyst_api_respects_explicit_chunk_ids_after_multiple_imports(
@@ -819,6 +1149,56 @@ def test_narrative_analyst_api_real_request_requires_enabled_setting(
     assert payload["agent_run_saved"] is True
     assert "ENABLE_REAL_LLM is false" in payload["error_message"]
     assert provider.calls == 0
+
+
+def test_narrative_analyst_api_entity_timeout_keeps_requested_mode_and_schema(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class FakeEntityTimeoutProvider(FakeNarrativeProvider):
+        def structured_generate(
+            self,
+            request: dict[str, object],
+            output_model: type[OutputModelT],
+        ) -> OutputModelT:
+            self.calls += 1
+            assert output_model is EntityProposalBatchV1
+            raise TimeoutError("LLM provider timeout")
+
+    provider = FakeEntityTimeoutProvider()
+    try:
+        with create_test_client(
+            tmp_path,
+            monkeypatch,
+            enable_real_llm=True,
+            provider=provider,
+        ) as client:
+            chunks = setup_imported_project(client)
+            response = client.post(
+                "/projects/demo-project/agent-runs/narrative-analyst",
+                json={
+                    "mode": "entity_extraction",
+                    "chunk_ids": [chunks[0]["chunk_id"]],
+                    "max_chars_per_chunk": 5,
+                    "real_llm_requested": True,
+                },
+            )
+    finally:
+        get_settings.cache_clear()
+
+    payload = response.json()
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert response.status_code == 201
+    assert payload["mode"] == "entity_extraction"
+    assert payload["output_schema"] == "EntityProposalBatchV1"
+    assert payload["agent_run_status"] == "FAILED"
+    assert payload["provider_success"] is False
+    assert payload["failure_category"] == "PROVIDER_TIMEOUT"
+    assert payload["proposal"] is None
+    assert provider.calls == 1
+    assert "EventProposalBatchV1" not in serialized
+    assert "platform-secret-key" not in serialized
+    assert "message.content" not in serialized
 
 
 def test_narrative_analyst_api_can_select_chunks_from_project_offset(

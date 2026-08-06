@@ -12,6 +12,8 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     assert (output_dir / "AgentRunV1.json").exists()
     assert (output_dir / "ProviderResultV1.json").exists()
     assert (output_dir / "MockProviderResultV1.json").exists()
+    assert (output_dir / "EntityProposalBatchV1.json").exists()
+    assert (output_dir / "ClaimProposalBatchV1.json").exists()
     assert (output_dir / "ClaimProposalV1.json").exists()
     assert (output_dir / "KnowledgeStateProposalV1.json").exists()
 
@@ -33,6 +35,7 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     assert event_schema["properties"]["confidence"]["minimum"] == 0
     assert event_schema["properties"]["confidence"]["maximum"] == 1
     assert "claim_type" in claim_schema["properties"]
+    assert "temporal_scope" in claim_schema["properties"]
     assert "verification_status" in claim_schema["properties"]
     assert "evidence_refs" in claim_schema["required"]
     assert claim_schema["additionalProperties"] is False

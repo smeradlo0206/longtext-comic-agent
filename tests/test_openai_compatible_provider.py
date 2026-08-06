@@ -9,9 +9,10 @@ import pytest
 from comic_agent.providers.openai_compatible import (
     OpenAICompatibleLLMProvider,
     ProviderResponseError,
+    ProviderTimeoutError,
 )
 from comic_agent.schemas.base import EvidenceRefV1, RealityLayer
-from comic_agent.schemas.narrative import EventProposalV1
+from comic_agent.schemas.narrative import EventProposalBatchV1, EventProposalV1
 
 
 class FakeResponse:
@@ -62,6 +63,34 @@ class FakeHttpClient:
         return self.response
 
 
+class SequenceHttpClient:
+    """Return configured outcomes in request order for retry tests."""
+
+    def __init__(self, outcomes: list[FakeResponse | Exception]) -> None:
+        self.outcomes = outcomes
+        self.requests: list[dict[str, Any]] = []
+
+    def post(
+        self,
+        url: str,
+        headers: dict[str, str],
+        json: dict[str, Any],
+        timeout: int,
+    ) -> FakeResponse:
+        self.requests.append(
+            {
+                "url": url,
+                "headers": headers,
+                "json": json,
+                "timeout": timeout,
+            }
+        )
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
 class RaisingHttpClient:
     def __init__(self, exc: Exception, cause: Exception | None = None) -> None:
         self.exc = exc
@@ -94,6 +123,10 @@ def _event_json() -> dict[str, Any]:
         "confidence": 0.9,
         "reality_layer": "PRIMARY",
     }
+
+
+def _event_batch_json() -> dict[str, Any]:
+    return {"batch_id": "event-batch-1", "events": [_event_json()]}
 
 
 def _chat_response(
@@ -181,8 +214,46 @@ def test_openai_compatible_provider_sends_json_object_response_format() -> None:
     assert client.requests[0]["json"]["response_format"] == {"type": "json_object"}
 
 
+def test_openai_compatible_provider_sends_compact_resolved_output_contract() -> None:
+    """Keep batch extraction requests small enough to reserve output budget for JSON."""
+
+    response = _chat_response(json.dumps(_event_batch_json(), ensure_ascii=False))
+    client = FakeHttpClient(response=response)
+    provider = OpenAICompatibleLLMProvider(api_key="secret-test-key", http_client=client)
+
+    provider.structured_generate(
+        {
+            "system_prompt": "Extract evidence-backed events.",
+            "user_prompt": "Return one event batch.",
+            "input_context": {"source_chunks": [{"chunk_id": "chunk-1", "text": "正文。"}]},
+        },
+        EventProposalBatchV1,
+    )
+
+    user_message = client.requests[0]["json"]["messages"][1]["content"]
+    assert "Output contract:" in user_message
+    assert '"events"' in user_message
+    assert '"quote_text"' in user_message
+    assert '"actor_resolution_status"' in user_message
+    assert '"$defs"' not in user_message
+    assert '"$ref"' not in user_message
+    assert len(user_message) < 2600
+
+
 def test_openai_compatible_provider_extracts_markdown_wrapped_json() -> None:
     content = f"```json\n{json.dumps(_event_json(), ensure_ascii=False)}\n```"
+    provider = OpenAICompatibleLLMProvider(
+        api_key="secret-test-key",
+        http_client=FakeHttpClient(response=_chat_response(content)),
+    )
+
+    proposal = provider.structured_generate({}, EventProposalV1)
+
+    assert proposal.proposal_id == "proposal-1"
+
+
+def test_openai_compatible_provider_extracts_json_after_a_short_preamble() -> None:
+    content = f"Final structured result:\n{json.dumps(_event_json(), ensure_ascii=False)}"
     provider = OpenAICompatibleLLMProvider(
         api_key="secret-test-key",
         http_client=FakeHttpClient(response=_chat_response(content)),
@@ -201,6 +272,28 @@ def test_openai_compatible_provider_rejects_non_json_content() -> None:
 
     with pytest.raises(ValueError, match="JSON"):
         provider.structured_generate({}, EventProposalV1)
+
+
+def test_openai_compatible_provider_keeps_sanitized_diagnostics_for_invalid_json() -> None:
+    provider = OpenAICompatibleLLMProvider(
+        api_key="secret-test-key",
+        http_client=FakeHttpClient(
+            response=_chat_response(
+                "not json",
+                finish_reason="stop",
+                usage={"prompt_tokens": 11, "completion_tokens": 4, "total_tokens": 15},
+            )
+        ),
+    )
+
+    with pytest.raises(ProviderResponseError) as exc_info:
+        provider.structured_generate({}, EventProposalV1)
+
+    assert str(exc_info.value) == "LLM provider response did not contain valid JSON"
+    assert exc_info.value.diagnostics["finish_reason"] == "stop"
+    assert exc_info.value.diagnostics["content_type"] == "str"
+    assert exc_info.value.diagnostics["content_length"] == 8
+    assert exc_info.value.diagnostics["usage_total_tokens"] == 15
 
 
 @pytest.mark.parametrize(
@@ -384,6 +477,47 @@ def test_openai_compatible_provider_timeout_does_not_leak_key() -> None:
     with pytest.raises(TimeoutError) as exc_info:
         provider.structured_generate({}, EventProposalV1)
 
+    assert "secret-test-key" not in str(exc_info.value)
+
+
+def test_openai_compatible_provider_retries_one_transient_timeout() -> None:
+    client = SequenceHttpClient(
+        [
+            httpx.ReadTimeout("timed out"),
+            _chat_response(json.dumps(_event_json(), ensure_ascii=False)),
+        ]
+    )
+    provider = OpenAICompatibleLLMProvider(
+        api_key="secret-test-key",
+        timeout_seconds=123,
+        http_client=client,
+    )
+
+    proposal = provider.structured_generate({}, EventProposalV1)
+
+    assert proposal.proposal_id == "proposal-1"
+    assert len(client.requests) == 2
+    assert {request["timeout"] for request in client.requests} == {123}
+
+
+def test_openai_compatible_provider_reports_exhausted_timeout_diagnostics() -> None:
+    provider = OpenAICompatibleLLMProvider(
+        api_key="secret-test-key",
+        timeout_seconds=123,
+        http_client=SequenceHttpClient(
+            [httpx.ReadTimeout("timed out"), httpx.ReadTimeout("timed out")]
+        ),
+    )
+
+    with pytest.raises(ProviderTimeoutError) as exc_info:
+        provider.structured_generate({}, EventProposalV1)
+
+    assert str(exc_info.value) == "LLM provider read timeout after 2 attempts"
+    assert exc_info.value.diagnostics == {
+        "timeout_kind": "read",
+        "timeout_seconds": 123,
+        "request_attempts": 2,
+    }
     assert "secret-test-key" not in str(exc_info.value)
 
 

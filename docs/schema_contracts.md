@@ -1,6 +1,8 @@
 # Schema Contracts
 
-All V1 schemas use `schema_version = "1.0"` and live in `comic_agent/schemas`.
+V1 schemas live in `comic_agent/schemas`. Most phase-one schemas still use
+`schema_version = "1.0"`; explicitly noted proposal-layer contracts, such as
+Claim v1.1 and v1.2, may add versioned output compatibility rules.
 
 2026-07-28 update: this is an additive phase-one schema change. It adds
 `AgentRunV1`, `ProviderResultV1`, `MockProviderResultV1`, `AgentInputRefV1`, and
@@ -46,6 +48,39 @@ agent/workflow output contract for event extraction but does not change
 `EventProposalV1` fields or require a database migration. Older AgentRun payloads
 with a single `EventProposalV1` remain readable by evidence audit APIs.
 
+2026-08-05 Entity/Claim batch output contract update: `entity_extraction` now
+returns `EntityProposalBatchV1` and `claim_extraction` now returns
+`ClaimProposalBatchV1` as stable outer proposals. The batch schemas add
+non-empty `entities[]` / `claims[]` collections and reject duplicate item
+`proposal_id` values. This changes the NarrativeAnalyst mode output contract but
+does not change `EntityProposalV1` or `ClaimProposalV1` fields and does not
+require a database migration. AgentRun and evidence audit APIs now enumerate all
+proposal ids from `events[]`, `entities[]`, or `claims[]`.
+
+2026-08-06 Claim semantic classification update: new `claim_extraction` outputs
+use `ClaimProposalV1.schema_version = "1.1"` inside
+`ClaimProposalBatchV1.schema_version = "1.1"`. V1.1 replaces the broad
+`ASSERTION` output category with `FACTUAL_ASSERTION`, `BELIEF`, `HYPOTHESIS`,
+`DENIAL`, `ACCUSATION`, `MEMORY`, `INTERPRETATION`, `PREDICTION`, and
+`COMMITMENT`, and adds required `temporal_scope` values `PAST`, `PRESENT`,
+`FUTURE`, or `ATEMPORAL`. Historical `schema_version = "1.0"` claim and claim
+ batch payloads remain readable, including legacy `ASSERTION` with
+ `temporal_scope = null`. V1.1 rejects `ASSERTION` and requires every batch item
+ to also be v1.1. This is a proposal-layer output contract change and requires
+ no database migration.
+
+2026-08-06 Claim semantic-boundary update: fresh claim-extraction output now uses
+`ClaimProposalV1.schema_version = "1.2"` inside
+`ClaimProposalBatchV1.schema_version = "1.2"`. V1.2 adds `EVALUATION` for
+source-grounded quality, strength, difficulty, or value judgements, and makes the
+classification priority explicit: an uncertainty hedge is `HYPOTHESIS`; an
+explicit unhedged mental stance is `BELIEF`; an evaluative judgement is
+`EVALUATION`; a causal, motive, or meaning explanation is `INTERPRETATION`; only
+then can a direct unhedged statement be `FACTUAL_ASSERTION`. Historical v1.0 and
+v1.1 claim and batch payloads remain readable. V1.2 batches require all contained
+claims to be v1.2, and `EVALUATION` is rejected for earlier versions. This is a
+proposal-layer output contract change and requires no database migration.
+
 | Schema | Purpose | Required Fields | Evidence | Readers | Proposal Producer | Canonical Commit |
 | --- | --- | --- | --- | --- | --- | --- |
 | BaseRecordV1 | Common record metadata. | id, project_id, revision, status, timestamps, created_by | N/A | Services | Services | CommitService |
@@ -55,9 +90,11 @@ with a single `EventProposalV1` remain readable by evidence audit APIs.
 | SourceChapterV1 | Chapter boundary. | chapter_id, document_id, order | N/A | Agents, API | DocumentParser | SourceRepository |
 | SourceChunkV1 | Evidence atom. | chunk_id, document_id, chapter_id, text, checksum | Self | All agents | DocumentParser | SourceRepository |
 | EntityProposalV1 | Candidate entity. | proposal_id, type, name, evidence_refs, confidence | Required | Merge services | Entity agents | CommitService later |
+| EntityProposalBatchV1 | Stable entity-extraction outer proposal containing source-ordered distinct entities. | batch_id, entities | Required through each entity | Merge services, review UI | Entity agent | CommitService validates each entity later |
 | EventProposalV1 | Candidate event, including explicit actor-resolution state. | proposal_id, type, summary, evidence_refs, confidence | Required | Temporal/state agents | Event agent | CommitService later |
 | EventProposalBatchV1 | Stable event-extraction outer proposal containing source-ordered events. | batch_id, events | Required through each event | Timeline, temporal/state agents, review UI | Event agent | CommitService validates each event later |
-| ClaimProposalV1 | Candidate assertion, denial, accusation, hypothesis, memory, interpretation, or prediction. | proposal_id, claim_type, claim_text, source_type, verification_status, evidence_refs, confidence, reality_layer | Required | CommitService, review, knowledge agents | Claim/knowledge agents | CommitService later |
+| ClaimProposalV1 | Candidate factual assertion, belief, hypothesis, denial, accusation, memory, evaluation, interpretation, prediction, or commitment. New outputs use schema_version 1.2; schema_version 1.0/1.1 payloads remain readable. | proposal_id, claim_type, claim_text, temporal_scope for v1.2, source_type, verification_status, evidence_refs, confidence, reality_layer | Required | CommitService, review, knowledge agents | Claim/knowledge agents | CommitService later |
+| ClaimProposalBatchV1 | Stable claim-extraction outer proposal containing source-ordered distinct claims. New outputs use schema_version 1.2 and require all claims to be v1.2. | batch_id, claims | Required through each claim | Review UI, knowledge agents | Claim agent | CommitService validates each claim later |
 | KnowledgeStateProposalV1 | Candidate character knowledge or belief state. | proposal_id, character_id, knowledge_target_id, epistemic_status, reality_layer, evidence_refs, confidence | Required | Dialogue, panel, review, knowledge agents | Knowledge agents | CommitService later |
 | TemporalRelationProposalV1 | Candidate event relation. | proposal_id, source, target, relation, confidence | Required unless UNKNOWN | Temporal solver | Temporal agent | CommitService later |
 | StateChangeProposalV1 | Candidate state mutation. | proposal_id, event_id, target, path, evidence_refs | Required | State compiler | State agent | CommitService later |

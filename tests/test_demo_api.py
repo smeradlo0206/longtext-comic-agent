@@ -50,6 +50,23 @@ def test_demo_status_reports_sanitized_runtime_state(
     assert "secret-test-key" not in serialized
 
 
+def test_demo_status_defaults_to_no_access_code_for_local_console(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("INTERNAL_DEMO_REQUIRE_ACCESS_CODE", raising=False)
+    monkeypatch.delenv("INTERNAL_DEMO_ACCESS_CODE", raising=False)
+    get_settings.cache_clear()
+    try:
+        with create_test_client(tmp_path) as client:
+            response = client.get("/demo/status")
+    finally:
+        get_settings.cache_clear()
+
+    assert response.status_code == 200
+    assert response.json()["require_access_code"] is False
+
+
 def test_demo_verify_access_accepts_correct_code(
     tmp_path: Path,
     monkeypatch,

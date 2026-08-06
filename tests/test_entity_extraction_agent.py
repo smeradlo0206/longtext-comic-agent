@@ -3,7 +3,7 @@ from typing import TypeVar
 from pydantic import BaseModel
 
 from comic_agent.agents.entity_extraction import EntityExtractionAgent
-from comic_agent.schemas.narrative import EntityProposalV1
+from comic_agent.schemas.narrative import EntityProposalBatchV1
 
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
 
@@ -20,26 +20,44 @@ class FakeProvider:
         self.requests.append(request)
         return output_model.model_validate(
             {
-                "proposal_id": "entity-1",
-                "entity_type": "CHARACTER",
-                "canonical_name": "Lin Fan",
-                "aliases": ["Young Master Lin"],
-                "evidence_refs": [
+                "batch_id": "entity-batch-1",
+                "entities": [
                     {
-                        "chunk_id": "chunk-1",
-                        "quote_text": "Young Master Lin",
-                    }
+                        "proposal_id": "entity-1",
+                        "entity_type": "CHARACTER",
+                        "canonical_name": "Lin Fan",
+                        "aliases": ["Young Master Lin"],
+                        "evidence_refs": [
+                            {
+                                "chunk_id": "chunk-1",
+                                "quote_text": "Young Master Lin",
+                            }
+                        ],
+                        "confidence": 0.9,
+                    },
+                    {
+                        "proposal_id": "entity-2",
+                        "entity_type": "ORGANIZATION",
+                        "canonical_name": "Blue Hall",
+                        "aliases": [],
+                        "evidence_refs": [
+                            {
+                                "chunk_id": "chunk-1",
+                                "quote_text": "Blue Hall",
+                            }
+                        ],
+                        "confidence": 0.82,
+                    },
                 ],
-                "confidence": 0.9,
             }
         )
 
 
-def test_entity_extraction_agent_calls_provider_and_returns_entity_proposal() -> None:
+def test_entity_extraction_agent_calls_provider_and_returns_entity_batch() -> None:
     provider = FakeProvider()
     agent = EntityExtractionAgent(provider)
 
-    proposal = agent.run(
+    batch = agent.run(
         {
             "project_id": "project-1",
             "source_chunk_ids": ["chunk-1"],
@@ -52,10 +70,10 @@ def test_entity_extraction_agent_calls_provider_and_returns_entity_proposal() ->
         }
     )
 
-    assert isinstance(proposal, EntityProposalV1)
-    assert proposal.proposal_id == "entity-1"
-    assert proposal.canonical_name == "Lin Fan"
-    assert proposal.evidence_refs
+    assert isinstance(batch, EntityProposalBatchV1)
+    assert batch.batch_id == "entity-batch-1"
+    assert [entity.proposal_id for entity in batch.entities] == ["entity-1", "entity-2"]
+    assert batch.entities[0].canonical_name == "Lin Fan"
     assert provider.requests
     assert provider.requests[0]["input_context"]["source_chunk_ids"] == ["chunk-1"]  # type: ignore[index]
 
@@ -75,8 +93,11 @@ def test_entity_extraction_agent_prompt_sets_entity_boundaries() -> None:
     request = provider.requests[0]
     prompt = f"{request['system_prompt']}\n{request['user_prompt']}"
     for expected in [
-        "exactly one",
-        "EntityProposalV1",
+        "EntityProposalBatchV1",
+        "entities",
+        "number of entities must be based on real entities, not chunk count",
+        "multiple entities",
+        "same entity appears across chunks, output it once",
         "source_chunks",
         "Do not invent",
         "canonical_name",
@@ -85,6 +106,7 @@ def test_entity_extraction_agent_prompt_sets_entity_boundaries() -> None:
         "EvidenceRef",
         "JSON only",
         "StoryBible",
+        "Do not treat ordinary actions, events, or claims as entities.",
     ]:
         assert expected in prompt
 
@@ -106,7 +128,7 @@ def test_entity_extraction_agent_prompt_prevents_long_reasoning() -> None:
         "Do not reason step by step.",
         "Do not list candidate entities.",
         "Do not explain your choice.",
-        "Return EntityProposalV1 JSON only.",
+        "Return final EntityProposalBatchV1 JSON only.",
     ]:
         assert expected in prompt
 
@@ -170,7 +192,7 @@ def test_entity_extraction_agent_spec_is_bounded_and_proposal_only() -> None:
     assert spec.agent_id == "entity-extraction-agent"
     assert spec.version == "0.1"
     assert spec.reads == ["SourceChunkV1"]
-    assert spec.output_schema == "EntityProposalV1"
+    assert spec.output_schema == "EntityProposalBatchV1"
     assert spec.can_write_canonical_data is False
     assert spec.requires_evidence is True
     assert spec.max_context_chunks == 3

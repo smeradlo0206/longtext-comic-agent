@@ -1,12 +1,17 @@
 """Sanitized NarrativeAnalyst smoke/API summary helpers."""
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel
 
 from comic_agent.config import Settings
+from comic_agent.schemas.base import EvidenceRefV1
 from comic_agent.schemas.narrative import (
+    ClaimProposalBatchV1,
     ClaimProposalV1,
+    EntityProposalBatchV1,
     EntityProposalV1,
     EventProposalBatchV1,
     EventProposalV1,
@@ -17,12 +22,26 @@ from comic_agent.services.context_builder import AgentContext
 DEFAULT_MAX_CHARS_PER_CHUNK = 1200
 SELECTED_CHUNK_PREVIEW_CHARS = 60
 
+
+@dataclass(frozen=True)
+class EvidenceNormalizationResult:
+    """Proposal plus audit counts for deterministic evidence normalization."""
+
+    proposal: BaseModel
+    rebound_chunk_ids: int
+    rebased_quote_ranges: int
+    cleared_quote_ranges: int
+
 FAILURE_RECOMMENDED_ACTIONS = {
     "PROVIDER_TIMEOUT": "increase timeout or reduce max_chars_per_chunk",
     "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT": (
         "reduce max_chars_per_chunk before raising max output tokens"
     ),
     "PROVIDER_CONTENT_MISSING": "disable response_format or reduce input budget",
+    "PROVIDER_INVALID_JSON": "retry with a smaller input budget or a JSON-capable chat model",
+    "PROVIDER_HTTP_ERROR": "check provider status, model name, and request settings",
+    "PROVIDER_CONNECTION_ERROR": "check campus network, VPN, and provider endpoint reachability",
+    "PROVIDER_RESPONSE_FORMAT_INVALID": "retry once and inspect sanitized provider diagnostics",
     "SCHEMA_VALIDATION_FAILED": "inspect provider JSON shape and mode boundary",
     "EVIDENCE_VALIDATION_FAILED": "manual review evidence fields against selected context",
     "QUOTE_NOT_MATCHED": "tighten exact quote prompt and use shorter verbatim quote",
@@ -43,6 +62,9 @@ SANITIZED_DIAGNOSTIC_KEYS = {
     "usage_prompt_tokens",
     "usage_completion_tokens",
     "usage_total_tokens",
+    "timeout_kind",
+    "timeout_seconds",
+    "request_attempts",
 }
 
 
@@ -183,13 +205,129 @@ def slim_input_context(
             {
                 "chunk_id": chunk.chunk_id,
                 "chapter_id": chunk.chapter_id,
-                "char_start": chunk.char_start,
-                "char_end": chunk.char_end,
                 "text": chunk.text,
             }
             for chunk in visible_chunks
         ],
     }
+
+
+def normalize_proposal_evidence(
+    proposal: BaseModel,
+    selected_chunks: list[SourceChunkV1],
+) -> EvidenceNormalizationResult:
+    """Repair only uniquely verifiable evidence references from bounded context."""
+
+    if isinstance(proposal, EventProposalBatchV1):
+        events, counts = _normalize_proposal_items(proposal.events, selected_chunks)
+        return EvidenceNormalizationResult(
+            proposal=proposal.model_copy(update={"events": events}),
+            **counts,
+        )
+    if isinstance(proposal, EntityProposalBatchV1):
+        entities, counts = _normalize_proposal_items(proposal.entities, selected_chunks)
+        return EvidenceNormalizationResult(
+            proposal=proposal.model_copy(update={"entities": entities}),
+            **counts,
+        )
+    if isinstance(proposal, ClaimProposalBatchV1):
+        claims, counts = _normalize_proposal_items(proposal.claims, selected_chunks)
+        return EvidenceNormalizationResult(
+            proposal=proposal.model_copy(update={"claims": claims}),
+            **counts,
+        )
+    if isinstance(proposal, (EventProposalV1, EntityProposalV1, ClaimProposalV1)):
+        items, counts = _normalize_proposal_items([proposal], selected_chunks)
+        return EvidenceNormalizationResult(proposal=items[0], **counts)
+    return EvidenceNormalizationResult(
+        proposal=proposal,
+        rebound_chunk_ids=0,
+        rebased_quote_ranges=0,
+        cleared_quote_ranges=0,
+    )
+
+
+def _normalize_proposal_items(
+    items: Sequence[EventProposalV1 | EntityProposalV1 | ClaimProposalV1],
+    selected_chunks: list[SourceChunkV1],
+) -> tuple[
+    list[EventProposalV1 | EntityProposalV1 | ClaimProposalV1],
+    dict[str, int],
+]:
+    normalized_items: list[EventProposalV1 | EntityProposalV1 | ClaimProposalV1] = []
+    counts = {
+        "rebound_chunk_ids": 0,
+        "rebased_quote_ranges": 0,
+        "cleared_quote_ranges": 0,
+    }
+    for item in items:
+        evidence_refs, item_counts = _normalize_evidence_refs(item.evidence_refs, selected_chunks)
+        normalized_items.append(item.model_copy(update={"evidence_refs": evidence_refs}))
+        for key, value in item_counts.items():
+            counts[key] += value
+    return normalized_items, counts
+
+
+def _normalize_evidence_refs(
+    evidence_refs: list[EvidenceRefV1],
+    selected_chunks: list[SourceChunkV1],
+) -> tuple[list[EvidenceRefV1], dict[str, int]]:
+    """Rebind unique exact quotes and convert their offsets to local chunk coordinates."""
+
+    chunks_by_id = {chunk.chunk_id: chunk for chunk in selected_chunks}
+    normalized_refs: list[EvidenceRefV1] = []
+    counts = {
+        "rebound_chunk_ids": 0,
+        "rebased_quote_ranges": 0,
+        "cleared_quote_ranges": 0,
+    }
+    for evidence_ref in evidence_refs:
+        quote_text = evidence_ref.quote_text
+        evidence_chunk = chunks_by_id.get(evidence_ref.chunk_id)
+        updates: dict[str, object] = {}
+
+        if quote_text is not None:
+            matching_chunks = [chunk for chunk in selected_chunks if quote_text in chunk.text]
+            if evidence_chunk not in matching_chunks and len(matching_chunks) == 1:
+                evidence_chunk = matching_chunks[0]
+                updates["chunk_id"] = evidence_chunk.chunk_id
+                counts["rebound_chunk_ids"] += 1
+
+            if evidence_chunk is not None and evidence_chunk in matching_chunks:
+                quote_start = evidence_ref.quote_start
+                quote_end = evidence_ref.quote_end
+                if quote_start is not None and quote_end is not None:
+                    range_matches = (
+                        0 <= quote_start <= quote_end <= len(evidence_chunk.text)
+                        and evidence_chunk.text[quote_start:quote_end] == quote_text
+                    )
+                    if not range_matches:
+                        local_starts = _all_occurrence_starts(evidence_chunk.text, quote_text)
+                        if len(local_starts) == 1:
+                            local_start = local_starts[0]
+                            updates["quote_start"] = local_start
+                            updates["quote_end"] = local_start + len(quote_text)
+                            counts["rebased_quote_ranges"] += 1
+                        else:
+                            updates["quote_start"] = None
+                            updates["quote_end"] = None
+                            counts["cleared_quote_ranges"] += 1
+
+        normalized_refs.append(evidence_ref.model_copy(update=updates))
+    return normalized_refs, counts
+
+
+def _all_occurrence_starts(text: str, quote_text: str) -> list[int]:
+    """Return every start offset for an exact substring, including overlapping matches."""
+
+    starts: list[int] = []
+    search_start = 0
+    while True:
+        found_at = text.find(quote_text, search_start)
+        if found_at == -1:
+            return starts
+        starts.append(found_at)
+        search_start = found_at + 1
 
 
 def add_proposal_details(
@@ -207,6 +345,20 @@ def add_proposal_details(
             selected_chunks=selected_chunks,
         )
         return
+    if isinstance(proposal, EntityProposalBatchV1):
+        add_entity_batch_details(
+            summary=summary,
+            batch=proposal,
+            selected_chunks=selected_chunks,
+        )
+        return
+    if isinstance(proposal, ClaimProposalBatchV1):
+        add_claim_batch_details(
+            summary=summary,
+            batch=proposal,
+            selected_chunks=selected_chunks,
+        )
+        return
     if isinstance(proposal, EventProposalV1):
         summary["proposal_id"] = proposal.proposal_id
         summary["event_type"] = proposal.event_type
@@ -217,7 +369,6 @@ def add_proposal_details(
     if isinstance(proposal, EntityProposalV1):
         summary["proposal_id"] = proposal.proposal_id
         summary["entity_type"] = proposal.entity_type
-        summary["canonical_name"] = proposal.canonical_name
         summary["aliases_count"] = len(proposal.aliases)
         summary["confidence"] = proposal.confidence
         summary.update(validate_evidence(proposal.evidence_refs, selected_chunks))
@@ -270,6 +421,80 @@ def add_event_batch_details(
     )
 
 
+def add_entity_batch_details(
+    *,
+    summary: dict[str, Any],
+    batch: EntityProposalBatchV1,
+    selected_chunks: list[SourceChunkV1],
+) -> None:
+    """Add sanitized EntityProposalBatchV1 metadata to a summary."""
+
+    evidence_results = [
+        _entity_evidence_summary(entity, selected_chunks)
+        for entity in batch.entities
+    ]
+    summary["batch_id"] = batch.batch_id
+    summary["entities_count"] = len(batch.entities)
+    summary["entity_proposal_ids"] = [entity.proposal_id for entity in batch.entities]
+    summary["entity_evidence_results"] = [
+        {
+            "proposal_id": result["proposal_id"],
+            "entity_type": result["entity_type"],
+            "evidence_chunk_id": result["evidence_chunk_id"],
+            "quote_matched": result["quote_matched"],
+            "char_range_matched": result["char_range_matched"],
+        }
+        for result in evidence_results
+    ]
+    summary["evidence_validation_passed"] = all(
+        result["evidence_validation_passed"] is True for result in evidence_results
+    )
+    summary["quote_matched"] = _combine_tristate(
+        [result["quote_matched"] for result in evidence_results]
+    )
+    summary["char_range_matched"] = _combine_tristate(
+        [result["char_range_matched"] for result in evidence_results]
+    )
+
+
+def add_claim_batch_details(
+    *,
+    summary: dict[str, Any],
+    batch: ClaimProposalBatchV1,
+    selected_chunks: list[SourceChunkV1],
+) -> None:
+    """Add sanitized ClaimProposalBatchV1 metadata to a summary."""
+
+    evidence_results = [
+        _claim_evidence_summary(claim, selected_chunks)
+        for claim in batch.claims
+    ]
+    summary["batch_id"] = batch.batch_id
+    summary["claims_count"] = len(batch.claims)
+    summary["claim_proposal_ids"] = [claim.proposal_id for claim in batch.claims]
+    summary["claim_evidence_results"] = [
+        {
+            "proposal_id": result["proposal_id"],
+            "claim_type": result["claim_type"],
+            "source_type": result["source_type"],
+            "temporal_scope": result["temporal_scope"],
+            "evidence_chunk_id": result["evidence_chunk_id"],
+            "quote_matched": result["quote_matched"],
+            "char_range_matched": result["char_range_matched"],
+        }
+        for result in evidence_results
+    ]
+    summary["evidence_validation_passed"] = all(
+        result["evidence_validation_passed"] is True for result in evidence_results
+    )
+    summary["quote_matched"] = _combine_tristate(
+        [result["quote_matched"] for result in evidence_results]
+    )
+    summary["char_range_matched"] = _combine_tristate(
+        [result["char_range_matched"] for result in evidence_results]
+    )
+
+
 def _event_evidence_summary(
     event: EventProposalV1,
     selected_chunks: list[SourceChunkV1],
@@ -278,6 +503,32 @@ def _event_evidence_summary(
     return {
         "proposal_id": event.proposal_id,
         "event_type": event.event_type,
+        **validation,
+    }
+
+
+def _entity_evidence_summary(
+    entity: EntityProposalV1,
+    selected_chunks: list[SourceChunkV1],
+) -> dict[str, Any]:
+    validation = validate_evidence_refs(entity.evidence_refs, selected_chunks)
+    return {
+        "proposal_id": entity.proposal_id,
+        "entity_type": entity.entity_type,
+        **validation,
+    }
+
+
+def _claim_evidence_summary(
+    claim: ClaimProposalV1,
+    selected_chunks: list[SourceChunkV1],
+) -> dict[str, Any]:
+    validation = validate_evidence_refs(claim.evidence_refs, selected_chunks)
+    return {
+        "proposal_id": claim.proposal_id,
+        "claim_type": str(claim.claim_type),
+        "source_type": str(claim.source_type),
+        "temporal_scope": str(claim.temporal_scope) if claim.temporal_scope is not None else None,
         **validation,
     }
 
@@ -416,6 +667,14 @@ def classify_exception(exc: BaseException) -> str:
         return "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT"
     if "content is missing" in message or content_type == "NoneType":
         return "PROVIDER_CONTENT_MISSING"
+    if "did not contain valid json" in message:
+        return "PROVIDER_INVALID_JSON"
+    if message.startswith("llm provider http error"):
+        return "PROVIDER_HTTP_ERROR"
+    if "llm provider connection" in message or "llm provider network" in message:
+        return "PROVIDER_CONNECTION_ERROR"
+    if "llm provider response format is invalid" in message:
+        return "PROVIDER_RESPONSE_FORMAT_INVALID"
     if "schema validation" in message or "validation" in message:
         return "SCHEMA_VALIDATION_FAILED"
     return "UNKNOWN_ERROR"
@@ -485,21 +744,29 @@ def manual_review_checklist(mode: str) -> dict[str, Any]:
         }
     if mode == "entity_extraction":
         return {
-            "is_entity": None,
-            "entity_type_correct": None,
-            "canonical_name_correct": None,
-            "evidence_supports_entity": None,
-            "salient_entity": None,
+            "entities_cover_major_entities": None,
+            "entity_count_reasonable": None,
+            "no_duplicate_entities": None,
+            "entity_types_correct": None,
+            "names_and_aliases_not_invented": None,
+            "every_entity_has_supporting_evidence": None,
             "manual_score": None,
             "manual_issue": None,
         }
     if mode == "claim_extraction":
         return {
-            "is_claim": None,
-            "claim_type_correct": None,
-            "source_type_correct": None,
-            "evidence_supports_claim": None,
-            "salient_claim": None,
+            "claims_cover_major_claims": None,
+            "claim_count_reasonable": None,
+            "no_duplicate_claims": None,
+            "claim_is_attributable_proposition": None,
+            "claim_type_matches_decision_table": None,
+            "factual_assertions_are_unhedged": None,
+            "belief_and_hypothesis_distinguished": None,
+            "evaluation_and_interpretation_distinguished": None,
+            "claim_temporal_scope_correct": None,
+            "prediction_commitment_distinguished": None,
+            "every_claim_has_supporting_evidence": None,
+            "no_duplicate_or_invented_claims": None,
             "manual_score": None,
             "manual_issue": None,
         }

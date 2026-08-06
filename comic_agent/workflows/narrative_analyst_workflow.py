@@ -13,7 +13,11 @@ from comic_agent.providers.llm import LLMProvider
 from comic_agent.providers.openai_compatible import OpenAICompatibleLLMProvider
 from comic_agent.repositories.agent_run_repository import AgentRunRepository
 from comic_agent.repositories.source_repository import SourceRepository
-from comic_agent.schemas.narrative import EventProposalBatchV1
+from comic_agent.schemas.narrative import (
+    ClaimProposalBatchV1,
+    EntityProposalBatchV1,
+    EventProposalBatchV1,
+)
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.workflow import AgentRunStatus, AgentRunV1, ProviderResultV1, ProviderType
 from comic_agent.services.context_builder import AgentContext, ContextBuilder
@@ -26,6 +30,7 @@ from comic_agent.services.narrative_analyst_summary import (
     classify_evidence_result,
     classify_exception,
     manual_review_checklist,
+    normalize_proposal_evidence,
     sanitize_error_message,
     selected_chunk_metadata,
     set_failure,
@@ -188,6 +193,13 @@ class NarrativeAnalystWorkflow:
             provider = self._provider or self._build_provider()
             summary["real_llm_called"] = True
             proposal = NarrativeAnalyst(provider).run(mode, input_context)
+            evidence_normalization = normalize_proposal_evidence(proposal, visible_chunks)
+            proposal = evidence_normalization.proposal
+            summary["evidence_normalization"] = {
+                "rebound_chunk_ids": evidence_normalization.rebound_chunk_ids,
+                "rebased_quote_ranges": evidence_normalization.rebased_quote_ranges,
+                "cleared_quote_ranges": evidence_normalization.cleared_quote_ranges,
+            }
             provider_result = self._provider_result(
                 success=True,
                 output_schema=mode_spec.output_schema,
@@ -457,6 +469,10 @@ class NarrativeAnalystWorkflow:
             return []
         if isinstance(proposal, EventProposalBatchV1):
             return [event.proposal_id for event in proposal.events]
+        if isinstance(proposal, EntityProposalBatchV1):
+            return [entity.proposal_id for entity in proposal.entities]
+        if isinstance(proposal, ClaimProposalBatchV1):
+            return [claim.proposal_id for claim in proposal.claims]
         proposal_id = getattr(proposal, "proposal_id", None)
         return [str(proposal_id)] if proposal_id is not None else []
 

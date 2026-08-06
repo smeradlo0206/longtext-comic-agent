@@ -16,7 +16,7 @@ from comic_agent.database.base import Base
 from comic_agent.database.session import make_engine, make_session_factory
 from comic_agent.providers.openai_compatible import OpenAICompatibleLLMProvider
 from comic_agent.repositories.source_repository import SourceRepository
-from comic_agent.schemas.narrative import EntityProposalV1
+from comic_agent.schemas.narrative import EntityProposalBatchV1, EntityProposalV1
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.services.context_builder import AgentContext, ContextBuilder
 from comic_agent.services.document_parser import DocumentParser
@@ -89,7 +89,7 @@ def run_smoke(
             "agent_run_status": None,
             "evidence_validation_passed": None,
             "provider_success": None,
-            "output_schema": "EntityProposalV1",
+            "output_schema": "EntityProposalBatchV1",
             "schema_validation_passed": None,
         }
 
@@ -187,17 +187,46 @@ def _slim_input_context(context: AgentContext) -> dict[str, object]:
 def _add_proposal_details(
     *,
     summary: dict[str, Any],
-    proposal: EntityProposalV1,
+    proposal: EntityProposalBatchV1,
     selected_chunks: list[SourceChunkV1],
 ) -> None:
-    summary["proposal_id"] = proposal.proposal_id
-    summary["entity_type"] = proposal.entity_type
-    summary["canonical_name"] = proposal.canonical_name
-    summary["aliases_count"] = len(proposal.aliases)
-    summary["confidence"] = proposal.confidence
+    evidence_results = [
+        _entity_evidence_summary(entity, selected_chunks)
+        for entity in proposal.entities
+    ]
+    summary["batch_id"] = proposal.batch_id
+    summary["entities_count"] = len(proposal.entities)
+    summary["entity_proposal_ids"] = [entity.proposal_id for entity in proposal.entities]
+    summary["entity_evidence_results"] = [
+        {
+            "proposal_id": result["proposal_id"],
+            "entity_type": result["entity_type"],
+            "evidence_chunk_id": result["evidence_chunk_id"],
+            "quote_matched": result["quote_matched"],
+            "char_range_matched": result["char_range_matched"],
+        }
+        for result in evidence_results
+    ]
+    summary["evidence_validation_passed"] = all(
+        result["evidence_validation_passed"] is True for result in evidence_results
+    )
+    summary["quote_matched"] = _combine_tristate(
+        [result["quote_matched"] for result in evidence_results]
+    )
+    summary["char_range_matched"] = _combine_tristate(
+        [result["char_range_matched"] for result in evidence_results]
+    )
 
-    evidence_result = _validate_entity_evidence(proposal, selected_chunks)
-    summary.update(evidence_result)
+
+def _entity_evidence_summary(
+    proposal: EntityProposalV1,
+    selected_chunks: list[SourceChunkV1],
+) -> dict[str, Any]:
+    return {
+        "proposal_id": proposal.proposal_id,
+        "entity_type": proposal.entity_type,
+        **_validate_entity_evidence(proposal, selected_chunks),
+    }
 
 
 def _validate_entity_evidence(
@@ -252,6 +281,14 @@ def _validate_entity_evidence(
 
     result["evidence_validation_passed"] = evidence_valid
     return result
+
+
+def _combine_tristate(values: list[Any]) -> bool | None:
+    if any(value is False for value in values):
+        return False
+    if any(value is True for value in values):
+        return True
+    return None
 
 
 def _add_provider_diagnostics(summary: dict[str, Any], exc: BaseException) -> None:

@@ -2,17 +2,25 @@
 
 from comic_agent.agents.specs import AgentSpec
 from comic_agent.providers.llm import LLMProvider
-from comic_agent.schemas.narrative import EntityProposalV1
+from comic_agent.schemas.narrative import EntityProposalBatchV1
 
 ENTITY_EXTRACTION_SYSTEM_PROMPT = """
 You are EntityExtractionAgent prompt v0.1, a strict story entity extraction agent.
 You may only use the provided input_context.source_chunks.
 You may only cite chunk ids from input_context.source_chunk_ids.
-Extract exactly one EntityProposalV1.
-Return EntityProposalV1 JSON only.
-Choose one important, specific, reusable entity from the current source_chunks.
+Extract one EntityProposalBatchV1 containing all significant distinct EntityProposalV1
+items from the current source_chunks.
+Return EntityProposalBatchV1 JSON only.
+The batch must contain an entities array.
+The number of entities must be based on real entities, not chunk count.
+One chunk can contain multiple entities, and three chunks can still contain one
+entity if only one distinct significant entity is present.
+If the same entity appears across chunks, output it once with the best compact evidence.
+Do not duplicate aliases or proposal ids.
+Choose important, specific, reusable entities from the current source_chunks.
 Prefer entities that affect later story understanding.
 Do not choose generic common nouns.
+Do not treat ordinary actions, events, or claims as entities.
 Do not treat ordinary actions, event results, or character judgments as entities.
 Use these entity_type labels when supported by source text:
 CHARACTER: people, beasts, monsters, or actor-like beings with agency.
@@ -36,7 +44,7 @@ Do not infer aliases.
 Do not put identity descriptions, adjectives, or relationship descriptions in aliases.
 If there are no explicit aliases, use aliases=[].
 entity_type must be a concise label based on source evidence.
-evidence_refs must contain at least one EvidenceRefV1.
+Each EntityProposalV1 must have independent evidence_refs with at least one EvidenceRefV1.
 Each evidence_refs.chunk_id must come from input_context.source_chunk_ids.
 Each quote_text must be copied exactly from the referenced SourceChunkV1.text.
 Use the shortest exact quote that supports the entity.
@@ -56,19 +64,20 @@ Do not output ClaimProposalV1.
 Do not output KnowledgeStateProposalV1.
 Do not output StoryBible canonical data.
 Do not output canonical StoryBible data.
+Return final EntityProposalBatchV1 JSON only.
 Return final JSON only. JSON only.
 Do not return markdown or explanations.
 """.strip()
 
 
 class EntityExtractionAgent:
-    """Minimal entity extraction agent that returns EntityProposalV1 only."""
+    """Minimal entity extraction agent that returns EntityProposalBatchV1 only."""
 
     spec = AgentSpec(
         agent_id="entity-extraction-agent",
         version="0.1",
         reads=["SourceChunkV1"],
-        output_schema="EntityProposalV1",
+        output_schema="EntityProposalBatchV1",
         tools=[],
         can_write_canonical_data=False,
         requires_evidence=True,
@@ -79,18 +88,19 @@ class EntityExtractionAgent:
     def __init__(self, provider: LLMProvider) -> None:
         self._provider = provider
 
-    def run(self, input_context: dict[str, object]) -> EntityProposalV1:
-        """Extract one entity proposal from bounded source context."""
+    def run(self, input_context: dict[str, object]) -> EntityProposalBatchV1:
+        """Extract one entity proposal batch from bounded source context."""
 
         return self._provider.structured_generate(
             {
                 "system_prompt": ENTITY_EXTRACTION_SYSTEM_PROMPT,
                 "user_prompt": (
                     "Input includes project_id, source_chunk_ids, and source_chunks. "
-                    "Extract exactly one source-grounded entity, handle uncertainty "
-                    "conservatively, and include EvidenceRef."
+                    "Return one EntityProposalBatchV1 with all distinct significant "
+                    "source-grounded entities. Handle uncertainty conservatively and "
+                    "include EvidenceRef for every entity."
                 ),
                 "input_context": input_context,
             },
-            EntityProposalV1,
+            EntityProposalBatchV1,
         )

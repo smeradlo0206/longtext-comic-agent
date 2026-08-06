@@ -590,14 +590,14 @@
 优先级：P0
 精确定义：Claim 表示文本、角色、消息、设备日志标签或叙述者提出的一条可被验证或暂时保留的陈述。Claim 不等于 Event，也不等于 Canonical Data；它记录“谁在何处声称了什么”，并通过 verification_status 表示证据状态。
 识别规则：原文出现断言、否认、指控、猜测、暗示、调查推论、记忆、解释、预测、消息内容、系统标签、实验记录、Agent 推理或角色草稿改写时建立。任何未被独立证实的角色说法、匿名消息、署名线索、系统日志标签和推理结论都应先作为 Claim、Proposal 或 Evidence 线索。
-正例：“灰桥不是发照片的人”是一条 Claim；“我没有贴那张照片”是一条 DENIAL Claim；“林祁说程放拿卡”是 ACCUSATION Claim，不是“程放拿卡”这个 Canonical Event；角色说“我在未来见过它”是 Claim/KnowledgeState，不是对象身份 Canonical 证明；研究员说“也许读取到未来记忆”是 HYPOTHESIS Claim，不是 FLASH_FORWARD Event；周璐说“我看见顾舟捡起钥匙”是 MEMORY/ASSERTION Claim，若后续自述冲突则保持 Claim 冲突；顾舟记得沈岑说过某句话，先作为 Gu POV 的 MEMORY Claim，不能直接升级为 Canonical DialogueUnit。
+正例：“灰桥不是发照片的人”是一条 Claim；“我没有贴那张照片”是一条 DENIAL Claim；“林祁说程放拿卡”是 ACCUSATION Claim，不是“程放拿卡”这个 Canonical Event；角色说“我在未来见过它”是 Claim/KnowledgeState，不是对象身份 Canonical 证明；研究员说“也许读取到未来记忆”是 HYPOTHESIS Claim，不是 FLASH_FORWARD Event；周璐说“我看见顾舟捡起钥匙”是 MEMORY 或 FACTUAL_ASSERTION Claim，若后续自述冲突则保持 Claim 冲突；顾舟记得沈岑说过某句话，先作为 Gu POV 的 MEMORY Claim，不能直接升级为 Canonical DialogueUnit。
 反例：“唐宁收到邮件”是 Event；邮件中说“你问错了人”是 Claim。
 容易混淆：Event 是故事世界中发生的事；Claim 是关于事实的说法。Character Belief 可由 Claim 影响，但 Claim 本身不是 KnowledgeState。没有可验证内容的暗示不能生成 Canonical 因果链。
 产生者：Claim 抽取 Agent、消息抽取 Agent、叙事结构 Agent。
 读取者：CommitService、KnowledgeState、QA、审核界面。
 是否必须包含 EvidenceRef：是。
 候选Schema：ClaimV1、AuthorshipClaimV1。
-枚举约束：claim_type 必须使用 ASSERTION、DENIAL、ACCUSATION、HYPOTHESIS、MEMORY、INTERPRETATION、PREDICTION。verification_status 必须使用 UNVERIFIED、SUPPORTED、CONFIRMED、CONTRADICTED、PARTIALLY_SUPPORTED、UNRESOLVED。
+枚举约束：新的 Claim schema_version=1.2 输出必须使用 FACTUAL_ASSERTION、BELIEF、HYPOTHESIS、DENIAL、ACCUSATION、MEMORY、EVALUATION、INTERPRETATION、PREDICTION、COMMITMENT，并填写 temporal_scope。类型按语义优先级判断：含“应该、恐怕、可能、也许、似乎、我想”等不确定标记的推断为 HYPOTHESIS；明确“认为、相信、坚信、以为”的非试探性心理立场为 BELIEF；强弱、难易、好坏等价值判断为 EVALUATION；因果、动机、含义解释为 INTERPRETATION；均不满足时才可以为 FACTUAL_ASSERTION。历史 schema_version=1.0 的 ASSERTION 只用于读取旧 payload，不作为新输出；schema_version=1.1 仍可读取。verification_status 必须使用 UNVERIFIED、SUPPORTED、CONFIRMED、CONTRADICTED、PARTIALLY_SUPPORTED、UNRESOLVED。
 备注或待确认问题：Claim 合并和互斥判断策略需后续设计。
 
 ## ExpressedStance
