@@ -30,13 +30,12 @@ class CommitService:
 
         validator = StoryBibleValidator(self._evidence_lookup)
         validator.validate_commit_plan(plan)
-        existing_id = repository.get_plan(plan.project_id, plan.commit_plan_id)
-        if existing_id is not None and existing_id.content_hash != plan.content_hash:
-            raise ValueError("commit_plan_id already belongs to a different plan")
+        repository.preflight_commit_plan(plan)
         existing = repository.get_plan_by_content_hash(plan.project_id, plan.content_hash)
         effective_plan = existing or plan
         if existing is not None:
             validator.validate_commit_plan(existing)
+            repository.preflight_commit_plan(existing)
         for update in effective_plan.updates:
             repository.apply_canonical_update(update, effective_plan.commit_plan_id)
         return repository.save_committed_plan(effective_plan)

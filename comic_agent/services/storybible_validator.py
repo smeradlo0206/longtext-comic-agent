@@ -86,7 +86,9 @@ class StoryBibleValidator:
         update_ids: set[str] = set()
         resource_payloads: dict[tuple[str, str], dict[str, Any]] = {}
         identity_owners: dict[str, str] = {}
-        state_values: dict[tuple[object, ...], Any] = {}
+        state_values: dict[
+            tuple[str, str], list[tuple[int | None, int | None, Any]]
+        ] = {}
 
         for update in plan.updates:
             if update.update_id in update_ids:
@@ -194,23 +196,45 @@ class StoryBibleValidator:
     def _validate_state(
         self,
         state: StoryEntityStateV1,
-        state_values: dict[tuple[object, ...], Any],
+        state_values: dict[
+            tuple[str, str], list[tuple[int | None, int | None, Any]]
+        ],
     ) -> None:
         self._validate_interval(state.valid_from_order, state.valid_until_order, "state")
-        anchor = (
-            state.profile_id,
-            state.valid_from_event_id,
-            state.valid_until_event_id,
-            state.valid_from_order,
-            state.valid_until_order,
-        )
         for attribute_path, value in self._flatten_state(state.state):
-            fact_key = (*anchor, attribute_path)
-            if fact_key in state_values and state_values[fact_key] != value:
-                raise ValueError(
-                    "incompatible state values for the same entity, attribute, and time anchor"
-                )
-            state_values[fact_key] = value
+            fact_key = (state.profile_id, attribute_path)
+            intervals = state_values.setdefault(fact_key, [])
+            for valid_from_order, valid_until_order, existing_value in intervals:
+                if existing_value != value and self._intervals_overlap(
+                    valid_from_order,
+                    valid_until_order,
+                    state.valid_from_order,
+                    state.valid_until_order,
+                ):
+                    raise ValueError(
+                        "incompatible state values for the same entity, attribute, "
+                        "and overlapping time interval"
+                    )
+            intervals.append(
+                (state.valid_from_order, state.valid_until_order, value)
+            )
+
+    @staticmethod
+    def _intervals_overlap(
+        left_start: int | None,
+        left_end: int | None,
+        right_start: int | None,
+        right_end: int | None,
+    ) -> bool:
+        """Return whether two inclusive, optionally unbounded order intervals overlap."""
+
+        left_before_right = (
+            left_end is not None and right_start is not None and left_end < right_start
+        )
+        right_before_left = (
+            right_end is not None and left_start is not None and right_end < left_start
+        )
+        return not (left_before_right or right_before_left)
 
     @classmethod
     def _flatten_state(

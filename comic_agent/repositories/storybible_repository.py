@@ -140,6 +140,46 @@ class StoryBibleRepository:
         )
         return None if row is None else self._plan_from_row(row)
 
+    def preflight_commit_plan(self, plan: CommitPlanV1) -> None:
+        """Reject global identity collisions before any plan update is written."""
+
+        existing_plan = self._session.get(CandidateCommitPlanModel, plan.commit_plan_id)
+        if existing_plan is not None and (
+            existing_plan.project_id != plan.project_id
+            or existing_plan.content_hash != plan.content_hash
+        ):
+            raise ValueError("commit_plan_id already belongs to a different plan")
+
+        for proposed_update in plan.updates:
+            resource = self._unwrap_update(proposed_update)
+            if isinstance(resource, StoryEntityProfileV1):
+                stored_project_id = self._session.scalar(
+                    select(StoryEntityProfileModel.project_id).where(
+                        StoryEntityProfileModel.profile_id == resource.profile_id
+                    )
+                )
+            elif isinstance(resource, StoryEntityStateV1):
+                stored_project_id = self._session.scalar(
+                    select(StoryEntityStateModel.project_id).where(
+                        StoryEntityStateModel.state_id == resource.state_id
+                    )
+                )
+            elif isinstance(resource, StoryRelationshipV1):
+                stored_project_id = self._session.scalar(
+                    select(StoryRelationshipModel.project_id).where(
+                        StoryRelationshipModel.relationship_id
+                        == resource.relationship_id
+                    )
+                )
+            else:
+                stored_project_id = self._session.scalar(
+                    select(WorldRuleModel.project_id).where(
+                        WorldRuleModel.rule_id == resource.rule_id
+                    )
+                )
+            if stored_project_id is not None:
+                self._guard_project(stored_project_id, resource.project_id)
+
     def get_profile(self, project_id: str, profile_id: str) -> StoryEntityProfileV1 | None:
         """Return one profile only when it belongs to the requested project."""
 

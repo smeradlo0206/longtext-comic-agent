@@ -101,6 +101,8 @@ def state_update(
     state_id: str = "state-1",
     project_id: str = "project-a",
     value: str = "market",
+    valid_from_order: int | None = 2,
+    valid_until_order: int | None = 4,
     evidence_refs: list[EvidenceRefV1] | None = None,
 ) -> StateUpdateProposalV1:
     evidence = evidence_refs or [EvidenceRefV1(chunk_id="chunk-a")]
@@ -109,8 +111,8 @@ def state_update(
         project_id=project_id,
         profile_id="profile-1",
         state={"location": value},
-        valid_from_order=2,
-        valid_until_order=4,
+        valid_from_order=valid_from_order,
+        valid_until_order=valid_until_order,
         evidence_refs=evidence,
     )
     return StateUpdateProposalV1(
@@ -203,6 +205,31 @@ def test_commit_rejects_incompatible_state_values_at_the_same_anchor(
     assert table_counts(session) == (0, 0, 0, 0, 0)
 
 
+def test_commit_rejects_incompatible_state_values_in_overlapping_intervals(
+    storybible_store: tuple[Session, StoryBibleRepository],
+) -> None:
+    session, repository = storybible_store
+    invalid_plan = plan(
+        state_update(
+            state_id="state-1",
+            value="market",
+            valid_from_order=1,
+            valid_until_order=5,
+        ),
+        state_update(
+            state_id="state-2",
+            value="station",
+            valid_from_order=3,
+            valid_until_order=7,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="incompatible"):
+        CommitService(ChunkLookup(chunk())).commit_storybible_plan(invalid_plan, repository)
+
+    assert table_counts(session) == (0, 0, 0, 0, 0)
+
+
 def test_validator_defends_against_a_constructed_reversed_state_interval() -> None:
     evidence = [EvidenceRefV1(chunk_id="chunk-a")]
     malformed_state = StoryEntityStateV1.model_construct(
@@ -265,6 +292,49 @@ def test_commit_rejects_reused_plan_id_before_canonical_writes(
         CommitService(ChunkLookup(chunk())).commit_storybible_plan(conflicting, repository)
 
     assert table_counts(session) == counts_before == (0, 0, 0, 0, 1)
+
+
+def test_commit_rejects_globally_reused_plan_id_before_canonical_writes(
+    storybible_store: tuple[Session, StoryBibleRepository],
+) -> None:
+    session, repository = storybible_store
+    other_project_plan = CommitPlanV1(
+        commit_plan_id="plan-1",
+        project_id="project-b",
+        source_proposal_id="proposal-b",
+        content_hash="hash-b",
+        updates=[profile_update(profile_id="profile-b", project_id="project-b")],
+        evidence_refs=[EvidenceRefV1(chunk_id="chunk-b")],
+    )
+    repository.save_candidate_plan(other_project_plan)
+    counts_before = table_counts(session)
+
+    with pytest.raises(ValueError, match="commit_plan_id"):
+        CommitService(ChunkLookup(chunk())).commit_storybible_plan(
+            plan(profile_update(profile_id="new-profile")), repository
+        )
+
+    assert table_counts(session) == counts_before == (0, 0, 0, 0, 1)
+
+
+def test_commit_rejects_later_cross_project_resource_id_before_any_write(
+    storybible_store: tuple[Session, StoryBibleRepository],
+) -> None:
+    session, repository = storybible_store
+    repository.apply_canonical_update(
+        state_update(state_id="shared-state", project_id="project-b").state,
+        "seed-plan",
+    )
+    counts_before = table_counts(session)
+    conflicting = plan(
+        profile_update(profile_id="new-profile"),
+        state_update(state_id="shared-state"),
+    )
+
+    with pytest.raises(ValueError, match="another project"):
+        CommitService(ChunkLookup(chunk())).commit_storybible_plan(conflicting, repository)
+
+    assert table_counts(session) == counts_before == (0, 1, 0, 0, 0)
 
 
 def test_validate_proposal_enforces_proposal_plan_identity() -> None:
