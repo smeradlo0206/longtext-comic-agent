@@ -12,8 +12,8 @@ from comic_agent.agents.entity_extraction import EntityExtractionAgent
 from comic_agent.agents.event_extraction import EventExtractionAgent
 from comic_agent.providers.llm import LLMProvider
 from comic_agent.schemas.narrative import (
-    ClaimProposalV1,
-    EntityProposalV1,
+    ClaimProposalBatchV1,
+    EntityProposalBatchV1,
     EventProposalBatchV1,
     KnowledgeStateProposalV1,
     StateChangeProposalV1,
@@ -101,7 +101,7 @@ NARRATIVE_ANALYST_MODE_REGISTRY: dict[str, NarrativeAnalystModeSpec] = {
         description_zh="实体抽取",
         status="implemented",
         output_schema=EntityExtractionAgent.spec.output_schema,
-        schema_class=EntityProposalV1,
+        schema_class=EntityProposalBatchV1,
         max_context_chunks=EntityExtractionAgent.spec.max_context_chunks,
         requires_evidence=EntityExtractionAgent.spec.requires_evidence,
         proposal_only=not EntityExtractionAgent.spec.can_write_canonical_data,
@@ -112,7 +112,7 @@ NARRATIVE_ANALYST_MODE_REGISTRY: dict[str, NarrativeAnalystModeSpec] = {
         description_zh="主张抽取",
         status="implemented",
         output_schema=ClaimExtractionAgent.spec.output_schema,
-        schema_class=ClaimProposalV1,
+        schema_class=ClaimProposalBatchV1,
         max_context_chunks=ClaimExtractionAgent.spec.max_context_chunks,
         requires_evidence=ClaimExtractionAgent.spec.requires_evidence,
         proposal_only=not ClaimExtractionAgent.spec.can_write_canonical_data,

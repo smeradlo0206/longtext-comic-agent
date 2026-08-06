@@ -5,8 +5,8 @@ from pydantic import BaseModel
 
 from comic_agent.agents.narrative_analyst import NarrativeAnalyst
 from comic_agent.schemas.narrative import (
-    ClaimProposalV1,
-    EntityProposalV1,
+    ClaimProposalBatchV1,
+    EntityProposalBatchV1,
     EventProposalBatchV1,
 )
 
@@ -46,30 +46,43 @@ class FakeProvider:
                     ],
                 }
             )
-        if output_model is EntityProposalV1:
+        if output_model is EntityProposalBatchV1:
             return output_model.model_validate(
                 {
-                    "proposal_id": "entity-1",
-                    "entity_type": "CHARACTER",
-                    "canonical_name": "Demo Entity",
-                    "aliases": [],
-                    "evidence_refs": [{"chunk_id": "chunk-1", "quote_text": "Demo Entity"}],
-                    "confidence": 0.88,
+                    "batch_id": "entity-batch-1",
+                    "entities": [
+                        {
+                            "proposal_id": "entity-1",
+                            "entity_type": "CHARACTER",
+                            "canonical_name": "Demo Entity",
+                            "aliases": [],
+                            "evidence_refs": [
+                                {"chunk_id": "chunk-1", "quote_text": "Demo Entity"}
+                            ],
+                            "confidence": 0.88,
+                        }
+                    ],
                 }
             )
-        if output_model is ClaimProposalV1:
+        if output_model is ClaimProposalBatchV1:
             return output_model.model_validate(
                 {
-                    "proposal_id": "claim-1",
-                    "claim_type": "DENIAL",
-                    "claim_text": "The narrator denies the rumor.",
-                    "source_type": "NARRATOR",
-                    "source_id": None,
-                    "target_event_id": None,
-                    "verification_status": "UNVERIFIED",
-                    "evidence_refs": [{"chunk_id": "chunk-1", "quote_text": "denies"}],
-                    "confidence": 0.79,
-                    "reality_layer": "PRIMARY",
+                    "batch_id": "claim-batch-1",
+                    "claims": [
+                        {
+                            "proposal_id": "claim-1",
+                            "claim_type": "DENIAL",
+                            "claim_text": "The narrator denies the rumor.",
+                            "source_type": "NARRATOR",
+                            "source_id": None,
+                            "target_event_id": None,
+                            "verification_status": "UNVERIFIED",
+                            "evidence_refs": [{"chunk_id": "chunk-1", "quote_text": "denies"}],
+                            "confidence": 0.79,
+                            "reality_layer": "PRIMARY",
+                            "temporal_scope": "PRESENT",
+                        }
+                    ],
                 }
             )
         raise AssertionError(f"Unexpected output model: {output_model}")
@@ -110,11 +123,11 @@ def test_narrative_analyst_routes_entity_extraction_to_existing_agent() -> None:
     provider = FakeProvider()
     analyst = NarrativeAnalyst(provider)
 
-    proposal = analyst.run("entity_extraction", _input_context())
+    batch = analyst.run("entity_extraction", _input_context())
 
-    assert isinstance(proposal, EntityProposalV1)
-    assert proposal.proposal_id == "entity-1"
-    assert provider.output_models == [EntityProposalV1]
+    assert isinstance(batch, EntityProposalBatchV1)
+    assert batch.entities[0].proposal_id == "entity-1"
+    assert provider.output_models == [EntityProposalBatchV1]
     assert provider.requests[0]["input_context"] == _input_context()
 
 
@@ -122,12 +135,12 @@ def test_narrative_analyst_routes_claim_extraction_to_existing_agent() -> None:
     provider = FakeProvider()
     analyst = NarrativeAnalyst(provider)
 
-    proposal = analyst.run("claim_extraction", _input_context())
+    batch = analyst.run("claim_extraction", _input_context())
 
-    assert isinstance(proposal, ClaimProposalV1)
-    assert proposal.proposal_id == "claim-1"
-    assert proposal.evidence_refs
-    assert provider.output_models == [ClaimProposalV1]
+    assert isinstance(batch, ClaimProposalBatchV1)
+    assert batch.claims[0].proposal_id == "claim-1"
+    assert batch.claims[0].evidence_refs
+    assert provider.output_models == [ClaimProposalBatchV1]
     assert provider.requests[0]["input_context"] == _input_context()
 
 
@@ -135,8 +148,8 @@ def test_narrative_analyst_routes_claim_extraction_to_existing_agent() -> None:
     ("mode", "output_schema", "schema_class"),
     [
         ("event_extraction", "EventProposalBatchV1", EventProposalBatchV1),
-        ("entity_extraction", "EntityProposalV1", EntityProposalV1),
-        ("claim_extraction", "ClaimProposalV1", ClaimProposalV1),
+        ("entity_extraction", "EntityProposalBatchV1", EntityProposalBatchV1),
+        ("claim_extraction", "ClaimProposalBatchV1", ClaimProposalBatchV1),
     ],
 )
 def test_implemented_mode_specs_are_bounded_evidence_required_and_proposal_only(

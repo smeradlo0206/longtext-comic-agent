@@ -39,7 +39,8 @@ authorship_claims:
   - message: 论坛新帖
     visible_account: 论坛账号A
     candidate_author: UNRESOLVED
-    claim_type: ASSERTION
+    claim_type: FACTUAL_ASSERTION
+    temporal_scope: PRESENT
     verification_status: UNVERIFIED
   - message: 匿名照片警告
     speaker: 近音姓名学生

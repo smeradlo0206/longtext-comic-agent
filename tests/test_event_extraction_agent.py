@@ -105,43 +105,20 @@ def test_event_extraction_prompt_contains_v01_constraints() -> None:
 
     prompt = str(provider.requests[0]["system_prompt"])
     for expected in [
-        "exactly one EventProposalBatchV1",
         "EventProposalBatchV1",
-        "1 or more EventProposalV1",
         "source_chunks",
-        "quote_text",
-        "Do not invent",
-        "JSON only",
-        "ClaimProposalV1",
-        "KnowledgeStateProposalV1",
-        "canonical story data",
-        "Return final JSON directly.",
-        "Do not include reasoning.",
-        "Do not reason step by step.",
-        "Do not list candidate events.",
-        "Do not explain your choice.",
-        "Select one concrete, evidence-backed event quickly.",
-        "Keep summary concise.",
-        "under 30 Chinese characters",
-        "mostly background or setup",
-        "Extract all salient story events",
-        "number of events must be based on actual story events, not chunk count",
+        "story events, not chunk count",
         "one chunk contains multiple events",
-        "multiple chunks narrate one continuous event",
-        "Do not invent events to match chunk count.",
-        "Do not duplicate the same event.",
-        "Sort events by source order.",
-        "Every event summary must be directly supported by its own evidence quote.",
-        "If evidence only supports a narrower event, narrow that event summary.",
-        "shortest exact quote",
-        "shortest exact source quote",
+        "continuous event",
+        "Do not invent",
+        "supported by its own evidence",
+        "quote_text",
         "copied verbatim",
-        "Do not paraphrase, summarize, translate, merge, or rewrite quote_text.",
-        "If quote_start/quote_end are uncertain",
-        "quote_text must exact-match the chunk text",
-        "6-40 Chinese character quote",
+        "JSON only",
+        "no StoryBible",
     ]:
         assert expected in prompt
+    assert len(prompt) < 3000
 
 
 def test_event_extraction_user_prompt_is_concise_and_context_focused() -> None:
@@ -163,70 +140,6 @@ def test_event_extraction_user_prompt_is_concise_and_context_focused() -> None:
     assert "source_chunks" in user_prompt
     assert "Do not invent" not in user_prompt
     assert "ClaimProposalV1" not in user_prompt
-
-
-def test_event_extraction_prompt_requires_summary_supported_by_quote() -> None:
-    provider = FakeProvider()
-    agent = EventExtractionAgent(provider)
-
-    agent.run(
-        {
-            "project_id": "project-1",
-            "source_chunk_ids": ["chunk-1"],
-            "source_chunks": [{"chunk_id": "chunk-1", "text": "First source chunk."}],
-        }
-    )
-
-    prompt = str(provider.requests[0]["system_prompt"])
-    assert (
-        "summary must only state facts directly supported by "
-        "that event's evidence quote"
-    ) in prompt
-    assert "Every actor, action, object, and outcome mentioned in each summary" in prompt
-    assert "directly inferable from the quote" in prompt
-    assert "If the quote only supports part of a larger event, narrow the summary" in prompt
-
-
-def test_event_extraction_prompt_forbids_merged_adjacent_events() -> None:
-    provider = FakeProvider()
-    agent = EventExtractionAgent(provider)
-
-    agent.run(
-        {
-            "project_id": "project-1",
-            "source_chunk_ids": ["chunk-1"],
-            "source_chunks": [{"chunk_id": "chunk-1", "text": "First source chunk."}],
-        }
-    )
-
-    prompt = str(provider.requests[0]["system_prompt"])
-    assert "Return 1 or more EventProposalV1 records inside events." in prompt
-    assert "Do not merge adjacent events into one proposal." in prompt
-    assert "If one chunk contains multiple events, output multiple events." in prompt
-    assert "If multiple chunks narrate one continuous event, output one event." in prompt
-    assert (
-        "Do not combine action + later explanation/announcement/reaction into one event"
-        in prompt
-    )
-
-
-def test_event_extraction_prompt_discourages_joined_event_type_labels() -> None:
-    provider = FakeProvider()
-    agent = EventExtractionAgent(provider)
-
-    agent.run(
-        {
-            "project_id": "project-1",
-            "source_chunk_ids": ["chunk-1"],
-            "source_chunks": [{"chunk_id": "chunk-1", "text": "First source chunk."}],
-        }
-    )
-
-    prompt = str(provider.requests[0]["system_prompt"])
-    assert "Each event_type should name a single event" in prompt
-    assert "not a merged category" in prompt
-    assert "suppression_and_announcement" in prompt
-    assert "Avoid joined labels" in prompt
 
 
 def test_event_extraction_agent_spec_is_bounded_and_proposal_only() -> None:

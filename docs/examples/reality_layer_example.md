@@ -135,7 +135,8 @@ claims:
     verification_status: UNVERIFIED
     evidence_refs: [P11]
   - source: 自动签名记录
-    claim_type: ASSERTION
+    claim_type: FACTUAL_ASSERTION
+    temporal_scope: PRESENT
     content: 文件生成后没有被修改
     verification_status: SUPPORTED
     evidence_refs: [P11]

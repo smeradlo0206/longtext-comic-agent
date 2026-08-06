@@ -4,9 +4,13 @@ from pydantic import ValidationError
 from comic_agent.schemas.base import EvidenceRefV1, RealityLayer
 from comic_agent.schemas.narrative import (
     ActorResolutionStatus,
+    ClaimProposalBatchV1,
     ClaimProposalV1,
     ClaimSourceType,
+    ClaimTemporalScope,
     ClaimType,
+    EntityProposalBatchV1,
+    EntityProposalV1,
     EpistemicStatus,
     EventProposalBatchV1,
     EventProposalV1,
@@ -28,6 +32,57 @@ def event_payload() -> dict[str, object]:
         "confidence": 0.9,
         "reality_layer": RealityLayer.PRIMARY,
     }
+
+
+def entity_payload() -> dict[str, object]:
+    return {
+        "proposal_id": "entity-1",
+        "entity_type": "CHARACTER",
+        "canonical_name": "林夏",
+        "aliases": ["小夏"],
+        "evidence_refs": [EvidenceRefV1(chunk_id="chunk-entity", quote_text="林夏")],
+        "confidence": 0.81,
+    }
+
+
+def test_entity_proposal_batch_minimal_valid_example() -> None:
+    batch = EntityProposalBatchV1(
+        batch_id="entity-batch-1",
+        entities=[
+            EntityProposalV1(**entity_payload()),
+            EntityProposalV1(
+                **(
+                    entity_payload()
+                    | {
+                        "proposal_id": "entity-2",
+                        "entity_type": "ORGANIZATION",
+                        "canonical_name": "旧馆社",
+                        "aliases": [],
+                    }
+                )
+            ),
+        ],
+    )
+
+    assert batch.schema_version == "1.0"
+    assert batch.batch_id == "entity-batch-1"
+    assert [entity.proposal_id for entity in batch.entities] == ["entity-1", "entity-2"]
+
+
+def test_entity_proposal_batch_rejects_empty_entities() -> None:
+    with pytest.raises(ValidationError):
+        EntityProposalBatchV1(batch_id="entity-batch-1", entities=[])
+
+
+def test_entity_proposal_batch_rejects_duplicate_entity_ids() -> None:
+    with pytest.raises(ValidationError):
+        EntityProposalBatchV1(
+            batch_id="entity-batch-1",
+            entities=[
+                EntityProposalV1(**entity_payload()),
+                EntityProposalV1(**entity_payload()),
+            ],
+        )
 
 
 def test_event_proposal_minimal_valid_example() -> None:
@@ -305,7 +360,140 @@ def claim_payload() -> dict[str, object]:
         "evidence_refs": [EvidenceRefV1(chunk_id="chunk-claim")],
         "confidence": 0.74,
         "reality_layer": RealityLayer.PRIMARY,
+        "temporal_scope": ClaimTemporalScope.PAST,
     }
+
+
+@pytest.mark.parametrize(
+    ("claim_type", "temporal_scope"),
+    [
+        (ClaimType.FACTUAL_ASSERTION, ClaimTemporalScope.PRESENT),
+        (ClaimType.BELIEF, ClaimTemporalScope.PRESENT),
+        (ClaimType.HYPOTHESIS, ClaimTemporalScope.FUTURE),
+        (ClaimType.DENIAL, ClaimTemporalScope.PAST),
+        (ClaimType.ACCUSATION, ClaimTemporalScope.PAST),
+        (ClaimType.MEMORY, ClaimTemporalScope.PAST),
+        (ClaimType.INTERPRETATION, ClaimTemporalScope.PRESENT),
+        (ClaimType.EVALUATION, ClaimTemporalScope.PRESENT),
+        (ClaimType.PREDICTION, ClaimTemporalScope.FUTURE),
+        (ClaimType.COMMITMENT, ClaimTemporalScope.FUTURE),
+    ],
+)
+def test_claim_proposal_v1_2_accepts_current_claim_types(
+    claim_type: ClaimType,
+    temporal_scope: ClaimTemporalScope,
+) -> None:
+    claim = ClaimProposalV1(
+        **(
+            claim_payload()
+            | {
+                "proposal_id": f"claim-{claim_type.value.lower()}",
+                "claim_type": claim_type,
+                "temporal_scope": temporal_scope,
+            }
+        )
+    )
+
+    assert claim.schema_version == "1.2"
+    assert claim.claim_type == claim_type
+    assert claim.temporal_scope == temporal_scope
+
+
+def test_claim_proposal_v1_2_accepts_evaluation() -> None:
+    claim = ClaimProposalV1(
+        **(
+            claim_payload()
+            | {
+                "schema_version": "1.2",
+                "claim_type": "EVALUATION",
+                "claim_text": "这门术法的杀伤力惊人。",
+                "temporal_scope": ClaimTemporalScope.PRESENT,
+            }
+        )
+    )
+
+    assert claim.schema_version == "1.2"
+    assert claim.claim_type == ClaimType.EVALUATION
+
+
+def test_claim_proposal_v1_1_remains_readable_without_evaluation() -> None:
+    claim = ClaimProposalV1(
+        **(
+            claim_payload()
+            | {
+                "schema_version": "1.1",
+                "claim_type": "FACTUAL_ASSERTION",
+                "temporal_scope": ClaimTemporalScope.PRESENT,
+            }
+        )
+    )
+
+    assert claim.schema_version == "1.1"
+    assert claim.claim_type == ClaimType.FACTUAL_ASSERTION
+
+
+def test_claim_proposal_v1_1_rejects_evaluation() -> None:
+    with pytest.raises(ValidationError):
+        ClaimProposalV1(
+            **(
+                claim_payload()
+                | {
+                    "schema_version": "1.1",
+                    "claim_type": "EVALUATION",
+                    "temporal_scope": ClaimTemporalScope.PRESENT,
+                }
+            )
+        )
+
+
+def test_claim_proposal_v1_1_rejects_legacy_assertion() -> None:
+    with pytest.raises(ValidationError):
+        ClaimProposalV1(
+            **(
+                claim_payload()
+                | {
+                    "claim_type": "ASSERTION",
+                    "temporal_scope": ClaimTemporalScope.PRESENT,
+                }
+            )
+        )
+
+
+def test_claim_proposal_v1_1_requires_temporal_scope() -> None:
+    payload = claim_payload() | {"schema_version": "1.1"}
+    payload.pop("temporal_scope")
+
+    with pytest.raises(ValidationError):
+        ClaimProposalV1(**payload)
+
+
+def test_claim_proposal_v1_0_reads_legacy_assertion_without_temporal_scope() -> None:
+    claim = ClaimProposalV1(
+        **(
+            claim_payload()
+            | {
+                "schema_version": "1.0",
+                "claim_type": "ASSERTION",
+                "temporal_scope": None,
+            }
+        )
+    )
+
+    assert claim.schema_version == "1.0"
+    assert claim.claim_type == ClaimType.ASSERTION
+    assert claim.temporal_scope is None
+
+
+def test_claim_proposal_reads_legacy_payload_without_schema_version() -> None:
+    payload = claim_payload() | {"claim_type": "ASSERTION"}
+    payload.pop("schema_version", None)
+    payload.pop("temporal_scope")
+
+    claim = ClaimProposalV1(**payload)
+
+    assert claim.schema_version == "1.0"
+    assert claim.claim_type == ClaimType.ASSERTION
+    assert claim.temporal_scope is None
 
 
 def test_claim_proposal_accusation_valid_example() -> None:
@@ -313,7 +501,106 @@ def test_claim_proposal_accusation_valid_example() -> None:
 
     assert claim.claim_type == ClaimType.ACCUSATION
     assert claim.claim_text == "林祁说程放拿了门禁卡。"
+    assert claim.temporal_scope == ClaimTemporalScope.PAST
     assert not isinstance(claim, EventProposalV1)
+
+
+def test_claim_proposal_batch_minimal_valid_example() -> None:
+    batch = ClaimProposalBatchV1(
+        batch_id="claim-batch-1",
+        claims=[
+            ClaimProposalV1(**claim_payload()),
+            ClaimProposalV1(
+                **(
+                    claim_payload()
+                    | {
+                        "proposal_id": "claim-2",
+                        "claim_type": ClaimType.DENIAL,
+                        "claim_text": "程放否认自己拿了门禁卡。",
+                    }
+                )
+            ),
+        ],
+    )
+
+    assert batch.schema_version == "1.2"
+    assert batch.batch_id == "claim-batch-1"
+    assert [claim.proposal_id for claim in batch.claims] == ["claim-1", "claim-2"]
+
+
+def test_claim_proposal_batch_v1_1_rejects_legacy_claim_item() -> None:
+    with pytest.raises(ValidationError):
+        ClaimProposalBatchV1(
+            schema_version="1.1",
+            batch_id="claim-batch-1",
+            claims=[
+                ClaimProposalV1(
+                    **(
+                        claim_payload()
+                        | {
+                            "schema_version": "1.0",
+                            "claim_type": "ASSERTION",
+                            "temporal_scope": None,
+                        }
+                    )
+                )
+            ],
+        )
+
+
+def test_claim_proposal_batch_v1_0_reads_legacy_claim_items() -> None:
+    batch = ClaimProposalBatchV1(
+        schema_version="1.0",
+        batch_id="claim-batch-legacy-1",
+        claims=[
+            ClaimProposalV1(
+                **(
+                    claim_payload()
+                    | {
+                        "schema_version": "1.0",
+                        "claim_type": "ASSERTION",
+                        "temporal_scope": None,
+                    }
+                )
+            )
+        ],
+    )
+
+    assert batch.schema_version == "1.0"
+    assert batch.claims[0].claim_type == ClaimType.ASSERTION
+    assert batch.claims[0].temporal_scope is None
+
+
+def test_claim_proposal_batch_reads_legacy_payload_without_schema_version() -> None:
+    legacy_claim = claim_payload() | {"claim_type": "ASSERTION"}
+    legacy_claim.pop("schema_version", None)
+    legacy_claim.pop("temporal_scope")
+
+    batch = ClaimProposalBatchV1(
+        batch_id="claim-batch-legacy-1",
+        claims=[legacy_claim],
+    )
+
+    assert batch.schema_version == "1.0"
+    assert batch.claims[0].schema_version == "1.0"
+    assert batch.claims[0].claim_type == ClaimType.ASSERTION
+    assert batch.claims[0].temporal_scope is None
+
+
+def test_claim_proposal_batch_rejects_empty_claims() -> None:
+    with pytest.raises(ValidationError):
+        ClaimProposalBatchV1(batch_id="claim-batch-1", claims=[])
+
+
+def test_claim_proposal_batch_rejects_duplicate_claim_ids() -> None:
+    with pytest.raises(ValidationError):
+        ClaimProposalBatchV1(
+            batch_id="claim-batch-1",
+            claims=[
+                ClaimProposalV1(**claim_payload()),
+                ClaimProposalV1(**claim_payload()),
+            ],
+        )
 
 
 def test_claim_proposal_denial_valid_example() -> None:

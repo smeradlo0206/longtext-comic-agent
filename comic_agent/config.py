@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     )
     llm_max_output_tokens: int = Field(default=2000, validation_alias="LLM_MAX_OUTPUT_TOKENS")
     internal_demo_require_access_code: bool = Field(
-        default=True,
+        default=False,
         validation_alias="INTERNAL_DEMO_REQUIRE_ACCESS_CODE",
     )
     internal_demo_access_code: SecretStr | None = Field(

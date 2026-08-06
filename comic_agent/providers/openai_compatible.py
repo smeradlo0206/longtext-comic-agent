@@ -69,10 +69,19 @@ class OpenAICompatibleProvider:
 
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
 ProviderDiagnostics = dict[str, object]
+MAX_TIMEOUT_ATTEMPTS = 2
 
 
 class ProviderResponseError(ValueError):
     """Sanitized provider response parsing error with non-secret diagnostics."""
+
+    def __init__(self, message: str, diagnostics: ProviderDiagnostics) -> None:
+        super().__init__(message)
+        self.diagnostics = diagnostics
+
+
+class ProviderTimeoutError(TimeoutError):
+    """Sanitized timeout error that records only request-level metadata."""
 
     def __init__(self, message: str, diagnostics: ProviderDiagnostics) -> None:
         super().__init__(message)
@@ -122,28 +131,18 @@ class OpenAICompatibleLLMProvider:
     ) -> OutputModelT:
         """Generate and validate one structured Pydantic model."""
 
-        try:
-            payload: dict[str, Any] = {
-                "model": self._model,
-                "messages": self._messages(request, output_model),
-                "temperature": 0,
-                "max_tokens": self._max_output_tokens,
-            }
-            if self._response_format == "json_object":
-                payload["response_format"] = {"type": "json_object"}
+        payload: dict[str, Any] = {
+            "model": self._model,
+            "messages": self._messages(request, output_model),
+            "temperature": 0,
+            "max_tokens": self._max_output_tokens,
+        }
+        if self._response_format == "json_object":
+            payload["response_format"] = {"type": "json_object"}
 
-            response = self._http_client.post(
-                f"{self._base_url}/chat/completions",
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {self._api_key}",
-                },
-                json=payload,
-                timeout=self._timeout_seconds,
-            )
+        try:
+            response = self._post_with_one_timeout_retry(payload)
             response.raise_for_status()
-        except httpx.TimeoutException as exc:
-            raise TimeoutError("LLM provider timeout") from exc
         except httpx.HTTPStatusError as exc:
             raise ValueError(self._classify_http_status_error(exc.response.status_code)) from exc
         except httpx.ConnectError as exc:
@@ -169,7 +168,10 @@ class OpenAICompatibleLLMProvider:
                     self._max_output_tokens_error_message(),
                     diagnostics=diagnostics,
                 ) from exc
-            raise ValueError("LLM provider response did not contain valid JSON") from exc
+            raise ProviderResponseError(
+                "LLM provider response did not contain valid JSON",
+                diagnostics=diagnostics,
+            ) from exc
 
         try:
             return output_model.model_validate(payload)
@@ -182,6 +184,50 @@ class OpenAICompatibleLLMProvider:
                 ),
                 diagnostics=diagnostics,
             ) from exc
+
+    def _post_with_one_timeout_retry(self, payload: dict[str, Any]) -> httpx.Response:
+        """Retry one transient request timeout for proposal-only generation."""
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self._api_key}",
+        }
+        for request_attempt in range(1, MAX_TIMEOUT_ATTEMPTS + 1):
+            try:
+                return self._http_client.post(
+                    f"{self._base_url}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=self._timeout_seconds,
+                )
+            except httpx.TimeoutException as exc:
+                if request_attempt == MAX_TIMEOUT_ATTEMPTS:
+                    timeout_kind = self._timeout_kind(exc)
+                    raise ProviderTimeoutError(
+                        (
+                            f"LLM provider {timeout_kind} timeout after "
+                            f"{request_attempt} attempts"
+                        ),
+                        diagnostics={
+                            "timeout_kind": timeout_kind,
+                            "timeout_seconds": self._timeout_seconds,
+                            "request_attempts": request_attempt,
+                        },
+                    ) from exc
+        raise AssertionError("timeout retry loop exited unexpectedly")
+
+    def _timeout_kind(self, exc: httpx.TimeoutException) -> str:
+        """Return a safe, phase-level timeout label without provider details."""
+
+        if isinstance(exc, httpx.ConnectTimeout):
+            return "connect"
+        if isinstance(exc, httpx.ReadTimeout):
+            return "read"
+        if isinstance(exc, httpx.WriteTimeout):
+            return "write"
+        if isinstance(exc, httpx.PoolTimeout):
+            return "pool"
+        return "request"
 
     def _messages(
         self,
@@ -197,7 +243,8 @@ class OpenAICompatibleLLMProvider:
         user_prompt = str(request.get("user_prompt", "Extract one structured object."))
         input_context = request.get("input_context", {})
         schema_name = output_model.__name__
-        schema_json = json.dumps(output_model.model_json_schema(), ensure_ascii=False)
+        output_contract = self._compact_output_contract(output_model)
+        schema_json = json.dumps(output_contract, ensure_ascii=False, separators=(",", ":"))
         context_json = json.dumps(input_context, ensure_ascii=False, sort_keys=True)
         return [
             {
@@ -212,17 +259,90 @@ class OpenAICompatibleLLMProvider:
                 "content": (
                     f"{user_prompt}\n\n"
                     f"Output schema: {schema_name}\n"
-                    f"JSON Schema: {schema_json}\n"
+                    f"Output contract: {schema_json}\n"
                     f"Input context: {context_json}"
                 ),
             },
         ]
 
+    def _compact_output_contract(self, output_model: type[BaseModel]) -> dict[str, object]:
+        """Return a small, reference-free schema guide derived from Pydantic."""
+
+        schema = output_model.model_json_schema()
+        definitions = schema.get("$defs")
+        definition_map = definitions if isinstance(definitions, dict) else {}
+        contract = self._compact_schema_node(schema, definition_map, set())
+        return contract if isinstance(contract, dict) else {"type": "object"}
+
+    def _compact_schema_node(
+        self,
+        node: object,
+        definitions: dict[str, object],
+        resolving_refs: set[str],
+    ) -> object:
+        """Keep only generation-relevant JSON Schema fields and inline local refs."""
+
+        if not isinstance(node, dict):
+            return node
+
+        reference = node.get("$ref")
+        if isinstance(reference, str) and reference.startswith("#/$defs/"):
+            definition_name = reference.removeprefix("#/$defs/")
+            if definition_name in resolving_refs:
+                return {"type": "object"}
+            definition = definitions.get(definition_name)
+            return self._compact_schema_node(
+                definition,
+                definitions,
+                resolving_refs | {definition_name},
+            )
+
+        compact: dict[str, object] = {}
+        for key in ("type", "enum", "const"):
+            value = node.get(key)
+            if value is not None:
+                compact[key] = value
+
+        required = node.get("required")
+        if isinstance(required, list):
+            compact["required"] = [item for item in required if isinstance(item, str)]
+
+        properties = node.get("properties")
+        if isinstance(properties, dict):
+            compact["properties"] = {
+                str(name): self._compact_schema_node(value, definitions, resolving_refs)
+                for name, value in properties.items()
+            }
+
+        items = node.get("items")
+        if isinstance(items, dict):
+            compact["items"] = self._compact_schema_node(items, definitions, resolving_refs)
+
+        for key in ("anyOf", "oneOf"):
+            variants = node.get(key)
+            if isinstance(variants, list):
+                compact[key] = [
+                    self._compact_schema_node(variant, definitions, resolving_refs)
+                    for variant in variants
+                ]
+
+        return compact
+
     def _extract_json(self, content: str) -> str:
         fenced = re.search(r"```(?:json)?\s*(.*?)\s*```", content, flags=re.DOTALL)
         if fenced:
             return fenced.group(1).strip()
-        return content.strip()
+
+        stripped = content.strip()
+        decoder = json.JSONDecoder()
+        for match in re.finditer(r"[\[{]", stripped):
+            candidate = stripped[match.start() :]
+            try:
+                _, end = decoder.raw_decode(candidate)
+            except json.JSONDecodeError:
+                continue
+            return candidate[:end].strip()
+        return stripped
 
     def _validate_response_content(
         self,

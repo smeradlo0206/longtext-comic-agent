@@ -9,13 +9,39 @@ from comic_agent.database.session import make_engine, make_session_factory
 from comic_agent.providers.openai_compatible import ProviderResponseError
 from comic_agent.repositories.source_repository import SourceRepository
 from comic_agent.schemas.narrative import (
-    ClaimProposalV1,
-    EntityProposalV1,
+    ClaimProposalBatchV1,
+    EntityProposalBatchV1,
     EventProposalBatchV1,
+)
+from comic_agent.services.narrative_analyst_summary import (
+    add_provider_diagnostics,
+    classify_exception,
 )
 from scripts.smoke_narrative_analyst import DEFAULT_MAX_CHARS_PER_CHUNK, run_smoke
 
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
+
+
+class DiagnosticTimeoutError(TimeoutError):
+    def __init__(self) -> None:
+        super().__init__("LLM provider read timeout after 2 attempts")
+        self.diagnostics = {
+            "timeout_kind": "read",
+            "timeout_seconds": 360,
+            "request_attempts": 2,
+        }
+
+
+def test_smoke_summary_keeps_sanitized_timeout_diagnostics() -> None:
+    summary: dict[str, object] = {}
+
+    add_provider_diagnostics(summary, DiagnosticTimeoutError())
+
+    assert summary["provider_error_diagnostics"] == {
+        "timeout_kind": "read",
+        "timeout_seconds": 360,
+        "request_attempts": 2,
+    }
 
 
 def test_smoke_narrative_analyst_dry_run_does_not_call_real_llm(tmp_path: Path) -> None:
@@ -39,7 +65,7 @@ def test_smoke_narrative_analyst_dry_run_does_not_call_real_llm(tmp_path: Path) 
     assert summary["real_llm_called"] is False
     assert summary["selected_chunks_count"] == 2
     assert summary["context_chunk_ids"] == summary["selected_chunk_ids"]
-    assert summary["output_schema"] == "ClaimProposalV1"
+    assert summary["output_schema"] == "ClaimProposalBatchV1"
     assert summary["chunk_limit"] == 2
     assert summary["chunk_offset"] == 0
     assert summary["max_chars_per_chunk"] == DEFAULT_MAX_CHARS_PER_CHUNK
@@ -193,8 +219,6 @@ class FakeSuccessfulProvider:
         assert set(source_chunk) == {
             "chunk_id",
             "chapter_id",
-            "char_start",
-            "char_end",
             "text",
         }
         assert len(str(source_chunk["text"])) <= 10
@@ -244,37 +268,90 @@ class FakeSuccessfulProvider:
                     ],
                 }
             )
-        if output_model is EntityProposalV1:
+        if output_model is EntityProposalBatchV1:
             return output_model.model_validate(
                 {
-                    "proposal_id": "entity-smoke-1",
-                    "entity_type": "CHARACTER",
-                    "canonical_name": "Demo Entity",
-                    "aliases": ["Hidden Alias"],
-                    "evidence_refs": [{"chunk_id": source_chunk["chunk_id"]}],
-                    "confidence": 0.7,
+                    "batch_id": "entity-batch-smoke-1",
+                    "entities": [
+                        {
+                            "proposal_id": "entity-smoke-1",
+                            "entity_type": "CHARACTER",
+                            "canonical_name": "Demo Entity",
+                            "aliases": ["Hidden Alias"],
+                            "evidence_refs": [
+                                {
+                                    "chunk_id": source_chunk["chunk_id"],
+                                    "quote_start": 0,
+                                    "quote_end": len(quote_text),
+                                    "quote_text": quote_text,
+                                }
+                            ],
+                            "confidence": 0.7,
+                        },
+                        {
+                            "proposal_id": "entity-smoke-2",
+                            "entity_type": "ORGANIZATION",
+                            "canonical_name": "Demo Group",
+                            "aliases": [],
+                            "evidence_refs": [
+                                {
+                                    "chunk_id": source_chunk["chunk_id"],
+                                    "quote_start": 1,
+                                    "quote_end": len(quote_text),
+                                    "quote_text": quote_text[1:],
+                                }
+                            ],
+                            "confidence": 0.64,
+                        },
+                    ],
                 }
             )
-        if output_model is ClaimProposalV1:
+        if output_model is ClaimProposalBatchV1:
             return output_model.model_validate(
                 {
-                    "proposal_id": "claim-smoke-1",
-                    "claim_type": "ASSERTION",
-                    "claim_text": "The witness claimed the door was locked.",
-                    "source_type": "CHARACTER",
-                    "source_id": None,
-                    "target_event_id": None,
-                    "verification_status": "UNVERIFIED",
-                    "evidence_refs": [
+                    "batch_id": "claim-batch-smoke-1",
+                    "claims": [
                         {
-                            "chunk_id": source_chunk["chunk_id"],
-                            "quote_start": 0,
-                            "quote_end": len(quote_text),
-                            "quote_text": quote_text,
-                        }
+                            "proposal_id": "claim-smoke-1",
+                            "claim_type": "FACTUAL_ASSERTION",
+                            "claim_text": "The witness claimed the door was locked.",
+                            "source_type": "CHARACTER",
+                            "source_id": None,
+                            "target_event_id": None,
+                            "verification_status": "UNVERIFIED",
+                            "evidence_refs": [
+                                {
+                                    "chunk_id": source_chunk["chunk_id"],
+                                    "quote_start": 0,
+                                    "quote_end": len(quote_text),
+                                    "quote_text": quote_text,
+                                }
+                            ],
+                            "confidence": 0.84,
+                            "reality_layer": "PRIMARY",
+                            "temporal_scope": "PRESENT",
+                        },
+                        {
+                            "proposal_id": "claim-smoke-2",
+                            "claim_type": "INTERPRETATION",
+                            "claim_text": "The witness interpreted the door as locked.",
+                            "source_type": "CHARACTER",
+                            "source_id": None,
+                            "target_event_id": None,
+                            "verification_status": "UNVERIFIED",
+                            "evidence_refs": [
+                                {
+                                    "chunk_id": source_chunk["chunk_id"],
+                                    "quote_start": 1,
+                                    "quote_end": len(quote_text),
+                                    "quote_text": quote_text[1:],
+                                }
+                            ],
+                            "confidence": 0.73,
+                            "reality_layer": "PRIMARY",
+                            "temporal_scope": "PRESENT",
+                        },
                     ],
-                    "confidence": 0.84,
-                    "reality_layer": "PRIMARY",
                 }
             )
         raise AssertionError(f"Unexpected output model: {output_model}")
@@ -318,12 +395,19 @@ def test_smoke_narrative_analyst_claim_success_summary_is_sanitized(
     assert summary["provider_success"] is True
     assert summary["schema_validation_passed"] is True
     assert summary["evidence_validation_passed"] is True
-    assert summary["proposal_id"] == "claim-smoke-1"
-    assert summary["claim_type"] == "ASSERTION"
-    assert summary["source_type"] == "CHARACTER"
-    assert summary["verification_status"] == "UNVERIFIED"
-    assert summary["confidence"] == 0.84
-    assert summary["evidence_chunk_id"] == summary["selected_chunk_ids"][0]
+    assert summary["output_schema"] == "ClaimProposalBatchV1"
+    assert summary["batch_id"] == "claim-batch-smoke-1"
+    assert summary["claims_count"] == 2
+    assert summary["claim_proposal_ids"] == ["claim-smoke-1", "claim-smoke-2"]
+    assert summary["claim_evidence_results"][0] == {
+        "proposal_id": "claim-smoke-1",
+        "claim_type": "FACTUAL_ASSERTION",
+        "source_type": "CHARACTER",
+        "temporal_scope": "PRESENT",
+        "evidence_chunk_id": summary["selected_chunk_ids"][0],
+        "quote_matched": True,
+        "char_range_matched": True,
+    }
     assert summary["quote_matched"] is True
     assert summary["char_range_matched"] is True
     assert summary["failure_category"] is None
@@ -498,12 +582,17 @@ def test_smoke_narrative_analyst_entity_success_includes_sanitized_mode_fields(
     )
 
     serialized = json.dumps(summary, ensure_ascii=False)
-    assert summary["proposal_id"] == "entity-smoke-1"
-    assert summary["entity_type"] == "CHARACTER"
-    assert summary["canonical_name"] == "Demo Entity"
-    assert summary["aliases_count"] == 1
-    assert summary["confidence"] == 0.7
-    assert summary["evidence_chunk_id"] == summary["selected_chunk_ids"][0]
+    assert summary["output_schema"] == "EntityProposalBatchV1"
+    assert summary["batch_id"] == "entity-batch-smoke-1"
+    assert summary["entities_count"] == 2
+    assert summary["entity_proposal_ids"] == ["entity-smoke-1", "entity-smoke-2"]
+    assert summary["entity_evidence_results"][0] == {
+        "proposal_id": "entity-smoke-1",
+        "entity_type": "CHARACTER",
+        "evidence_chunk_id": summary["selected_chunk_ids"][0],
+        "quote_matched": True,
+        "char_range_matched": True,
+    }
     assert "Hidden Alias" not in serialized
 
 
@@ -568,24 +657,30 @@ class FakeQuoteMismatchProvider:
         assert isinstance(source_chunks, list)
         source_chunk = source_chunks[0]
         assert isinstance(source_chunk, dict)
-        if output_model is ClaimProposalV1:
+        if output_model is ClaimProposalBatchV1:
             return output_model.model_validate(
                 {
-                    "proposal_id": "claim-smoke-1",
-                    "claim_type": "ASSERTION",
-                    "claim_text": "Sanitized claim.",
-                    "source_type": "NARRATOR",
-                    "source_id": None,
-                    "target_event_id": None,
-                    "verification_status": "UNVERIFIED",
-                    "evidence_refs": [
+                    "batch_id": "claim-batch-smoke-mismatch",
+                    "claims": [
                         {
-                            "chunk_id": source_chunk["chunk_id"],
-                            "quote_text": "not present in visible input",
-                        }
+                            "proposal_id": "claim-smoke-1",
+                            "claim_type": "FACTUAL_ASSERTION",
+                            "claim_text": "Sanitized claim.",
+                            "source_type": "NARRATOR",
+                            "source_id": None,
+                            "target_event_id": None,
+                            "verification_status": "UNVERIFIED",
+                            "evidence_refs": [
+                                {
+                                    "chunk_id": source_chunk["chunk_id"],
+                                    "quote_text": "not present in visible input",
+                                }
+                            ],
+                            "confidence": 0.5,
+                            "reality_layer": "PRIMARY",
+                            "temporal_scope": "PRESENT",
+                        },
                     ],
-                    "confidence": 0.5,
-                    "reality_layer": "PRIMARY",
                 }
             )
         raise AssertionError(f"Unexpected output model: {output_model}")
@@ -728,3 +823,27 @@ def test_smoke_narrative_analyst_unknown_failure_is_classified(
     assert summary["agent_run_status"] == "FAILED"
     assert summary["failure_category"] == "UNKNOWN_ERROR"
     assert "manual review" in summary["recommended_action"]
+
+
+def test_narrative_analyst_classifies_invalid_json_provider_response() -> None:
+    exc = ProviderResponseError(
+        "LLM provider response did not contain valid JSON",
+        {"finish_reason": "stop", "content_type": "str", "content_length": 8},
+    )
+
+    assert classify_exception(exc) == "PROVIDER_INVALID_JSON"
+
+
+def test_narrative_analyst_classifies_provider_transport_failures() -> None:
+    assert (
+        classify_exception(ValueError("LLM provider HTTP error: 400 (bad request)"))
+        == "PROVIDER_HTTP_ERROR"
+    )
+    assert (
+        classify_exception(ValueError("LLM provider connection failed"))
+        == "PROVIDER_CONNECTION_ERROR"
+    )
+    assert (
+        classify_exception(ValueError("LLM provider response format is invalid"))
+        == "PROVIDER_RESPONSE_FORMAT_INVALID"
+    )

@@ -88,19 +88,39 @@ class FakeSuccessfulProvider:
         quote_text = str(source_chunk["text"])[:5]
         return output_model.model_validate(
             {
-                "proposal_id": "entity-smoke-1",
-                "entity_type": "CHARACTER",
-                "canonical_name": "Demo Entity",
-                "aliases": ["Demo Alias", "Entity Alias"],
-                "evidence_refs": [
+                "batch_id": "entity-batch-smoke-1",
+                "entities": [
                     {
-                        "chunk_id": source_chunk["chunk_id"],
-                        "quote_start": 0,
-                        "quote_end": len(quote_text),
-                        "quote_text": quote_text,
-                    }
+                        "proposal_id": "entity-smoke-1",
+                        "entity_type": "CHARACTER",
+                        "canonical_name": "Demo Entity",
+                        "aliases": ["Demo Alias", "Entity Alias"],
+                        "evidence_refs": [
+                            {
+                                "chunk_id": source_chunk["chunk_id"],
+                                "quote_start": 0,
+                                "quote_end": len(quote_text),
+                                "quote_text": quote_text,
+                            }
+                        ],
+                        "confidence": 0.83,
+                    },
+                    {
+                        "proposal_id": "entity-smoke-2",
+                        "entity_type": "ORGANIZATION",
+                        "canonical_name": "Demo Group",
+                        "aliases": [],
+                        "evidence_refs": [
+                            {
+                                "chunk_id": source_chunk["chunk_id"],
+                                "quote_start": 1,
+                                "quote_end": len(quote_text),
+                                "quote_text": quote_text[1:],
+                            }
+                        ],
+                        "confidence": 0.72,
+                    },
                 ],
-                "confidence": 0.83,
             }
         )
 
@@ -132,18 +152,24 @@ def test_smoke_real_entity_agent_summary_includes_sanitized_success_details(
     assert summary["real_llm_called"] is True
     assert summary["agent_run_status"] == "SUCCEEDED"
     assert summary["provider_success"] is True
-    assert summary["output_schema"] == "EntityProposalV1"
+    assert summary["output_schema"] == "EntityProposalBatchV1"
     assert summary["schema_validation_passed"] is True
     assert summary["evidence_validation_passed"] is True
-    assert summary["proposal_id"] == "entity-smoke-1"
-    assert summary["entity_type"] == "CHARACTER"
-    assert summary["canonical_name"] == "Demo Entity"
-    assert summary["aliases_count"] == 2
-    assert summary["evidence_chunk_id"] == summary["selected_chunk_ids"][0]
+    assert summary["batch_id"] == "entity-batch-smoke-1"
+    assert summary["entities_count"] == 2
+    assert summary["entity_proposal_ids"] == ["entity-smoke-1", "entity-smoke-2"]
+    assert summary["entity_evidence_results"][0] == {
+        "proposal_id": "entity-smoke-1",
+        "entity_type": "CHARACTER",
+        "evidence_chunk_id": summary["selected_chunk_ids"][0],
+        "quote_matched": True,
+        "char_range_matched": True,
+    }
     assert summary["quote_matched"] is True
     assert summary["char_range_matched"] is True
     assert "Alpha opens the blue gate" not in serialized
     assert "Alpha" not in serialized
+    assert "Demo Alias" not in serialized
     assert "secret-test-key" not in serialized
     assert "message.content" not in serialized
 

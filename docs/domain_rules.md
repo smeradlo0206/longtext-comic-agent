@@ -199,7 +199,7 @@ PanelSpec 至少需要以下信息。
 9. AuthorshipClaim 必须用于记录 Message、照片、帖子、邮件或署名文本的作者/发送者/发布者判断。
 10. 可见发送账号、账号经营者、账号密码知情者和具体 Message Author 必须分开记录。
 11. Message 中表达的内容必须抽取为 Claim；收到、看到或发布 Message 的行为才是 Event。
-12. Claim 必须标记 claim_type 和 verification_status；角色的 ASSERTION、DENIAL、ACCUSATION、HYPOTHESIS、MEMORY、INTERPRETATION、PREDICTION 不能直接升级为 Canonical Data。
+12. Claim 必须标记 claim_type、verification_status；新的 Claim v1.2 还必须标记 temporal_scope。角色的 FACTUAL_ASSERTION、BELIEF、HYPOTHESIS、DENIAL、ACCUSATION、MEMORY、EVALUATION、INTERPRETATION、PREDICTION、COMMITMENT 不能直接升级为 Canonical Data；`FACTUAL_ASSERTION` 只可用于无保留的直接陈述，不能作为猜测、人物信念、评价或解释的默认类型；历史 ASSERTION 只用于读取旧 v1.0 payload，v1.1 仍可读取。
 13. KnowledgeState 必须绑定 Character、StoryTime、RealityLayer、knowledge_target 和 EpistemicStatus，且不能从读者视角、旁白视角或其他角色视角泄漏信息。
 14. NarrativePerspective 必须记录叙述来源和可见性边界；受限视角、匿名消息、草稿改写和不可靠记忆不得自动覆盖正式事实。
 15. 当证据只支持“可能”“疑似”“无法判断”时，必须保留 UNKNOWN、UNCERTAIN 或 UNRESOLVED，不允许为了生成漫画连续性而补全身份事实。

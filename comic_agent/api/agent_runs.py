@@ -203,6 +203,10 @@ def get_agent_run_evidence(
             {
                 "proposal_id": evidence_item.get("proposal_id"),
                 "event_type": evidence_item.get("event_type"),
+                "entity_type": evidence_item.get("entity_type"),
+                "claim_type": evidence_item.get("claim_type"),
+                "source_type": evidence_item.get("source_type"),
+                "temporal_scope": evidence_item.get("temporal_scope"),
                 "chunk_id": chunk_id,
                 "quote": quote_text[:40],
                 "char_start": char_start,
@@ -231,10 +235,46 @@ def _proposal_evidence_refs(proposal: object) -> list[dict[str, Any]]:
                     }
                 )
         return items
+    entities = proposal.get("entities")
+    if isinstance(entities, list):
+        items = []
+        for entity in entities:
+            if not isinstance(entity, dict):
+                continue
+            for evidence in entity.get("evidence_refs", []):
+                items.append(
+                    {
+                        "proposal_id": entity.get("proposal_id"),
+                        "entity_type": entity.get("entity_type"),
+                        "evidence": evidence,
+                    }
+                )
+        return items
+    claims = proposal.get("claims")
+    if isinstance(claims, list):
+        items = []
+        for claim in claims:
+            if not isinstance(claim, dict):
+                continue
+            for evidence in claim.get("evidence_refs", []):
+                items.append(
+                    {
+                        "proposal_id": claim.get("proposal_id"),
+                        "claim_type": claim.get("claim_type"),
+                        "source_type": claim.get("source_type"),
+                        "temporal_scope": claim.get("temporal_scope"),
+                        "evidence": evidence,
+                    }
+                )
+        return items
     return [
         {
             "proposal_id": proposal.get("proposal_id"),
             "event_type": proposal.get("event_type"),
+            "entity_type": proposal.get("entity_type"),
+            "claim_type": proposal.get("claim_type"),
+            "source_type": proposal.get("source_type"),
+            "temporal_scope": proposal.get("temporal_scope"),
             "evidence": evidence,
         }
         for evidence in proposal.get("evidence_refs", [])
@@ -358,6 +398,7 @@ def _agent_run_detail(run: AgentRunV1) -> dict[str, Any]:
         "agent_name": run.agent_name,
         "status": run.status,
         "input_chunk_ids": run.input_chunk_ids,
+        "output_proposal_ids": run.output_proposal_ids,
         "output_schema": run.output_schema,
         "provider_result": (
             run.provider_result.model_dump(mode="json") if run.provider_result else None
