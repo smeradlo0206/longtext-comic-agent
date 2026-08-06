@@ -1,6 +1,6 @@
 """Persistence tests for project-scoped StoryBible resources."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -8,6 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from comic_agent.database.base import Base
+from comic_agent.database.models import StoryEntityProfileModel
 from comic_agent.repositories.storybible_repository import StoryBibleRepository
 from comic_agent.schemas import EvidenceRefV1
 from comic_agent.schemas.storybible import (
@@ -23,18 +24,35 @@ EVIDENCE = [EvidenceRefV1(chunk_id="chunk-1")]
 
 
 @pytest.fixture()
-def storybible_repository(tmp_path: Path) -> Iterator[StoryBibleRepository]:
-    """Provide a repository backed by an isolated real SQLite database."""
+def storybible_session_factory(tmp_path: Path) -> Iterator[sessionmaker[Session]]:
+    """Provide sessions backed by an isolated real SQLite database."""
 
     engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'storybible.db'}", future=True)
     Base.metadata.create_all(engine)
-    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
-    session: Session = session_factory()
+    session_factory = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+        expire_on_commit=False,
+        future=True,
+    )
+    try:
+        yield session_factory
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture()
+def storybible_repository(
+    storybible_session_factory: sessionmaker[Session],
+) -> Iterator[StoryBibleRepository]:
+    """Provide a repository with a session owned for one test."""
+
+    session: Session = storybible_session_factory()
     try:
         yield StoryBibleRepository(session)
     finally:
         session.close()
-        engine.dispose()
 
 
 def profile(
@@ -80,6 +98,32 @@ def candidate_plan(
     )
 
 
+def race_next_insert_commit(
+    session: Session,
+    competing_write: Callable[[], object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Commit a competing row after the repository's checks but before its insert."""
+
+    original_commit = session.commit
+    raced = False
+
+    def commit_with_competing_insert() -> None:
+        nonlocal raced
+        pending_rows = list(session.new)
+        if not raced and pending_rows:
+            raced = True
+            for row in pending_rows:
+                session.expunge(row)
+            session.rollback()
+            competing_write()
+            for row in pending_rows:
+                session.add(row)
+        original_commit()
+
+    monkeypatch.setattr(session, "commit", commit_with_competing_insert)
+
+
 def test_find_profiles_scopes_alias_search_to_one_project(
     storybible_repository: StoryBibleRepository,
 ) -> None:
@@ -121,6 +165,31 @@ def test_save_candidate_plan_is_idempotent_by_project_and_content_hash(
     assert second == first
     assert second.commit_plan_id == "plan-1"
     assert storybible_repository.get_plan_by_content_hash("project-a", "hash-1") == first
+
+
+def test_save_candidate_plan_recovers_when_a_competing_insert_wins(
+    storybible_session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A unique-hash race must return the plan committed by the winner."""
+
+    session = storybible_session_factory()
+    competing_session = storybible_session_factory()
+    repository = StoryBibleRepository(session)
+    competing_repository = StoryBibleRepository(competing_session)
+    winner = candidate_plan(plan_id="plan-winner")
+    incoming = candidate_plan(plan_id="plan-loser")
+    race_next_insert_commit(
+        session,
+        lambda: competing_repository.save_candidate_plan(winner),
+        monkeypatch,
+    )
+    try:
+        assert repository.save_candidate_plan(incoming) == winner
+        assert repository.get_plan_by_content_hash("project-a", "hash-1") == winner
+    finally:
+        session.close()
+        competing_session.close()
 
 
 def test_candidate_plan_hash_is_scoped_to_project(
@@ -182,6 +251,60 @@ def test_canonical_update_only_accepts_a_higher_revision(
     assert newer.canonical_name == "New name"
     assert stale == newer
     assert storybible_repository.get_profile("project-a", "p-1") == newer
+
+
+def test_canonical_insert_race_keeps_the_higher_committed_revision(
+    storybible_session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale insert loser must recover and return the higher race winner."""
+
+    session = storybible_session_factory()
+    competing_session = storybible_session_factory()
+    repository = StoryBibleRepository(session)
+    competing_repository = StoryBibleRepository(competing_session)
+    winner = profile(canonical_name="Race winner", revision=3)
+    stale = profile(canonical_name="Stale insert", revision=2)
+    race_next_insert_commit(
+        session,
+        lambda: competing_repository.apply_canonical_update(winner, "plan-winner"),
+        monkeypatch,
+    )
+    try:
+        assert repository.apply_canonical_update(stale, "plan-stale") == winner
+        assert repository.get_profile("project-a", "p-1") == winner
+    finally:
+        session.close()
+        competing_session.close()
+
+
+def test_canonical_update_uses_a_database_revision_guard(
+    storybible_session_factory: sessionmaker[Session],
+) -> None:
+    """A stale identity-map row must not overwrite a concurrently committed revision."""
+
+    stale_session = storybible_session_factory()
+    competing_session = storybible_session_factory()
+    verification_session = storybible_session_factory()
+    stale_repository = StoryBibleRepository(stale_session)
+    competing_repository = StoryBibleRepository(competing_session)
+    verification_repository = StoryBibleRepository(verification_session)
+    try:
+        stale_repository.apply_canonical_update(profile(), "plan-1")
+        cached_row = stale_session.get(StoryEntityProfileModel, "p-1")
+        assert cached_row is not None
+        stale_session.commit()
+
+        winner = profile(canonical_name="Concurrent winner", revision=3)
+        competing_repository.apply_canonical_update(winner, "plan-3")
+
+        stale = profile(canonical_name="Stale update", revision=2)
+        assert stale_repository.apply_canonical_update(stale, "plan-2") == winner
+        assert verification_repository.get_profile("project-a", "p-1") == winner
+    finally:
+        stale_session.close()
+        competing_session.close()
+        verification_session.close()
 
 
 def test_list_states_at_event_returns_only_active_project_states(
@@ -277,6 +400,38 @@ def test_apply_canonical_update_rejects_cross_project_wrapper(
 
     with pytest.raises(ValueError, match="same project"):
         storybible_repository.apply_canonical_update(update, "plan-1")
+
+
+def test_apply_canonical_update_rejects_a_noncanonical_bare_resource(
+    storybible_repository: StoryBibleRepository,
+) -> None:
+    """Candidate data passed directly must never reach a canonical table."""
+
+    candidate = profile().model_copy(update={"status": "CANDIDATE"})
+
+    with pytest.raises(ValueError, match="CANONICAL"):
+        storybible_repository.apply_canonical_update(candidate, "plan-1")
+
+    assert storybible_repository.get_profile("project-a", "p-1") is None
+
+
+def test_apply_canonical_update_rejects_a_noncanonical_wrapped_resource(
+    storybible_repository: StoryBibleRepository,
+) -> None:
+    """A proposal wrapper must not hide candidate data from the write guard."""
+
+    candidate = profile().model_copy(update={"status": "CANDIDATE"})
+    update = ProfileUpdateProposalV1(
+        update_id="update-1",
+        project_id="project-a",
+        profile=candidate,
+        evidence_refs=EVIDENCE,
+    )
+
+    with pytest.raises(ValueError, match="CANONICAL"):
+        storybible_repository.apply_canonical_update(update, "plan-1")
+
+    assert storybible_repository.get_profile("project-a", "p-1") is None
 
 
 def test_world_rules_are_persisted_and_listed_by_project(

@@ -1,6 +1,7 @@
 """Project-scoped persistence for StoryBible resources and candidate plans."""
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from comic_agent.database.models import (
@@ -10,6 +11,7 @@ from comic_agent.database.models import (
     StoryRelationshipModel,
     WorldRuleModel,
 )
+from comic_agent.schemas.base import RecordStatus
 from comic_agent.schemas.storybible import (
     CommitPlanV1,
     ProfileUpdateProposalV1,
@@ -77,7 +79,29 @@ class StoryBibleRepository:
                 payload=plan.model_dump(mode="json"),
             )
         )
-        self._session.commit()
+        try:
+            self._session.commit()
+        except IntegrityError as error:
+            self._session.rollback()
+            existing_hash = self._session.scalar(
+                select(CandidateCommitPlanModel).where(
+                    CandidateCommitPlanModel.project_id == plan.project_id,
+                    CandidateCommitPlanModel.content_hash == plan.content_hash,
+                )
+            )
+            if existing_hash is not None:
+                return self._plan_from_row(existing_hash)
+            existing_id = self._session.get(CandidateCommitPlanModel, plan.commit_plan_id)
+            if existing_id is not None:
+                if (
+                    existing_id.project_id == plan.project_id
+                    and existing_id.content_hash == plan.content_hash
+                ):
+                    return self._plan_from_row(existing_id)
+                raise ValueError(
+                    "commit_plan_id already belongs to a different plan"
+                ) from error
+            raise
         return plan
 
     def save_committed_plan(self, plan: CommitPlanV1) -> CommitPlanV1:
@@ -216,6 +240,8 @@ class StoryBibleRepository:
         """Insert or revision-gate one canonical update idempotently."""
 
         resource = self._unwrap_update(update)
+        if resource.status != RecordStatus.CANONICAL:
+            raise ValueError("canonical update resource status must be CANONICAL")
         if isinstance(update, UPDATE_TYPES) and update.project_id != resource.project_id:
             raise ValueError("update and canonical resource must belong to the same project")
         if isinstance(resource, StoryEntityProfileV1):
@@ -253,17 +279,48 @@ class StoryBibleRepository:
                 payload=profile.model_dump(mode="json"),
             )
             self._session.add(row)
-        else:
-            self._guard_project(row.project_id, profile.project_id)
-            if row.revision >= profile.revision:
-                return self._profile_from_row(row)
-            row.entity_kind = str(profile.entity_kind)
-            row.canonical_name = profile.canonical_name
-            row.revision = profile.revision
-            row.last_plan_id = plan_id
-            row.payload = profile.model_dump(mode="json")
+            try:
+                self._session.commit()
+            except IntegrityError:
+                self._session.rollback()
+                if self._session.get(StoryEntityProfileModel, profile.profile_id) is None:
+                    raise
+            else:
+                return profile
+
+        row = self._session.scalar(
+            select(StoryEntityProfileModel)
+            .where(StoryEntityProfileModel.profile_id == profile.profile_id)
+            .execution_options(populate_existing=True)
+        )
+        if row is None:
+            raise RuntimeError("canonical profile insert failed without a stored winner")
+        self._guard_project(row.project_id, profile.project_id)
+        self._session.execute(
+            update(StoryEntityProfileModel)
+            .where(
+                StoryEntityProfileModel.profile_id == profile.profile_id,
+                StoryEntityProfileModel.project_id == profile.project_id,
+                StoryEntityProfileModel.revision < profile.revision,
+            )
+            .values(
+                entity_kind=str(profile.entity_kind),
+                canonical_name=profile.canonical_name,
+                revision=profile.revision,
+                last_plan_id=plan_id,
+                payload=profile.model_dump(mode="json"),
+            )
+            .execution_options(synchronize_session=False)
+        )
         self._session.commit()
-        return profile
+        row = self._session.scalar(
+            select(StoryEntityProfileModel)
+            .where(StoryEntityProfileModel.profile_id == profile.profile_id)
+            .execution_options(populate_existing=True)
+        )
+        if row is None:  # pragma: no cover - canonical rows are not deleted here
+            raise RuntimeError("canonical profile disappeared after update")
+        return self._profile_from_row(row)
 
     def _apply_state(self, state: StoryEntityStateV1, plan_id: str) -> StoryEntityStateV1:
         row = self._session.get(StoryEntityStateModel, state.state_id)
@@ -279,18 +336,49 @@ class StoryBibleRepository:
                 payload=state.model_dump(mode="json"),
             )
             self._session.add(row)
-        else:
-            self._guard_project(row.project_id, state.project_id)
-            if row.revision >= state.revision:
-                return StoryEntityStateV1.model_validate(row.payload)
-            row.profile_id = state.profile_id
-            row.valid_from_order = state.valid_from_order
-            row.valid_until_order = state.valid_until_order
-            row.revision = state.revision
-            row.last_plan_id = plan_id
-            row.payload = state.model_dump(mode="json")
+            try:
+                self._session.commit()
+            except IntegrityError:
+                self._session.rollback()
+                if self._session.get(StoryEntityStateModel, state.state_id) is None:
+                    raise
+            else:
+                return state
+
+        row = self._session.scalar(
+            select(StoryEntityStateModel)
+            .where(StoryEntityStateModel.state_id == state.state_id)
+            .execution_options(populate_existing=True)
+        )
+        if row is None:
+            raise RuntimeError("canonical state insert failed without a stored winner")
+        self._guard_project(row.project_id, state.project_id)
+        self._session.execute(
+            update(StoryEntityStateModel)
+            .where(
+                StoryEntityStateModel.state_id == state.state_id,
+                StoryEntityStateModel.project_id == state.project_id,
+                StoryEntityStateModel.revision < state.revision,
+            )
+            .values(
+                profile_id=state.profile_id,
+                valid_from_order=state.valid_from_order,
+                valid_until_order=state.valid_until_order,
+                revision=state.revision,
+                last_plan_id=plan_id,
+                payload=state.model_dump(mode="json"),
+            )
+            .execution_options(synchronize_session=False)
+        )
         self._session.commit()
-        return state
+        row = self._session.scalar(
+            select(StoryEntityStateModel)
+            .where(StoryEntityStateModel.state_id == state.state_id)
+            .execution_options(populate_existing=True)
+        )
+        if row is None:  # pragma: no cover - canonical rows are not deleted here
+            raise RuntimeError("canonical state disappeared after update")
+        return StoryEntityStateV1.model_validate(row.payload)
 
     def _apply_relationship(
         self, relationship: StoryRelationshipV1, plan_id: str
@@ -309,19 +397,55 @@ class StoryBibleRepository:
                 payload=relationship.model_dump(mode="json"),
             )
             self._session.add(row)
-        else:
-            self._guard_project(row.project_id, relationship.project_id)
-            if row.revision >= relationship.revision:
-                return StoryRelationshipV1.model_validate(row.payload)
-            row.source_profile_id = relationship.source_profile_id
-            row.target_profile_id = relationship.target_profile_id
-            row.valid_from_order = relationship.valid_from_order
-            row.valid_until_order = relationship.valid_until_order
-            row.revision = relationship.revision
-            row.last_plan_id = plan_id
-            row.payload = relationship.model_dump(mode="json")
+            try:
+                self._session.commit()
+            except IntegrityError:
+                self._session.rollback()
+                if (
+                    self._session.get(
+                        StoryRelationshipModel, relationship.relationship_id
+                    )
+                    is None
+                ):
+                    raise
+            else:
+                return relationship
+
+        row = self._session.scalar(
+            select(StoryRelationshipModel)
+            .where(StoryRelationshipModel.relationship_id == relationship.relationship_id)
+            .execution_options(populate_existing=True)
+        )
+        if row is None:
+            raise RuntimeError("canonical relationship insert failed without a stored winner")
+        self._guard_project(row.project_id, relationship.project_id)
+        self._session.execute(
+            update(StoryRelationshipModel)
+            .where(
+                StoryRelationshipModel.relationship_id == relationship.relationship_id,
+                StoryRelationshipModel.project_id == relationship.project_id,
+                StoryRelationshipModel.revision < relationship.revision,
+            )
+            .values(
+                source_profile_id=relationship.source_profile_id,
+                target_profile_id=relationship.target_profile_id,
+                valid_from_order=relationship.valid_from_order,
+                valid_until_order=relationship.valid_until_order,
+                revision=relationship.revision,
+                last_plan_id=plan_id,
+                payload=relationship.model_dump(mode="json"),
+            )
+            .execution_options(synchronize_session=False)
+        )
         self._session.commit()
-        return relationship
+        row = self._session.scalar(
+            select(StoryRelationshipModel)
+            .where(StoryRelationshipModel.relationship_id == relationship.relationship_id)
+            .execution_options(populate_existing=True)
+        )
+        if row is None:  # pragma: no cover - canonical rows are not deleted here
+            raise RuntimeError("canonical relationship disappeared after update")
+        return StoryRelationshipV1.model_validate(row.payload)
 
     def _apply_world_rule(self, rule: WorldRuleV1, plan_id: str) -> WorldRuleV1:
         row = self._session.get(WorldRuleModel, rule.rule_id)
@@ -335,16 +459,47 @@ class StoryBibleRepository:
                 payload=rule.model_dump(mode="json"),
             )
             self._session.add(row)
-        else:
-            self._guard_project(row.project_id, rule.project_id)
-            if row.revision >= rule.revision:
-                return WorldRuleV1.model_validate(row.payload)
-            row.name = rule.name
-            row.revision = rule.revision
-            row.last_plan_id = plan_id
-            row.payload = rule.model_dump(mode="json")
+            try:
+                self._session.commit()
+            except IntegrityError:
+                self._session.rollback()
+                if self._session.get(WorldRuleModel, rule.rule_id) is None:
+                    raise
+            else:
+                return rule
+
+        row = self._session.scalar(
+            select(WorldRuleModel)
+            .where(WorldRuleModel.rule_id == rule.rule_id)
+            .execution_options(populate_existing=True)
+        )
+        if row is None:
+            raise RuntimeError("canonical world rule insert failed without a stored winner")
+        self._guard_project(row.project_id, rule.project_id)
+        self._session.execute(
+            update(WorldRuleModel)
+            .where(
+                WorldRuleModel.rule_id == rule.rule_id,
+                WorldRuleModel.project_id == rule.project_id,
+                WorldRuleModel.revision < rule.revision,
+            )
+            .values(
+                name=rule.name,
+                revision=rule.revision,
+                last_plan_id=plan_id,
+                payload=rule.model_dump(mode="json"),
+            )
+            .execution_options(synchronize_session=False)
+        )
         self._session.commit()
-        return rule
+        row = self._session.scalar(
+            select(WorldRuleModel)
+            .where(WorldRuleModel.rule_id == rule.rule_id)
+            .execution_options(populate_existing=True)
+        )
+        if row is None:  # pragma: no cover - canonical rows are not deleted here
+            raise RuntimeError("canonical world rule disappeared after update")
+        return WorldRuleV1.model_validate(row.payload)
 
     @staticmethod
     def _guard_project(stored_project_id: str, incoming_project_id: str) -> None:
