@@ -68,6 +68,20 @@ Internal hosted demo console:
   text, or canonical story-data writes.
 - `event_extraction` now returns `EventProposalBatchV1`; timeline and downstream
   consumers should read event proposals from `proposal.events[]`.
+- `entity_extraction` now returns `EntityProposalBatchV1`; downstream consumers
+  should read entity proposals from `proposal.entities[]`.
+- `claim_extraction` now returns `ClaimProposalBatchV1`; downstream consumers
+  should read claim proposals from `proposal.claims[]`.
+- New `claim_extraction` outputs use Claim schema version `1.2`: current
+  `claim_type` values are `FACTUAL_ASSERTION`, `BELIEF`, `HYPOTHESIS`, `DENIAL`,
+  `ACCUSATION`, `MEMORY`, `EVALUATION`, `INTERPRETATION`, `PREDICTION`, and
+  `COMMITMENT`, and every claim includes `temporal_scope`. `FACTUAL_ASSERTION`
+  is reserved for direct unhedged statements, rather than a fallback for guesses,
+  beliefs, evaluations, or interpretations. Legacy `ASSERTION` is read-only for
+  historical `schema_version="1.0"` payloads; v1.1 claim payloads remain readable.
+- Current recommended real model for Narrative Analyst extraction smoke tests is
+  `deepseek-chat`. Keep `deepseek-v4-pro` for later Continuity Timeline style
+  reasoning tests rather than the default extraction path.
 - In the Narrative Analyst Console, explicitly select 1-3 chunks before every
   run. The browser does not rely on an empty Chunk IDs field plus
   chunk_offset/chunk_limit, because that can accidentally reuse older chunks in

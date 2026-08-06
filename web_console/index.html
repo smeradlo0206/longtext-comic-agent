@@ -38,6 +38,8 @@
       grid-template-columns: 280px 1fr;
     }
 
+    .app, main, .grid, .stack, section, .body { min-width: 0; }
+
     aside {
       position: sticky;
       top: 0;
@@ -159,6 +161,8 @@
     }
 
     .stack { display: grid; gap: 18px; }
+    .full-span { grid-column: 1 / -1; }
+    .full-span { order: 1; }
 
     section {
       background: var(--panel);
@@ -302,6 +306,15 @@
       border-collapse: collapse;
       font-size: 13px;
     }
+
+    .table-scroll {
+      width: 100%;
+      max-width: 100%;
+      overflow-x: auto;
+      overscroll-behavior-inline: contain;
+    }
+
+    .table-scroll > table { min-width: 880px; }
 
     th, td {
       text-align: left;
@@ -495,13 +508,14 @@
               <div id="selectedChunks" class="selected"></div>
               <div class="row">
                 <button id="runMock" class="primary">运行 Mock Event Agent</button>
-                <button id="runRealEvent" class="primary" disabled>运行 Real Event Agent</button>
+                <button id="runRealEvent" class="primary" disabled>运行 Real Event Agent · event only</button>
               </div>
               <pre id="agentResult">{}</pre>
             </div>
           </section>
+        </div>
 
-          <section id="narrative">
+          <section id="narrative" class="full-span">
             <div class="section-head">
               <div>
                 <h2>Narrative Analyst Console</h2>
@@ -514,8 +528,8 @@
                 <label>Mode
                   <select id="narrativeMode">
                     <option value="event_extraction">event_extraction · EventProposalBatchV1</option>
-                    <option value="entity_extraction">entity_extraction · EntityProposalV1</option>
-                    <option value="claim_extraction">claim_extraction · ClaimProposalV1</option>
+                    <option value="entity_extraction">entity_extraction · EntityProposalBatchV1</option>
+                    <option value="claim_extraction">claim_extraction · ClaimProposalBatchV1</option>
                   </select>
                 </label>
                 <label>chunk_limit
@@ -572,7 +586,6 @@
               </div>
             </div>
           </section>
-        </div>
 
         <div class="stack">
           <section>
@@ -960,8 +973,9 @@
         renderNarrativeSelectedChunks();
         throw new Error("Narrative Analyst 最多一次运行 3 个 chunks。");
       }
+      const requestedMode = $("narrativeMode").value;
       const body = {
-        mode: $("narrativeMode").value,
+        mode: requestedMode,
         chunk_limit: Number.parseInt($("narrativeChunkLimit").value, 10),
         chunk_offset: Number.parseInt($("narrativeChunkOffset").value, 10),
         max_chars_per_chunk: Number.parseInt($("narrativeMaxChars").value, 10),
@@ -973,9 +987,27 @@
         headers: demoHeaders(),
         body: JSON.stringify(body)
       });
+      assertNarrativeModeMatches(requestedMode, data);
       renderNarrativeResult(data);
       showLog(`Narrative Analyst: ${data.agent_run_status ?? "dry-run"}`);
       if (data.agent_run_saved) await loadRuns();
+    }
+
+    function assertNarrativeModeMatches(requestedMode, data) {
+      const expectedSchema = expectedSchemaForMode(requestedMode);
+      if (data.mode !== requestedMode || data.output_schema !== expectedSchema) {
+        throw new Error(
+          `Narrative Analyst mode mismatch: requested ${requestedMode} / ${expectedSchema}, ` +
+          `received ${data.mode ?? "-"} / ${data.output_schema ?? "-"}`
+        );
+      }
+    }
+
+    function expectedSchemaForMode(mode) {
+      if (mode === "event_extraction") return "EventProposalBatchV1";
+      if (mode === "entity_extraction") return "EntityProposalBatchV1";
+      if (mode === "claim_extraction") return "ClaimProposalBatchV1";
+      return null;
     }
 
     function renderNarrativeResult(data) {
@@ -991,11 +1023,17 @@
         batch_id: sanitized.batch_id,
         events_count: sanitized.events_count,
         event_proposal_ids: sanitized.event_proposal_ids,
+        entities_count: sanitized.entities_count,
+        entity_proposal_ids: sanitized.entity_proposal_ids,
+        claims_count: sanitized.claims_count,
+        claim_proposal_ids: sanitized.claim_proposal_ids,
         evidence_validation_passed: sanitized.evidence_validation_passed,
         evidence_chunk_id: sanitized.evidence_chunk_id,
         quote_matched: sanitized.quote_matched,
         char_range_matched: sanitized.char_range_matched,
-        event_evidence_results: sanitized.event_evidence_results
+        event_evidence_results: sanitized.event_evidence_results,
+        entity_evidence_results: sanitized.entity_evidence_results,
+        claim_evidence_results: sanitized.claim_evidence_results
       });
       $("narrativeProviderDiagnostics").textContent = pretty(sanitized.provider_error_diagnostics ?? null);
       renderManualReviewChecklist(sanitized.manual_review_checklist || {});
@@ -1019,12 +1057,18 @@
         $("narrativeProposalList").innerHTML = `<span class="muted">暂无 proposal。</span>`;
         return;
       }
-      const events = Array.isArray(proposal.events) ? proposal.events : null;
-      const rows = events ? events.map((event) => proposalRow(event)) : [proposalRow(proposal)];
+      const rows = proposalItems(proposal).map((item) => proposalRow(item));
       $("narrativeProposalList").innerHTML = table(
-        ["proposal_id", "type", "summary/name", "confidence", "evidence chunk", "quote preview"],
+        ["proposal_id", "type", "temporal_scope", "source_type", "summary/name", "confidence", "evidence chunk", "quote preview"],
         rows
       );
+    }
+
+    function proposalItems(proposal) {
+      if (Array.isArray(proposal?.events)) return proposal.events;
+      if (Array.isArray(proposal?.entities)) return proposal.entities;
+      if (Array.isArray(proposal?.claims)) return proposal.claims;
+      return [proposal];
     }
 
     function proposalRow(proposal) {
@@ -1034,6 +1078,8 @@
       return [
         escapeHtml(proposal.proposal_id ?? "-"),
         escapeHtml(type),
+        escapeHtml(proposal.temporal_scope ?? "-"),
+        escapeHtml(proposal.source_type ?? "-"),
         escapeHtml(shortPreview(title, 48)),
         escapeHtml(proposal.confidence ?? "-"),
         escapeHtml(evidence?.chunk_id ?? "-"),
@@ -1100,6 +1146,8 @@
       const mode = String(data.agent_name || "").replace("narrative-analyst:", "");
       const proposal = data.proposal ?? data.provider_result?.structured_output ?? null;
       const events = Array.isArray(proposal?.events) ? proposal.events : [];
+      const entities = Array.isArray(proposal?.entities) ? proposal.entities : [];
+      const claims = Array.isArray(proposal?.claims) ? proposal.claims : [];
       renderNarrativeResult({
         mode,
         dry_run: false,
@@ -1115,6 +1163,10 @@
         batch_id: proposal?.batch_id ?? null,
         events_count: events.length || null,
         event_proposal_ids: events.map((event) => event.proposal_id),
+        entities_count: entities.length || null,
+        entity_proposal_ids: entities.map((entity) => entity.proposal_id),
+        claims_count: claims.length || null,
+        claim_proposal_ids: claims.map((claim) => claim.proposal_id),
         primary_event_type: events[0]?.event_type ?? null,
         primary_event_summary: events[0]?.summary ?? null,
         quote_matched: null,
@@ -1143,22 +1195,30 @@
       }
       if (mode === "entity_extraction") {
         return {
-          is_entity: null,
-          entity_type_correct: null,
-          canonical_name_correct: null,
-          evidence_supports_entity: null,
-          salient_entity: null,
+          entities_cover_major_entities: null,
+          entity_count_reasonable: null,
+          no_duplicate_entities: null,
+          entity_types_correct: null,
+          names_and_aliases_not_invented: null,
+          every_entity_has_supporting_evidence: null,
           manual_score: null,
           manual_issue: null
         };
       }
       if (mode === "claim_extraction") {
         return {
-          is_claim: null,
-          claim_type_correct: null,
-          source_type_correct: null,
-          evidence_supports_claim: null,
-          salient_claim: null,
+          claims_cover_major_claims: null,
+          claim_count_reasonable: null,
+          no_duplicate_claims: null,
+          claim_is_attributable_proposition: null,
+          claim_type_matches_decision_table: null,
+          factual_assertions_are_unhedged: null,
+          belief_and_hypothesis_distinguished: null,
+          evaluation_and_interpretation_distinguished: null,
+          claim_temporal_scope_correct: null,
+          prediction_commitment_distinguished: null,
+          every_claim_has_supporting_evidence: null,
+          no_duplicate_or_invented_claims: null,
           manual_score: null,
           manual_issue: null
         };
@@ -1213,10 +1273,10 @@
     function table(headers, rows) {
       if (!rows.length) return `<span class="muted">暂无数据。</span>`;
       return `
-        <table>
+        <div class="table-scroll"><table>
           <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>
           <tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody>
-        </table>
+        </table></div>
       `;
     }
 

@@ -11,6 +11,7 @@ def test_web_console_static_html_exposes_demo_controls_without_local_secrets() -
     assert "Access Not Required" in html
     assert 'id="runMock"' in html
     assert 'id="runRealEvent"' in html
+    assert "Real Event Agent · event only" in html
     assert 'id="narrativeMode"' in html
     assert 'id="narrativeChunkIds"' in html
     assert 'id="narrativeChunkLimit"' in html
@@ -29,14 +30,34 @@ def test_web_console_static_html_exposes_demo_controls_without_local_secrets() -
     assert "本次输入 chunks" in html
     assert "event_extraction" in html
     assert "event_extraction · EventProposalBatchV1" in html
+    assert "entity_extraction · EntityProposalBatchV1" in html
+    assert "claim_extraction · ClaimProposalBatchV1" in html
     assert "Proposal List" in html
     assert "renderProposalList" in html
+    assert "proposalItems" in html
     assert "event_evidence_results" in html
+    assert "entity_evidence_results" in html
+    assert "claim_evidence_results" in html
+    assert "temporal_scope" in html
     assert "events_cover_major_plot_points" in html
+    assert "entities_cover_major_entities" in html
+    assert "claims_cover_major_claims" in html
     assert "event_count_reasonable" in html
     assert "no_duplicate_events" in html
+    assert "no_duplicate_entities" in html
+    assert "no_duplicate_claims" in html
+    assert "claim_is_attributable_proposition" in html
+    assert "claim_type_matches_decision_table" in html
+    assert "factual_assertions_are_unhedged" in html
+    assert "belief_and_hypothesis_distinguished" in html
+    assert "evaluation_and_interpretation_distinguished" in html
+    assert "claim_temporal_scope_correct" in html
+    assert "prediction_commitment_distinguished" in html
+    assert "no_duplicate_or_invented_claims" in html
     assert "no_invented_events" in html
     assert "every_event_has_supporting_evidence" in html
+    assert "every_entity_has_supporting_evidence" in html
+    assert "every_claim_has_supporting_evidence" in html
     assert "event_summaries_supported_by_quotes" in html
     assert "entity_extraction" in html
     assert "claim_extraction" in html
@@ -45,6 +66,10 @@ def test_web_console_static_html_exposes_demo_controls_without_local_secrets() -
     assert "clearSelectedChunks();" in html
     assert "请先选择 1-3 个 chunks，避免误用旧项目文本。" in html
     assert "body.chunk_ids = chunkIds;" in html
+    assert 'const requestedMode = $("narrativeMode").value;' in html
+    assert "assertNarrativeModeMatches" in html
+    assert "Narrative Analyst mode mismatch" in html
+    assert "expectedSchemaForMode" in html
     assert 'addEventListener("input", () => renderNarrativeSelectedChunks())' in html
     assert "X-Demo-Access-Code" in html
     assert "local_eval" not in html
@@ -77,6 +102,18 @@ def test_web_console_can_restore_narrative_proposal_from_agent_run_detail() -> N
     assert "renderNarrativeResultFromRunDetail" in html
     assert 'data.agent_name.startsWith("narrative-analyst:")' in html
     assert "data.proposal ?? data.provider_result?.structured_output ?? null" in html
+
+
+def test_web_console_keeps_wide_proposal_tables_inside_their_own_scroll_area() -> None:
+    html = Path("web_console/index.html").read_text(encoding="utf-8")
+
+    assert ".app, main, .grid, .stack, section, .body { min-width: 0; }" in html
+    assert ".table-scroll {" in html
+    assert "overflow-x: auto;" in html
+    assert '<div class="table-scroll"><table>' in html
+    assert ".full-span { grid-column: 1 / -1; }" in html
+    assert ".full-span { order: 1; }" in html
+    assert 'id="narrative" class="full-span"' in html
 
 
 def test_web_console_manual_review_empty_values_are_explained_in_chinese() -> None:
