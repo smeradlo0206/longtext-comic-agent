@@ -15,36 +15,40 @@ Phase one uses an OpenAI-compatible chat completions interface:
 - endpoint: `{LLM_BASE_URL}/chat/completions`
 - transport: `httpx`
 
-The current default values are:
+The current safe committed defaults keep real LLM usage disabled:
 
 ```text
 ENABLE_REAL_LLM=false
 LLM_PROVIDER_NAME=ustc-openai-compatible
 LLM_BASE_URL=https://api.llm.ustc.edu.cn/v1
-LLM_MODEL=deepseek-v4-pro
+LLM_MODEL=deepseek-chat
 LLM_RESPONSE_FORMAT=
 LLM_TIMEOUT_SECONDS=60
 LLM_MAX_OUTPUT_TOKENS=2000
 ```
 
 If the platform authorizes multiple models, `LLM_MODEL` can be switched without
-code changes. Examples include `deepseek-v4-pro`, `qwen3.6-chat`, or other
+code changes. Examples include `deepseek-chat`, `deepseek-v4-pro`, `qwen3.6-chat`, or other
 models listed by the authorized platform. The selected value must match the
 provider portal exactly.
 
-For the current USTC `deepseek-v4-pro` evaluation path, the recommended local
+For current Narrative Analyst extraction smoke tests, the recommended local
 configuration is:
 
 ```text
 ENABLE_REAL_LLM=true
 LLM_PROVIDER_NAME=ustc-openai-compatible
 LLM_BASE_URL=https://api.llm.ustc.edu.cn/v1
-LLM_MODEL=deepseek-v4-pro
+LLM_MODEL=deepseek-chat
 LLM_RESPONSE_FORMAT=
 LLM_TIMEOUT_SECONDS=240
 LLM_MAX_OUTPUT_TOKENS=3000
 LLM_API_KEY=replace-with-local-key
 ```
+
+Keep `deepseek-v4-pro` available for future Continuity Timeline or other
+reasoning-heavy evaluation, but do not use it as the current default stable
+extraction path unless a specific manual test asks for it.
 
 Use `ENABLE_REAL_LLM=true` only during manual evaluation. The committed default
 remains `ENABLE_REAL_LLM=false`, and the smoke script still requires the
@@ -64,7 +68,7 @@ Create a local `.env` file in the repository root. Do not commit it.
 ENABLE_REAL_LLM=false
 LLM_PROVIDER_NAME=ustc-openai-compatible
 LLM_BASE_URL=https://api.llm.ustc.edu.cn/v1
-LLM_MODEL=deepseek-v4-pro
+LLM_MODEL=deepseek-chat
 LLM_RESPONSE_FORMAT=
 LLM_API_KEY=replace-with-local-key
 LLM_TIMEOUT_SECONDS=240
@@ -113,7 +117,9 @@ Latest sanitized campus-network manual results for `EventExtractionAgent` v0.1:
   the 3 chunk run passed with schema, evidence, quote, and char-range validation.
 
 Conclusion: `EventExtractionAgent` v0.1 real evaluation has passed up to
-3 chunks. The current recommended model is `deepseek-v4-pro`.
+3 chunks. Those historical manual runs used `deepseek-v4-pro`; the current
+recommended default model for new Narrative Analyst extraction eval is
+`deepseek-chat`.
 
 ## Dry Run
 
@@ -183,7 +189,7 @@ cd D:\107
 $env:ENABLE_REAL_LLM = 'true'
 $env:LLM_PROVIDER_NAME = 'ustc-openai-compatible'
 $env:LLM_BASE_URL = 'https://api.llm.ustc.edu.cn/v1'
-$env:LLM_MODEL = 'deepseek-v4-pro'
+$env:LLM_MODEL = 'deepseek-chat'
 $env:LLM_RESPONSE_FORMAT = ''
 $env:LLM_TIMEOUT_SECONDS = '360'
 $env:LLM_MAX_OUTPUT_TOKENS = '3000'
@@ -265,8 +271,8 @@ Mode-specific sanitized fields are added when a proposal is available:
 
 ```text
 event_extraction: batch_id, events_count, event_proposal_ids, primary_event_type, primary_event_summary, event_evidence_results
-entity_extraction: proposal_id, entity_type, canonical_name, aliases_count, confidence, evidence_chunk_id
-claim_extraction: proposal_id, claim_type, source_type, verification_status, confidence, evidence_chunk_id
+entity_extraction: batch_id, entities_count, entity_proposal_ids, entity_evidence_results
+claim_extraction: batch_id, claims_count, claim_proposal_ids, claim_evidence_results
 ```
 
 For `event_extraction`, the number of `events[]` is based on actual story
@@ -274,14 +280,51 @@ events, not chunk count. One chunk can produce multiple events, and several
 chunks can produce one continuous event. Timeline and downstream agents should
 consume `proposal.events[]`, not a single top-level `EventProposalV1`.
 
+For `entity_extraction`, the provider returns one `EntityProposalBatchV1`.
+Downstream agents should consume `proposal.entities[]`, not a single top-level
+`EntityProposalV1`. The number of entities is based on distinct significant
+source-grounded entities, not chunk count.
+
+For `claim_extraction`, the provider returns one `ClaimProposalBatchV1`.
+Downstream agents should consume `proposal.claims[]`, not a single top-level
+`ClaimProposalV1`. The number of claims is based on distinct salient claims, not
+chunk count.
+New `claim_extraction` outputs use `schema_version="1.2"`. Each claim must carry
+`temporal_scope`, and current `claim_type` values are `FACTUAL_ASSERTION`,
+`BELIEF`, `HYPOTHESIS`, `DENIAL`, `ACCUSATION`, `MEMORY`, `EVALUATION`,
+`INTERPRETATION`, `PREDICTION`, and `COMMITMENT`. `FACTUAL_ASSERTION` must be a
+direct unhedged statement, not a fallback for a guess, belief, evaluation, or
+interpretation. Legacy `ASSERTION` is only accepted when reading historical
+`schema_version="1.0"` payloads; v1.1 payloads remain readable.
+
 For `entity_extraction`, manual review should score:
 
 ```text
-is_entity
-entity_type_correct
-canonical_name_correct
-evidence_supports_entity
-salient_entity
+entities_cover_major_entities
+entity_count_reasonable
+no_duplicate_entities
+entity_types_correct
+names_and_aliases_not_invented
+every_entity_has_supporting_evidence
+manual_score
+manual_issue
+```
+
+For `claim_extraction`, manual review should score:
+
+```text
+claims_cover_major_claims
+claim_count_reasonable
+no_duplicate_claims
+claim_is_attributable_proposition
+claim_type_matches_decision_table
+factual_assertions_are_unhedged
+belief_and_hypothesis_distinguished
+evaluation_and_interpretation_distinguished
+claim_temporal_scope_correct
+prediction_commitment_distinguished
+every_claim_has_supporting_evidence
+no_duplicate_or_invented_claims
 manual_score
 manual_issue
 ```
@@ -296,6 +339,10 @@ Failure categories are intentionally coarse and sanitized:
 PROVIDER_TIMEOUT
 PROVIDER_LENGTH_BEFORE_FINAL_CONTENT
 PROVIDER_CONTENT_MISSING
+PROVIDER_INVALID_JSON
+PROVIDER_HTTP_ERROR
+PROVIDER_CONNECTION_ERROR
+PROVIDER_RESPONSE_FORMAT_INVALID
 SCHEMA_VALIDATION_FAILED
 EVIDENCE_VALIDATION_FAILED
 QUOTE_NOT_MATCHED
@@ -311,6 +358,12 @@ model may spend the extra completion budget on reasoning rather than final JSON.
 Keep `LLM_RESPONSE_FORMAT` empty for the current USTC path. For slow long-text
 runs, `LLM_TIMEOUT_SECONDS=360` is acceptable during manual evaluation.
 
+`PROVIDER_INVALID_JSON` means the provider returned final text but it could not
+be parsed as a Proposal after the safe JSON extraction step. `PROVIDER_HTTP_ERROR`,
+`PROVIDER_CONNECTION_ERROR`, and `PROVIDER_RESPONSE_FORMAT_INVALID` identify
+provider transport or response-shape failures. These fields stay sanitized and
+never include raw response text, source text, or API keys.
+
 Recommended manual Entity eval command:
 
 ```powershell
@@ -318,7 +371,7 @@ cd D:\107
 $env:ENABLE_REAL_LLM = 'true'
 $env:LLM_PROVIDER_NAME = 'ustc-openai-compatible'
 $env:LLM_BASE_URL = 'https://api.llm.ustc.edu.cn/v1'
-$env:LLM_MODEL = 'deepseek-v4-pro'
+$env:LLM_MODEL = 'deepseek-chat'
 $env:LLM_RESPONSE_FORMAT = ''
 $env:LLM_TIMEOUT_SECONDS = '240'
 $env:LLM_MAX_OUTPUT_TOKENS = '3000'

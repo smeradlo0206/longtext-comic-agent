@@ -1,5 +1,50 @@
 # Narrative Analyst Modes Team Brief
 
+## Current Batch Contract
+
+NarrativeAnalyst is the top-level narrative parsing Agent. Its modes are
+internal capability branches that read bounded `SourceChunkV1` context and output
+Proposal objects only.
+
+Implemented modes now share a batch-shaped outer contract:
+
+```text
+event_extraction -> EventProposalBatchV1 -> proposal.events[]
+entity_extraction -> EntityProposalBatchV1 -> proposal.entities[]
+claim_extraction -> ClaimProposalBatchV1 -> proposal.claims[]
+```
+
+The number of items in each batch is based on distinct source-grounded facts,
+not chunk count. One chunk can produce multiple proposals, and three chunks can
+still produce one proposal when the text only supports one distinct item.
+Each proposal item needs its own `EvidenceRefV1`; repeated entities or repeated
+claims across chunks should be output once.
+
+Planned modes remain registered but not implemented:
+
+```text
+knowledge_state_extraction -> KnowledgeStateProposalV1
+state_change_extraction -> StateChangeProposalV1
+relationship_signal_extraction -> planned_without_schema
+```
+
+Current recommended model for manual Narrative Analyst extraction eval is
+`deepseek-chat`. Keep `deepseek-v4-pro` for future Continuity Timeline or other
+reasoning-heavy evals. Automated tests use fake providers only and must not call
+real LLMs.
+
+Next manual eval batches:
+
+```text
+B: Entity Batch, 1/2/3 chunks
+C: Entity Batch + Claim Batch, 1/2/3 chunks
+E: Claim Batch, 1/2/3 chunks, plus KnowledgeState prep notes
+```
+
+Record sanitized summaries only. Do not paste `.env`, API keys, real source
+text, `quote_text`, `claim_text`, aliases, raw provider responses, or
+`message.content`.
+
 
 ## 开发格式
 
@@ -141,8 +186,8 @@ mode-specific 字段：
 
 ```text
 event_extraction: batch_id, events_count, event_proposal_ids, primary_event_type, primary_event_summary, event_evidence_results
-entity_extraction: proposal_id, entity_type, canonical_name, aliases_count, confidence, evidence_chunk_id
-claim_extraction: proposal_id, claim_type, source_type, verification_status, confidence, evidence_chunk_id
+entity_extraction: batch_id, entities_count, entity_proposal_ids, entity_evidence_results
+claim_extraction: batch_id, claims_count, claim_proposal_ids, claim_evidence_results
 ```
 
 当前 failure_category：
@@ -174,9 +219,17 @@ POST /projects/{project_id}/agent-runs/narrative-analyst
 
 ```text
 event_extraction -> EventProposalBatchV1
-entity_extraction -> EntityProposalV1
-claim_extraction -> ClaimProposalV1
+entity_extraction -> EntityProposalBatchV1
+claim_extraction -> ClaimProposalBatchV1
 ```
+
+`claim_extraction` fresh outputs use Claim schema `1.2`. Current claim types are
+`FACTUAL_ASSERTION`, `BELIEF`, `HYPOTHESIS`, `DENIAL`, `ACCUSATION`, `MEMORY`,
+`EVALUATION`, `INTERPRETATION`, `PREDICTION`, and `COMMITMENT`; every claim
+includes `temporal_scope`. `FACTUAL_ASSERTION` is only for direct, unhedged
+statements; it is never the fallback for a guess, belief, evaluation, or
+interpretation. Legacy `ASSERTION` is read-compatible only for historical
+`schema_version="1.0"` payloads; v1.1 payloads remain readable.
 
 Console 能设置：
 
@@ -222,8 +275,8 @@ Manual Review Checklist 目前只展示 null 占位，不写回数据库：
 
 ```text
 event: events_cover_major_plot_points, event_count_reasonable, no_duplicate_events, no_invented_events, every_event_has_supporting_evidence, event_summaries_supported_by_quotes
-entity: is_entity, entity_type_correct, canonical_name_correct, evidence_supports_entity, salient_entity
-claim: is_claim, claim_type_correct, source_type_correct, evidence_supports_claim, salient_claim
+entity: entities_cover_major_entities, entity_count_reasonable, no_duplicate_entities, entity_types_correct, names_and_aliases_not_invented, every_entity_has_supporting_evidence
+claim: claims_cover_major_claims, claim_count_reasonable, no_duplicate_claims, claim_is_attributable_proposition, claim_type_matches_decision_table, claim_temporal_scope_correct, prediction_commitment_distinguished, every_claim_has_supporting_evidence, no_duplicate_or_invented_claims
 common: manual_score, manual_issue
 ```
 
@@ -247,8 +300,8 @@ mode 是 `NarrativeAnalyst` 内部能力分支，不再作为额外顶层 Agent 
 
 ```text
 event_extraction -> EventProposalBatchV1
-entity_extraction -> EntityProposalV1
-claim_extraction -> ClaimProposalV1
+entity_extraction -> EntityProposalBatchV1
+claim_extraction -> ClaimProposalBatchV1
 ```
 
 当前 planned / not implemented modes：
@@ -347,7 +400,7 @@ tests/test_real_entity_smoke.py
 输出：
 
 ```text
-EntityProposalV1
+EntityProposalBatchV1
 ```
 
 输出内容：
@@ -375,11 +428,11 @@ EntityProposalV1
 ```text
 1. entity_extraction.py 已创建
 2. EntityExtractionAgent v0.1 已实现
-3. prompt 要求 exactly one source-grounded entity
-4. 输出 EntityProposalV1
+3. prompt 要求 all significant distinct source-grounded entities
+4. 输出 EntityProposalBatchV1，具体实体在 entities[]
 5. FakeProvider 自动测试已实现
 6. prompt 边界测试覆盖 no invention、evidence、JSON only、StoryBible 禁止项
-7. 返回结果测试覆盖 EntityProposalV1、canonical_name、EvidenceRef
+7. 返回结果测试覆盖 EntityProposalBatchV1、entities[]、canonical_name、EvidenceRef
 8. smoke dry-run 覆盖 TXT 导入、import idempotency、ContextBuilder、脱敏 summary
 9. real smoke 只在 ENABLE_REAL_LLM=true 且显式 --enable-real-llm 时调用 provider
 10. deepseek-v4-pro 手动真实 LLM 1/2/3 chunk eval 已通过
@@ -395,20 +448,22 @@ EntityProposalV1
 2. 1 chunk real eval passed。
 3. 2 chunk real eval passed。
 4. 3 chunk real eval passed。
-5. output_schema=EntityProposalV1，provider/schema/evidence/quote validation 均通过。
-6. char_range_matched 在 quote_start/quote_end 省略时可以为 null。
-7. 观察到 CHARACTER 和 ORGANIZATION；canonical_name 非空；本轮 aliases_count=0。
-8. 只记录脱敏结果，不粘贴 API key、真实原文、长 quote、raw provider response 或 message.content。
+5. 旧基线 output_schema=EntityProposalV1，provider/schema/evidence/quote validation 均通过。
+6. 当前代码 contract 已升级为 EntityProposalBatchV1；下一轮人工真实 eval 需要按 entities[] 批量复核。
+7. char_range_matched 在 quote_start/quote_end 省略时可以为 null。
+8. 观察到 CHARACTER 和 ORGANIZATION；canonical_name 非空；本轮 aliases_count=0。
+9. 只记录脱敏结果，不粘贴 API key、真实原文、长 quote、raw provider response 或 message.content。
 ```
 
 人工评估 checklist：
 
 ```text
-is_entity
-entity_type_correct
-canonical_name_correct
-evidence_supports_entity
-salient_entity
+entities_cover_major_entities
+entity_count_reasonable
+no_duplicate_entities
+entity_types_correct
+names_and_aliases_not_invented
+every_entity_has_supporting_evidence
 manual_score
 manual_issue
 ```
@@ -446,7 +501,7 @@ scripts/smoke_narrative_analyst.py
 输出：
 
 ```text
-ClaimProposalV1
+ClaimProposalBatchV1
 ```
 
 输出内容：
@@ -477,9 +532,9 @@ ClaimProposalV1
 ```text
 1. claim_extraction.py 已创建
 2. ClaimExtractionAgent v0.1 已实现
-3. prompt 要求 exactly one claim
+3. prompt 要求 all salient distinct claims
 4. prompt 区分 claim 与 EventProposalV1 / EntityProposalV1
-5. 输出 ClaimProposalV1
+5. 输出 ClaimProposalBatchV1，具体主张在 claims[]
 6. FakeProvider 自动测试已实现
 7. NarrativeAnalyst.run("claim_extraction", input_context) 已接入
 8. smoke_narrative_analyst.py 支持 --mode claim_extraction

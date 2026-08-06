@@ -9,7 +9,7 @@ bounded proposal-only agent:
 
 - reads selected `SourceChunkV1` context from caller-provided `input_context`;
 - calls external models only through the `LLMProvider` interface;
-- outputs only `EntityProposalV1`;
+- now outputs `EntityProposalBatchV1` containing `entities[]: EntityProposalV1`;
 - requires at least one `EvidenceRefV1`;
 - does not write canonical StoryBible data;
 - is available through the unified NarrativeAnalyst workflow/API/web console
@@ -22,7 +22,7 @@ Implemented:
 - `comic_agent/agents/entity_extraction.py`;
 - `ENTITY_EXTRACTION_SYSTEM_PROMPT`;
 - `EntityExtractionAgent.spec`;
-- `EntityExtractionAgent.run(input_context) -> EntityProposalV1`;
+- `EntityExtractionAgent.run(input_context) -> EntityProposalBatchV1`;
 - fake provider tests in `tests/test_entity_extraction_agent.py`;
 - dry-run / real opt-in smoke path in `scripts/smoke_real_entity_agent.py`;
 - unified NarrativeAnalyst mode execution in `scripts/smoke_narrative_analyst.py`;
@@ -31,8 +31,9 @@ Implemented:
 - `web_console/index.html` Narrative Analyst Console mode selector;
 - smoke-script regression tests in `tests/test_real_entity_smoke.py`.
 
-The prompt asks for exactly one source-grounded entity and requires conservative
-handling of names, aliases, entity type, and evidence quotes.
+The current prompt asks for all significant distinct source-grounded entities
+and requires conservative handling of names, aliases, entity type, and evidence
+quotes.
 
 ## Prompt Hardening
 
@@ -163,7 +164,7 @@ cd D:\107
 $env:ENABLE_REAL_LLM = 'true'
 $env:LLM_PROVIDER_NAME = 'ustc-openai-compatible'
 $env:LLM_BASE_URL = 'https://api.llm.ustc.edu.cn/v1'
-$env:LLM_MODEL = 'deepseek-v4-pro'
+$env:LLM_MODEL = 'deepseek-chat'
 $env:LLM_RESPONSE_FORMAT = ''
 $env:LLM_TIMEOUT_SECONDS = '240'
 $env:LLM_MAX_OUTPUT_TOKENS = '3000'
