@@ -87,7 +87,8 @@ class StoryBibleValidator:
         resource_payloads: dict[tuple[str, str], dict[str, Any]] = {}
         identity_owners: dict[str, str] = {}
         state_values: dict[
-            tuple[str, str], list[tuple[int | None, int | None, Any]]
+            tuple[str, str],
+            list[tuple[int | None, int | None, str | None, str | None, Any]],
         ] = {}
 
         for update in plan.updates:
@@ -197,27 +198,74 @@ class StoryBibleValidator:
         self,
         state: StoryEntityStateV1,
         state_values: dict[
-            tuple[str, str], list[tuple[int | None, int | None, Any]]
+            tuple[str, str],
+            list[tuple[int | None, int | None, str | None, str | None, Any]],
         ],
     ) -> None:
         self._validate_interval(state.valid_from_order, state.valid_until_order, "state")
         for attribute_path, value in self._flatten_state(state.state):
             fact_key = (state.profile_id, attribute_path)
             intervals = state_values.setdefault(fact_key, [])
-            for valid_from_order, valid_until_order, existing_value in intervals:
-                if existing_value != value and self._intervals_overlap(
+            for (
+                valid_from_order,
+                valid_until_order,
+                valid_from_event_id,
+                valid_until_event_id,
+                existing_value,
+            ) in intervals:
+                if existing_value != value and self._state_intervals_overlap(
                     valid_from_order,
                     valid_until_order,
+                    valid_from_event_id,
+                    valid_until_event_id,
                     state.valid_from_order,
                     state.valid_until_order,
+                    state.valid_from_event_id,
+                    state.valid_until_event_id,
                 ):
                     raise ValueError(
                         "incompatible state values for the same entity, attribute, "
                         "and overlapping time interval"
                     )
             intervals.append(
-                (state.valid_from_order, state.valid_until_order, value)
+                (
+                    state.valid_from_order,
+                    state.valid_until_order,
+                    state.valid_from_event_id,
+                    state.valid_until_event_id,
+                    value,
+                )
             )
+
+    @classmethod
+    def _state_intervals_overlap(
+        cls,
+        left_start: int | None,
+        left_end: int | None,
+        left_start_event_id: str | None,
+        left_end_event_id: str | None,
+        right_start: int | None,
+        right_end: int | None,
+        right_start_event_id: str | None,
+        right_end_event_id: str | None,
+    ) -> bool:
+        left_has_order = left_start is not None or left_end is not None
+        right_has_order = right_start is not None or right_end is not None
+        if left_has_order and right_has_order:
+            return cls._intervals_overlap(left_start, left_end, right_start, right_end)
+
+        left_event_anchor = (left_start_event_id, left_end_event_id)
+        right_event_anchor = (right_start_event_id, right_end_event_id)
+        left_has_event = any(left_event_anchor)
+        right_has_event = any(right_event_anchor)
+        if not left_has_order and not right_has_order:
+            if left_has_event and right_has_event:
+                return left_event_anchor == right_event_anchor
+            return True
+
+        if left_has_order:
+            return not right_has_event
+        return not left_has_event
 
     @staticmethod
     def _intervals_overlap(

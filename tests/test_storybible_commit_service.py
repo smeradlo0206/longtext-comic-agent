@@ -103,6 +103,8 @@ def state_update(
     value: str = "market",
     valid_from_order: int | None = 2,
     valid_until_order: int | None = 4,
+    valid_from_event_id: str | None = None,
+    valid_until_event_id: str | None = None,
     evidence_refs: list[EvidenceRefV1] | None = None,
 ) -> StateUpdateProposalV1:
     evidence = evidence_refs or [EvidenceRefV1(chunk_id="chunk-a")]
@@ -111,6 +113,8 @@ def state_update(
         project_id=project_id,
         profile_id="profile-1",
         state={"location": value},
+        valid_from_event_id=valid_from_event_id,
+        valid_until_event_id=valid_until_event_id,
         valid_from_order=valid_from_order,
         valid_until_order=valid_until_order,
         evidence_refs=evidence,
@@ -226,6 +230,63 @@ def test_commit_rejects_incompatible_state_values_in_overlapping_intervals(
 
     with pytest.raises(ValueError, match="incompatible"):
         CommitService(ChunkLookup(chunk())).commit_storybible_plan(invalid_plan, repository)
+
+    assert table_counts(session) == (0, 0, 0, 0, 0)
+
+
+def test_commit_allows_incompatible_state_values_at_distinct_event_only_anchors(
+    storybible_store: tuple[Session, StoryBibleRepository],
+) -> None:
+    session, repository = storybible_store
+    event_anchored_plan = plan(
+        state_update(
+            state_id="state-1",
+            value="market",
+            valid_from_order=None,
+            valid_until_order=None,
+            valid_from_event_id="event-1",
+        ),
+        state_update(
+            state_id="state-2",
+            value="station",
+            valid_from_order=None,
+            valid_until_order=None,
+            valid_from_event_id="event-2",
+        ),
+    )
+
+    CommitService(ChunkLookup(chunk())).commit_storybible_plan(
+        event_anchored_plan, repository
+    )
+
+    assert table_counts(session) == (0, 2, 0, 0, 1)
+
+
+def test_commit_rejects_incompatible_state_values_at_identical_event_only_anchor(
+    storybible_store: tuple[Session, StoryBibleRepository],
+) -> None:
+    session, repository = storybible_store
+    invalid_plan = plan(
+        state_update(
+            state_id="state-1",
+            value="market",
+            valid_from_order=None,
+            valid_until_order=None,
+            valid_from_event_id="event-1",
+        ),
+        state_update(
+            state_id="state-2",
+            value="station",
+            valid_from_order=None,
+            valid_until_order=None,
+            valid_from_event_id="event-1",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="incompatible"):
+        CommitService(ChunkLookup(chunk())).commit_storybible_plan(
+            invalid_plan, repository
+        )
 
     assert table_counts(session) == (0, 0, 0, 0, 0)
 
