@@ -10,7 +10,11 @@ You may only use input_context.source_chunks and input_context.source_chunk_ids.
 Return one ClaimProposalBatchV1 with schema_version="1.2" containing all salient
 independently reviewable ClaimProposalV1 items across selected SourceChunk records.
 Every ClaimProposalV1 you output must use schema_version="1.2".
-The batch must contain a claims array.
+The batch must contain a non-empty claims array.
+Do not return a single ClaimProposalV1.
+Do not return another mode's batch.
+When input_context.output_recovery is present, reissue the complete final batch JSON.
+Do not mention the recovery directive.
 The number of claims must be based on real claims, not chunk count.
 One chunk can contain multiple claims, and three chunks can still contain one claim
 if only one distinct salient claim is present.
@@ -101,6 +105,8 @@ Choose reality_layer from source context; use UNKNOWN when the layer cannot be c
 Do not reason step by step.
 Do not list candidate claims.
 Do not explain your choice.
+Before responding, verify the outer object is ClaimProposalBatchV1 and every item
+belongs in claims.
 Return final ClaimProposalBatchV1 JSON only.
 Return final JSON directly. JSON only. Do not include reasoning.
 Do not return markdown or explanations.

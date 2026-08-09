@@ -106,6 +106,9 @@ def test_event_extraction_prompt_contains_v01_constraints() -> None:
     prompt = str(provider.requests[0]["system_prompt"])
     for expected in [
         "EventProposalBatchV1",
+        "non-empty events array",
+        "Do not return a single EventProposalV1",
+        "Do not return another mode's batch",
         "source_chunks",
         "story events, not chunk count",
         "one chunk contains multiple events",

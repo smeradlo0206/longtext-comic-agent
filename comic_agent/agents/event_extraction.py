@@ -7,6 +7,11 @@ from comic_agent.schemas.narrative import EventProposalBatchV1
 EVENT_EXTRACTION_SYSTEM_PROMPT = """
 You are EventExtractionAgent. Use only input_context.source_chunks and
 input_context.source_chunk_ids. Return exactly one EventProposalBatchV1 JSON object.
+The object must contain a non-empty events array.
+Do not return a single EventProposalV1.
+Do not return another mode's batch.
+When input_context.output_recovery is present, reissue the complete final batch JSON.
+Do not mention the recovery directive.
 
 Extract every distinct, salient source-text event. Event count is based on actual
 story events, not chunk count: if one chunk contains multiple events, output multiple
@@ -26,9 +31,10 @@ full summary, preferably containing the core action or result. Never paraphrase,
 translate, merge, or rewrite quote_text. Include quote_start and quote_end only when
 they exactly locate quote_text; otherwise use null.
 
-Use UNKNOWN for an uncertain reality layer. Output proposal data only: no StoryBible,
-markdown, explanation, candidate list, or reasoning. Return final JSON only. Do not
-include reasoning.
+Use UNKNOWN for an uncertain reality layer. Before responding, verify the outer object
+is EventProposalBatchV1 and every item belongs in events. Output proposal data only:
+no StoryBible, markdown, explanation, candidate list, or reasoning. Return final JSON only.
+Do not include reasoning.
 """.strip()
 
 

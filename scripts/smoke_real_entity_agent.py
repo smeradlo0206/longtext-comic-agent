@@ -191,8 +191,7 @@ def _add_proposal_details(
     selected_chunks: list[SourceChunkV1],
 ) -> None:
     evidence_results = [
-        _entity_evidence_summary(entity, selected_chunks)
-        for entity in proposal.entities
+        _entity_evidence_summary(entity, selected_chunks) for entity in proposal.entities
     ]
     summary["batch_id"] = proposal.batch_id
     summary["entities_count"] = len(proposal.entities)
@@ -201,6 +200,7 @@ def _add_proposal_details(
         {
             "proposal_id": result["proposal_id"],
             "entity_type": result["entity_type"],
+            "creature_subtype": result["creature_subtype"],
             "evidence_chunk_id": result["evidence_chunk_id"],
             "quote_matched": result["quote_matched"],
             "char_range_matched": result["char_range_matched"],
@@ -225,6 +225,7 @@ def _entity_evidence_summary(
     return {
         "proposal_id": proposal.proposal_id,
         "entity_type": proposal.entity_type,
+        "creature_subtype": proposal.creature_subtype,
         **_validate_entity_evidence(proposal, selected_chunks),
     }
 

@@ -77,6 +77,27 @@ class ClaimSourceType(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+class EntityType(StrEnum):
+    """Entity taxonomy used by EntityProposalV1 v1.1 output."""
+
+    CHARACTER = "CHARACTER"
+    CREATURE = "CREATURE"
+    LOCATION = "LOCATION"
+    ORGANIZATION = "ORGANIZATION"
+    OBJECT = "OBJECT"
+    ABILITY = "ABILITY"
+    CONCEPT = "CONCEPT"
+
+
+class CreatureSubtype(StrEnum):
+    """Optional, source-grounded refinement for creature entities."""
+
+    ANIMAL = "ANIMAL"
+    MONSTER = "MONSTER"
+    SPIRIT_BEAST = "SPIRIT_BEAST"
+    OTHER = "OTHER"
+
+
 LEGACY_CLAIM_TYPE_VALUES = {
     "ASSERTION",
     "DENIAL",
@@ -113,9 +134,13 @@ class EpistemicStatus(StrEnum):
 class EntityProposalV1(StrictBaseModel):
     """Candidate entity discovered from source text."""
 
-    schema_version: Literal["1.0"] = Field(default="1.0", description="Schema version.")
+    schema_version: Literal["1.0", "1.1"] = Field(default="1.1", description="Schema version.")
     proposal_id: str = Field(description="Proposal id.")
-    entity_type: str = Field(description="Entity type, e.g. CHARACTER, LOCATION, PROP.")
+    entity_type: EntityType | str = Field(description="Entity type.")
+    creature_subtype: CreatureSubtype | None = Field(
+        default=None,
+        description="Optional source-grounded subtype for CREATURE entities only.",
+    )
     canonical_name: str = Field(description="Proposed canonical name.")
     aliases: list[str] = Field(default_factory=list, description="Known aliases.")
     evidence_refs: list[EvidenceRefV1] = Field(
@@ -124,16 +149,51 @@ class EntityProposalV1(StrictBaseModel):
     )
     confidence: float = Field(ge=0, le=1, description="Agent confidence.")
 
+    @model_validator(mode="after")
+    def validate_entity_taxonomy(self) -> "EntityProposalV1":
+        """Apply the closed v1.1 taxonomy while retaining legacy v1.0 reads."""
+
+        if self.schema_version == "1.1":
+            try:
+                self.entity_type = EntityType(self.entity_type)
+            except ValueError as exc:
+                raise ValueError(
+                    "v1.1 entity_type must use the supported EntityType taxonomy"
+                ) from exc
+        if self.creature_subtype is not None and self.entity_type != EntityType.CREATURE:
+            raise ValueError("creature_subtype requires entity_type CREATURE")
+        return self
+
 
 class EntityProposalBatchV1(StrictBaseModel):
     """Candidate story entities discovered from one bounded source context."""
 
-    schema_version: Literal["1.0"] = Field(default="1.0", description="Schema version.")
+    schema_version: Literal["1.0", "1.1"] = Field(default="1.1", description="Schema version.")
     batch_id: str = Field(description="Batch proposal id.")
     entities: list[EntityProposalV1] = Field(
         min_length=1,
         description="Candidate entity proposals in source order where possible.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_legacy_entity_items(cls, value: Any) -> Any:
+        """Read explicit v1.0 batches whose nested entities omitted a version."""
+
+        if not isinstance(value, dict) or value.get("schema_version") != "1.0":
+            return value
+        entities = value.get("entities")
+        if not isinstance(entities, list):
+            return value
+        return {
+            **value,
+            "entities": [
+                {**entity, "schema_version": "1.0"}
+                if isinstance(entity, dict) and "schema_version" not in entity
+                else entity
+                for entity in entities
+            ],
+        }
 
     @model_validator(mode="after")
     def validate_unique_entity_ids(self) -> "EntityProposalBatchV1":
@@ -142,6 +202,10 @@ class EntityProposalBatchV1(StrictBaseModel):
         proposal_ids = [entity.proposal_id for entity in self.entities]
         if len(set(proposal_ids)) != len(proposal_ids):
             raise ValueError("entities must have unique proposal_id values")
+        if any(entity.schema_version != self.schema_version for entity in self.entities):
+            raise ValueError(
+                f"v{self.schema_version} entity batches require v{self.schema_version} entities"
+            )
         return self
 
 
@@ -329,9 +393,7 @@ class ClaimProposalBatchV1(StrictBaseModel):
         if len(set(proposal_ids)) != len(proposal_ids):
             raise ValueError("claims must have unique proposal_id values")
         claim_versions = {claim.schema_version for claim in self.claims}
-        if self.schema_version in {"1.1", "1.2"} and claim_versions != {
-            self.schema_version
-        }:
+        if self.schema_version in {"1.1", "1.2"} and claim_versions != {self.schema_version}:
             raise ValueError(
                 f"schema_version={self.schema_version} batch requires all claims to be "
                 f"v{self.schema_version}"

@@ -9,8 +9,10 @@ from comic_agent.schemas.narrative import (
     ClaimSourceType,
     ClaimTemporalScope,
     ClaimType,
+    CreatureSubtype,
     EntityProposalBatchV1,
     EntityProposalV1,
+    EntityType,
     EpistemicStatus,
     EventProposalBatchV1,
     EventProposalV1,
@@ -64,7 +66,7 @@ def test_entity_proposal_batch_minimal_valid_example() -> None:
         ],
     )
 
-    assert batch.schema_version == "1.0"
+    assert batch.schema_version == "1.1"
     assert batch.batch_id == "entity-batch-1"
     assert [entity.proposal_id for entity in batch.entities] == ["entity-1", "entity-2"]
 
@@ -82,6 +84,69 @@ def test_entity_proposal_batch_rejects_duplicate_entity_ids() -> None:
                 EntityProposalV1(**entity_payload()),
                 EntityProposalV1(**entity_payload()),
             ],
+        )
+
+
+@pytest.mark.parametrize(
+    "entity_type",
+    [
+        EntityType.CHARACTER,
+        EntityType.CREATURE,
+        EntityType.LOCATION,
+        EntityType.ORGANIZATION,
+        EntityType.OBJECT,
+        EntityType.ABILITY,
+        EntityType.CONCEPT,
+    ],
+)
+def test_entity_proposal_v11_accepts_supported_taxonomy(entity_type: EntityType) -> None:
+    entity = EntityProposalV1(
+        **(
+            entity_payload()
+            | {
+                "schema_version": "1.1",
+                "entity_type": entity_type,
+                "creature_subtype": (
+                    CreatureSubtype.SPIRIT_BEAST if entity_type == EntityType.CREATURE else None
+                ),
+            }
+        )
+    )
+
+    assert entity.schema_version == "1.1"
+    assert entity.entity_type == entity_type
+
+
+def test_entity_proposal_v11_rejects_creature_subtype_for_non_creature() -> None:
+    with pytest.raises(ValidationError, match="creature_subtype requires entity_type CREATURE"):
+        EntityProposalV1(
+            **(
+                entity_payload()
+                | {
+                    "schema_version": "1.1",
+                    "entity_type": EntityType.CHARACTER,
+                    "creature_subtype": CreatureSubtype.MONSTER,
+                }
+            )
+        )
+
+
+def test_entity_proposal_v10_reads_legacy_entity_without_creature_subtype() -> None:
+    entity = EntityProposalV1(
+        **(entity_payload() | {"schema_version": "1.0", "entity_type": "PROP"})
+    )
+
+    assert entity.schema_version == "1.0"
+    assert entity.entity_type == "PROP"
+    assert entity.creature_subtype is None
+
+
+def test_entity_batch_v11_rejects_legacy_entity_items() -> None:
+    with pytest.raises(ValidationError, match="v1.1 entity batches require v1.1 entities"):
+        EntityProposalBatchV1(
+            schema_version="1.1",
+            batch_id="entity-batch-v11",
+            entities=[EntityProposalV1(**entity_payload() | {"schema_version": "1.0"})],
         )
 
 
@@ -164,10 +229,7 @@ def test_event_proposal_rejects_extra_fields() -> None:
 
 def test_event_proposal_known_actor_requires_participants() -> None:
     event = EventProposalV1(
-        **(
-            event_payload()
-            | {"actor_resolution_status": ActorResolutionStatus.KNOWN}
-        )
+        **(event_payload() | {"actor_resolution_status": ActorResolutionStatus.KNOWN})
     )
 
     assert event.actor_resolution_status == ActorResolutionStatus.KNOWN
@@ -267,10 +329,7 @@ def test_event_proposal_not_applicable_actor_accepts_empty_participants() -> Non
 def test_event_proposal_not_applicable_actor_rejects_participants() -> None:
     with pytest.raises(ValidationError):
         EventProposalV1(
-            **(
-                event_payload()
-                | {"actor_resolution_status": ActorResolutionStatus.NOT_APPLICABLE}
-            )
+            **(event_payload() | {"actor_resolution_status": ActorResolutionStatus.NOT_APPLICABLE})
         )
 
 
@@ -754,6 +813,4 @@ def test_knowledge_state_proposal_rejects_confidence_out_of_bounds(
 
 def test_knowledge_state_proposal_rejects_extra_fields() -> None:
     with pytest.raises(ValidationError):
-        KnowledgeStateProposalV1(
-            **(knowledge_payload() | {"visible_to_reader": True})
-        )
+        KnowledgeStateProposalV1(**(knowledge_payload() | {"visible_to_reader": True}))

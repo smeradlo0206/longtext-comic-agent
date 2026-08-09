@@ -361,6 +361,7 @@ def test_narrative_analyst_api_supports_implemented_modes(
             {
                 "proposal_id": "entity-console-1",
                 "entity_type": "CHARACTER",
+                "creature_subtype": None,
                 "evidence_chunk_id": chunks[0]["chunk_id"],
                 "quote_matched": True,
                 "char_range_matched": None,
@@ -368,6 +369,7 @@ def test_narrative_analyst_api_supports_implemented_modes(
             {
                 "proposal_id": "entity-console-2",
                 "entity_type": "ORGANIZATION",
+                "creature_subtype": None,
                 "evidence_chunk_id": chunks[0]["chunk_id"],
                 "quote_matched": True,
                 "char_range_matched": None,

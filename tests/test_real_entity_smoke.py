@@ -161,6 +161,7 @@ def test_smoke_real_entity_agent_summary_includes_sanitized_success_details(
     assert summary["entity_evidence_results"][0] == {
         "proposal_id": "entity-smoke-1",
         "entity_type": "CHARACTER",
+        "creature_subtype": None,
         "evidence_chunk_id": summary["selected_chunk_ids"][0],
         "quote_matched": True,
         "char_range_matched": True,

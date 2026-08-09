@@ -94,6 +94,9 @@ def test_entity_extraction_agent_prompt_sets_entity_boundaries() -> None:
     prompt = f"{request['system_prompt']}\n{request['user_prompt']}"
     for expected in [
         "EntityProposalBatchV1",
+        "non-empty entities array",
+        "Do not return a single EntityProposalV1",
+        "Do not return another mode's batch",
         "entities",
         "number of entities must be based on real entities, not chunk count",
         "multiple entities",
@@ -147,14 +150,32 @@ def test_entity_extraction_agent_prompt_defines_entity_type_decision_table() -> 
 
     prompt = str(provider.requests[0]["system_prompt"])
     for expected in [
-        "CHARACTER: people, beasts, monsters, or actor-like beings",
+        "CHARACTER: human beings or entities with a clear personhood",
+        "CREATURE: non-human animals, demon beasts, magical beasts, spirit beasts, or monsters.",
         "LOCATION: places, regions, sect sites, or spaces",
         "ORGANIZATION: sects, dynasties, factions, families, or teams",
-        "OBJECT / PROP: objects, artifacts, weapons, tokens, pills, or props",
-        "ABILITY / TECHNIQUE: cultivation methods, source arts, moves",
-        "CONCEPT / WORLD_RULE: world rules, cultivation concepts, systems",
+        "OBJECT: artifacts, weapons, tokens, pills, and important reusable objects",
+        "ABILITY: cultivation methods, source arts, moves, abilities, techniques, or skills",
+        "CONCEPT: realms, rules, institutions, power systems, and world-setting concepts",
         "Do not treat ordinary actions, event results, or character judgments as entities.",
     ]:
+        assert expected in prompt
+
+
+def test_entity_extraction_prompt_distinguishes_creatures_from_characters() -> None:
+    provider = FakeProvider()
+    agent = EntityExtractionAgent(provider)
+
+    agent.run(
+        {
+            "project_id": "project-1",
+            "source_chunk_ids": ["chunk-1"],
+            "source_chunks": [{"chunk_id": "chunk-1", "text": "A named beast appears."}],
+        }
+    )
+
+    prompt = str(provider.requests[0]["system_prompt"])
+    for expected in ["CREATURE", "non-human", "creature_subtype", "Do not invent a subtype."]:
         assert expected in prompt
 
 

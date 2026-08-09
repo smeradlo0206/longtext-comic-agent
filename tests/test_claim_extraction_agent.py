@@ -32,9 +32,7 @@ class FakeProvider:
                         "source_id": "char-demo",
                         "target_event_id": None,
                         "verification_status": "UNVERIFIED",
-                        "evidence_refs": [
-                            {"chunk_id": "chunk-1", "quote_text": "gate is sealed"}
-                        ],
+                        "evidence_refs": [{"chunk_id": "chunk-1", "quote_text": "gate is sealed"}],
                         "confidence": 0.82,
                         "reality_layer": "PRIMARY",
                         "temporal_scope": "PRESENT",
@@ -96,7 +94,10 @@ def test_claim_extraction_agent_prompt_sets_claim_boundaries() -> None:
     prompt = f"{request['system_prompt']}\n{request['user_prompt']}"
     for expected in [
         "ClaimProposalBatchV1",
-        "schema_version=\"1.2\"",
+        "non-empty claims array",
+        "Do not return a single ClaimProposalV1",
+        "Do not return another mode's batch",
+        'schema_version="1.2"',
         "claims",
         "number of claims must be based on real claims, not chunk count",
         "multiple claims",
