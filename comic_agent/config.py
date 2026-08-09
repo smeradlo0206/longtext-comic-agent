@@ -20,6 +20,20 @@ class Settings(BaseSettings):
     minio_endpoint: str = Field(default="localhost:9000", validation_alias="MINIO_ENDPOINT")
     minio_access_key: str = Field(default="minioadmin", validation_alias="MINIO_ACCESS_KEY")
     minio_secret_key: str = Field(default="minioadmin", validation_alias="MINIO_SECRET_KEY")
+    llm_base_url: str = Field(
+        default="https://api.deepseek.com/v1",
+        validation_alias="LLM_BASE_URL",
+    )
+    llm_api_key: str = Field(default="", validation_alias="LLM_API_KEY")
+    storybible_model: str = Field(
+        default="deepseek-v4-pro",
+        validation_alias="STORYBIBLE_MODEL",
+    )
+    llm_timeout_seconds: float = Field(
+        default=60,
+        gt=0,
+        validation_alias="LLM_TIMEOUT_SECONDS",
+    )
 
 
 @lru_cache
