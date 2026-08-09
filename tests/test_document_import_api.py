@@ -400,9 +400,9 @@ def test_queries_do_not_leak_between_projects(tmp_path: Path) -> None:
             f"/chapters/{project_2_chapters[0]['chapter_id']}/chunks"
         )
 
-    assert [chapter["project_id"] for chapter in project_1_chapters] == [
-        "project-1"
-    ] * len(project_1_expected.chapters)
+    assert [chapter["project_id"] for chapter in project_1_chapters] == ["project-1"] * len(
+        project_1_expected.chapters
+    )
     assert [chapter["title"] for chapter in project_1_chapters] == [
         chapter.title for chapter in project_1_expected.chapters
     ]

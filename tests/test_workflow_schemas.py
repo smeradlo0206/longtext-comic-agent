@@ -102,9 +102,7 @@ def test_provider_result_success_example() -> None:
 
 def test_provider_result_success_rejects_error_message() -> None:
     with pytest.raises(ValidationError):
-        ProviderResultV1(
-            **(provider_result_payload() | {"error_message": "should not be present"})
-        )
+        ProviderResultV1(**(provider_result_payload() | {"error_message": "should not be present"}))
 
 
 def test_provider_result_success_requires_output() -> None:

@@ -74,9 +74,7 @@ def test_agent_run_repository_rejects_same_id_different_payload(tmp_path: Path) 
     repository.save_agent_run(_agent_run())
 
     with pytest.raises(ValueError, match="AgentRun conflict"):
-        repository.save_agent_run(
-            _agent_run().model_copy(update={"payload": {"changed": True}})
-        )
+        repository.save_agent_run(_agent_run().model_copy(update={"payload": {"changed": True}}))
 
 
 def test_agent_run_repository_missing_run_returns_none(tmp_path: Path) -> None:

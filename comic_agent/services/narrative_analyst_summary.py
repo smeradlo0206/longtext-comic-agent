@@ -32,6 +32,7 @@ class EvidenceNormalizationResult:
     rebased_quote_ranges: int
     cleared_quote_ranges: int
 
+
 FAILURE_RECOMMENDED_ACTIONS = {
     "PROVIDER_TIMEOUT": "increase timeout or reduce max_chars_per_chunk",
     "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT": (
@@ -47,6 +48,7 @@ FAILURE_RECOMMENDED_ACTIONS = {
     "QUOTE_NOT_MATCHED": "tighten exact quote prompt and use shorter verbatim quote",
     "CHAR_RANGE_NOT_MATCHED": "tighten exact quote prompt or omit uncertain char ranges",
     "MODE_NOT_IMPLEMENTED": "select an implemented NarrativeAnalyst mode",
+    "REAL_LLM_DISABLED": "restart the API with ENABLE_REAL_LLM=true",
     "UNKNOWN_ERROR": "manual review sanitized error diagnostics",
 }
 
@@ -65,6 +67,10 @@ SANITIZED_DIAGNOSTIC_KEYS = {
     "timeout_kind",
     "timeout_seconds",
     "request_attempts",
+    "http_status_code",
+    "schema_error_kind",
+    "schema_error_field_paths",
+    "expected_output_schema",
 }
 
 
@@ -174,10 +180,7 @@ def visible_context_chunks(
 ) -> list[SourceChunkV1]:
     """Return SourceChunk copies with text limited for LLM input."""
 
-    return [
-        chunk.model_copy(update={"text": chunk.text[:max_chars_per_chunk]})
-        for chunk in chunks
-    ]
+    return [chunk.model_copy(update={"text": chunk.text[:max_chars_per_chunk]}) for chunk in chunks]
 
 
 def input_budget_summary(
@@ -391,10 +394,7 @@ def add_event_batch_details(
     """Add sanitized EventProposalBatchV1 metadata to a summary."""
 
     first_event = batch.events[0]
-    evidence_results = [
-        _event_evidence_summary(event, selected_chunks)
-        for event in batch.events
-    ]
+    evidence_results = [_event_evidence_summary(event, selected_chunks) for event in batch.events]
     summary["batch_id"] = batch.batch_id
     summary["events_count"] = len(batch.events)
     summary["event_proposal_ids"] = [event.proposal_id for event in batch.events]
@@ -430,8 +430,7 @@ def add_entity_batch_details(
     """Add sanitized EntityProposalBatchV1 metadata to a summary."""
 
     evidence_results = [
-        _entity_evidence_summary(entity, selected_chunks)
-        for entity in batch.entities
+        _entity_evidence_summary(entity, selected_chunks) for entity in batch.entities
     ]
     summary["batch_id"] = batch.batch_id
     summary["entities_count"] = len(batch.entities)
@@ -440,6 +439,7 @@ def add_entity_batch_details(
         {
             "proposal_id": result["proposal_id"],
             "entity_type": result["entity_type"],
+            "creature_subtype": result["creature_subtype"],
             "evidence_chunk_id": result["evidence_chunk_id"],
             "quote_matched": result["quote_matched"],
             "char_range_matched": result["char_range_matched"],
@@ -465,10 +465,7 @@ def add_claim_batch_details(
 ) -> None:
     """Add sanitized ClaimProposalBatchV1 metadata to a summary."""
 
-    evidence_results = [
-        _claim_evidence_summary(claim, selected_chunks)
-        for claim in batch.claims
-    ]
+    evidence_results = [_claim_evidence_summary(claim, selected_chunks) for claim in batch.claims]
     summary["batch_id"] = batch.batch_id
     summary["claims_count"] = len(batch.claims)
     summary["claim_proposal_ids"] = [claim.proposal_id for claim in batch.claims]
@@ -515,6 +512,7 @@ def _entity_evidence_summary(
     return {
         "proposal_id": entity.proposal_id,
         "entity_type": entity.entity_type,
+        "creature_subtype": entity.creature_subtype,
         **validation,
     }
 
@@ -634,12 +632,9 @@ def _safe_summary(summary: str, limit: int = 80) -> str:
 def add_provider_diagnostics(summary: dict[str, Any], exc: BaseException) -> None:
     """Copy only whitelisted provider diagnostics onto the summary."""
 
-    diagnostics = getattr(exc, "diagnostics", None)
-    if not isinstance(diagnostics, dict):
+    sanitized_diagnostics = sanitize_provider_diagnostics(getattr(exc, "diagnostics", None))
+    if sanitized_diagnostics is None:
         return
-    sanitized_diagnostics = {
-        key: value for key, value in diagnostics.items() if key in SANITIZED_DIAGNOSTIC_KEYS
-    }
     summary["provider_error_diagnostics"] = sanitized_diagnostics
     for key in (
         "usage_prompt_tokens",
@@ -648,6 +643,17 @@ def add_provider_diagnostics(summary: dict[str, Any], exc: BaseException) -> Non
     ):
         if key in sanitized_diagnostics:
             summary[key] = sanitized_diagnostics[key]
+
+
+def sanitize_provider_diagnostics(diagnostics: object) -> dict[str, object] | None:
+    """Return only the fixed allowlist of provider diagnostic metadata."""
+
+    if not isinstance(diagnostics, dict):
+        return None
+    sanitized = {
+        key: value for key, value in diagnostics.items() if key in SANITIZED_DIAGNOSTIC_KEYS
+    }
+    return sanitized or None
 
 
 def classify_exception(exc: BaseException) -> str:
@@ -698,7 +704,31 @@ def set_failure(summary: dict[str, Any], category: str) -> None:
     """Set sanitized failure metadata."""
 
     summary["failure_category"] = category
-    summary["recommended_action"] = FAILURE_RECOMMENDED_ACTIONS[category]
+    summary["recommended_action"] = recommended_action_for_failure(
+        category,
+        summary.get("provider_error_diagnostics"),
+    )
+
+
+def recommended_action_for_failure(
+    category: str,
+    diagnostics: object = None,
+) -> str:
+    """Return safe operator guidance, refining HTTP failures by status only."""
+
+    if category == "PROVIDER_HTTP_ERROR" and isinstance(diagnostics, dict):
+        status_code = diagnostics.get("http_status_code")
+        if status_code == 429:
+            return "wait before resume and keep concurrency at 1"
+        if isinstance(status_code, int) and status_code >= 500:
+            return "wait briefly and resume failed windows"
+        if status_code == 400:
+            return "check model, request shape, and response_format settings"
+        if status_code in {401, 403}:
+            return "check local provider credential or access settings"
+        if status_code == 404:
+            return "check provider endpoint and model name"
+    return FAILURE_RECOMMENDED_ACTIONS[category]
 
 
 def sanitize_error_message(
@@ -748,6 +778,10 @@ def manual_review_checklist(mode: str) -> dict[str, Any]:
             "entity_count_reasonable": None,
             "no_duplicate_entities": None,
             "entity_types_correct": None,
+            "creature_classification_correct": None,
+            "creature_subtype_supported_or_null": None,
+            "important_unnamed_objects_allowed": None,
+            "concept_is_not_a_catch_all": None,
             "names_and_aliases_not_invented": None,
             "every_entity_has_supporting_evidence": None,
             "manual_score": None,

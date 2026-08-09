@@ -15,15 +15,7 @@ def parse_source(
 
 
 def test_import_persists_document_chapters_chunks(temp_repository) -> None:  # type: ignore[no-untyped-def]
-    parsed = parse_source(
-        text=(
-            "第一章 开端\n\n"
-            "第一段。\n\n"
-            "第二段。\n\n"
-            "第二章 转折\n\n"
-            "第三段。"
-        )
-    )
+    parsed = parse_source(text=("第一章 开端\n\n第一段。\n\n第二段。\n\n第二章 转折\n\n第三段。"))
 
     result = temp_repository.import_parsed_document(parsed)
     chapters = temp_repository.list_chapters("project-1")

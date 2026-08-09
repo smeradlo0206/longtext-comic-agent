@@ -81,6 +81,45 @@ v1.1 claim and batch payloads remain readable. V1.2 batches require all containe
 claims to be v1.2, and `EVALUATION` is rejected for earlier versions. This is a
 proposal-layer output contract change and requires no database migration.
 
+2026-08-07 Entity taxonomy update: fresh `EntityProposalV1` and
+`EntityProposalBatchV1` outputs use `schema_version = "1.1"`. V1.1 has the
+closed entity taxonomy `CHARACTER`, `CREATURE`, `LOCATION`, `ORGANIZATION`,
+`OBJECT`, `ABILITY`, and `CONCEPT`, plus optional `CreatureSubtype` values
+`ANIMAL`, `MONSTER`, `SPIRIT_BEAST`, and `OTHER`. `creature_subtype` is allowed
+only for `CREATURE`; a missing subtype is valid when the source cannot support a
+classification. Historical v1.0 Entity and EntityBatch payloads remain readable
+with their prior entity type values. V1.1 rejects legacy or unknown entity types.
+This is a proposal-layer output contract change.
+
+2026-08-07 Whole-document analysis update: `NarrativeAnalysisRunV1`,
+`NarrativeAnalysisWindowV1`, and `NarrativeAnalysisResultV1` define typed,
+auditable task, window, and conservative aggregation contracts. Results retain
+their originating AgentRun ids and EvidenceRef values. Persistence adds the
+`narrative_analysis_runs` and `narrative_analysis_windows` tables. This is an
+additive database migration: no existing table, canonical data, or StoryBible
+record is transformed.
+
+2026-08-08 Whole-document window diagnostics and retry update:
+`NarrativeAnalysisWindowV1` now writes `schema_version = "1.2"` and includes
+optional `failure_category`, `recommended_action`, and
+`provider_error_diagnostics`, plus `attempt_count`,
+`effective_max_chars_per_chunk`, and `previous_failure_category`. Schema
+validation diagnostics use only error kind, schema field paths, and expected
+output schema. Provider diagnostics are restricted by the provider-summary
+allowlist and never carry provider response content, source text, quote text,
+or credentials. Historical v1.0 and v1.1 window payloads remain readable;
+missing retry fields default safely. Existing window records store their schema
+payload in the current JSON column, so this additive audit-field change requires
+no SQL migration or canonical-data transformation.
+
+2026-08-09 whole-document reliability hardening: no proposal or workflow schema
+changed. Provider diagnostics continue to expose only allowlisted values. The
+provider may retry one transient `429` or `5xx` response, while a window may
+retry one `SCHEMA_VALIDATION_FAILED` or
+`PROVIDER_LENGTH_BEFORE_FINAL_CONTENT` attempt. The latter lowers only that
+window's effective input budget. This changes runtime behavior and audit
+guidance only; it requires no schema version increment or database migration.
+
 | Schema | Purpose | Required Fields | Evidence | Readers | Proposal Producer | Canonical Commit |
 | --- | --- | --- | --- | --- | --- | --- |
 | BaseRecordV1 | Common record metadata. | id, project_id, revision, status, timestamps, created_by | N/A | Services | Services | CommitService |
@@ -89,9 +128,9 @@ proposal-layer output contract change and requires no database migration.
 | SourceDocumentV1 | Source file metadata. | document_id, project_id, checksum, storage_uri | N/A | Importer, agents | DocumentParser | SourceRepository |
 | SourceChapterV1 | Chapter boundary. | chapter_id, document_id, order | N/A | Agents, API | DocumentParser | SourceRepository |
 | SourceChunkV1 | Evidence atom. | chunk_id, document_id, chapter_id, text, checksum | Self | All agents | DocumentParser | SourceRepository |
-| EntityProposalV1 | Candidate entity. | proposal_id, type, name, evidence_refs, confidence | Required | Merge services | Entity agents | CommitService later |
-| EntityProposalBatchV1 | Stable entity-extraction outer proposal containing source-ordered distinct entities. | batch_id, entities | Required through each entity | Merge services, review UI | Entity agent | CommitService validates each entity later |
-| EventProposalV1 | Candidate event, including explicit actor-resolution state. | proposal_id, type, non-empty summary, non-empty evidence_refs, confidence | At least one reference required; persisted with CANDIDATE status | Temporal/state agents | Event agent | CommitService later |
+| EntityProposalV1 | Candidate reusable narrative entity. Fresh outputs use v1.1 closed taxonomy and permit creature_subtype only for CREATURE; v1.0 remains readable. | proposal_id, type, name, evidence_refs, confidence | Required | Merge services | Entity agents | CommitService later |
+| EntityProposalBatchV1 | Stable entity-extraction outer proposal containing source-ordered distinct entities. Fresh outputs use v1.1 and require v1.1 items. | batch_id, entities | Required through each entity | Merge services, review UI | Entity agent | CommitService validates each entity later |
+| EventProposalV1 | Candidate event, including explicit actor-resolution state. | proposal_id, type, summary, evidence_refs, confidence | Required | Temporal/state agents | Event agent | CommitService later |
 | EventProposalBatchV1 | Stable event-extraction outer proposal containing source-ordered events. | batch_id, events | Required through each event | Timeline, temporal/state agents, review UI | Event agent | CommitService validates each event later |
 | ClaimProposalV1 | Candidate factual assertion, belief, hypothesis, denial, accusation, memory, evaluation, interpretation, prediction, or commitment. New outputs use schema_version 1.2; schema_version 1.0/1.1 payloads remain readable. | proposal_id, claim_type, claim_text, temporal_scope for v1.2, source_type, verification_status, evidence_refs, confidence, reality_layer | Required | CommitService, review, knowledge agents | Claim/knowledge agents | CommitService later |
 | ClaimProposalBatchV1 | Stable claim-extraction outer proposal containing source-ordered distinct claims. New outputs use schema_version 1.2 and require all claims to be v1.2. | batch_id, claims | Required through each claim | Review UI, knowledge agents | Claim agent | CommitService validates each claim later |
@@ -149,6 +188,9 @@ models in `comic_agent/schemas` remain the only schema source of truth, and the 
 Schema export script produces the machine-readable contracts.
 
 | AgentRunV1 | One auditable agent execution. Successful runs require source input chunks and at least one output proposal or provider result; failed runs require error_message. | agent_run_id, project_id, agent_name, input_chunk_ids, output_schema, status | Output Proposal carries evidence | Workflow, audit, QA | Agent wrapper | N/A |
+| NarrativeAnalysisRunV1 | Persisted whole-document Narrative Analyst task. | analysis_run_id, project_id, document_id, modes, status, window ids | Via AgentRuns and result | API, console, audit | Narrative analysis service | N/A |
+| NarrativeAnalysisWindowV1 | One independently retryable mode/window execution. | analysis_window_id, mode, window_index, chunk ids, status | Via linked AgentRun | API, console, audit | Narrative analysis worker | N/A |
+| NarrativeAnalysisResultV1 | Typed conservative aggregation of proposal candidates. | analysis_run_id, events, entities, claims | Preserves EvidenceRef and AgentRun ids | API, console, review | Aggregation service | N/A |
 | ProviderResultV1 | One provider call result. Success requires raw_output or structured_output and forbids error_message; failure requires error_message. | provider_result_id, provider_name, provider_type, output_schema, success | Structured output carries evidence if any | AgentRun, audit | Provider adapter | N/A |
 | MockProviderResultV1 | Mock provider result specialization using ProviderResultV1 consistency rules. | provider_result_id, output_schema, success | Structured output carries evidence if any | Tests, AgentRun, audit | Mock provider | N/A |
 

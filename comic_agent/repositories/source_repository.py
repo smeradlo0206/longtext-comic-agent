@@ -149,6 +149,16 @@ class SourceRepository:
         ).all()
         return [SourceChapterV1.model_validate(row.payload) for row in rows]
 
+    def list_documents(self, project_id: str) -> list[SourceDocumentV1]:
+        """Return imported documents for the normal document-selection flow."""
+
+        rows = self._session.scalars(
+            select(SourceDocumentModel)
+            .where(SourceDocumentModel.project_id == project_id)
+            .order_by(SourceDocumentModel.imported_at, SourceDocumentModel.document_id)
+        ).all()
+        return [SourceDocumentV1.model_validate(row.payload) for row in rows]
+
     def list_document_chunks(self, document_id: str) -> list[SourceChunkV1]:
         """Return chunks for a document ordered by source order."""
 

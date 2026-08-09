@@ -38,6 +38,11 @@ LLM_TIMEOUT_SECONDS=120
 - `POST /demo/verify-access`
 - `POST /projects/{project_id}/agent-runs/real-event`
 - `POST /projects/{project_id}/agent-runs/narrative-analyst`
+- `GET /projects/{project_id}/documents`
+- `POST /projects/{project_id}/documents/{document_id}/narrative-analysis-runs`
+- `GET /narrative-analysis-runs/{analysis_run_id}`
+- `GET /narrative-analysis-runs/{analysis_run_id}/result`
+- `POST /narrative-analysis-runs/{analysis_run_id}/resume`
 
 Website-ready audit surfaces:
 
@@ -72,6 +77,18 @@ Internal hosted demo console:
   should read entity proposals from `proposal.entities[]`.
 - `claim_extraction` now returns `ClaimProposalBatchV1`; downstream consumers
   should read claim proposals from `proposal.claims[]`.
+- Fresh `entity_extraction` output uses Entity schema version `1.1`. The closed
+  taxonomy is `CHARACTER`, `CREATURE`, `LOCATION`, `ORGANIZATION`, `OBJECT`,
+  `ABILITY`, and `CONCEPT`; `creature_subtype` is set only for a source-supported
+  `CREATURE`. Historical Entity v1.0 proposal payloads remain readable.
+- The normal Narrative Analyst Console flow is whole-document analysis: choose an
+  imported document and one or more modes, then start a persisted task. It plans
+  three-chunk windows with stride two and sequential execution. Chunk selection
+  remains available only inside Advanced debug mode.
+- Whole-document analysis is dry-run by default. A real call requires both the
+  console opt-in and server-side `ENABLE_REAL_LLM=true`. A server restart leaves
+  persisted window and AgentRun audit records intact; use Resume failed windows
+  to process only pending or failed work after restart.
 - New `claim_extraction` outputs use Claim schema version `1.2`: current
   `claim_type` values are `FACTUAL_ASSERTION`, `BELIEF`, `HYPOTHESIS`, `DENIAL`,
   `ACCUSATION`, `MEMORY`, `EVALUATION`, `INTERPRETATION`, `PREDICTION`, and

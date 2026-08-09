@@ -60,6 +60,31 @@ For the current USTC 3 chunk evaluation, leave `LLM_RESPONSE_FORMAT` empty.
 Manual results showed that `json_object` can produce `content=None` with
 `reasoning_content` or can time out on the 3 chunk path.
 
+## Whole-Document Narrative Analysis
+
+The normal console flow is dry-run by default. Choose an imported document and
+one or more Narrative Analyst modes, then start a whole-document analysis task.
+The server plans bounded windows with `window_size=3`, `stride=2`, and
+concurrency fixed at one. A window failure does not stop other windows.
+
+The task may make a real provider request only when both conditions are true:
+
+```text
+ENABLE_REAL_LLM=true
+real_llm_requested=true
+```
+
+The checkbox in the console supplies only the request-level condition. It never
+enables the server setting. The worker is intentionally in-process for v0.1:
+restarting the API stops active work, but persisted task/window status and each
+AgentRun remain available. Use the resume endpoint or the console Resume failed
+windows action to run only pending or failed windows.
+
+Whole-document tasks and their API responses contain ids, statuses, modes,
+window counts, proposals, AgentRun ids, and evidence pointers only. Do not put
+local source text, quotes, raw provider responses, `message.content`, or API
+keys in task notes, screenshots, or commits.
+
 ## Local Secret File
 
 Create a local `.env` file in the repository root. Do not commit it.

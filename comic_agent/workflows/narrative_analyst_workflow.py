@@ -86,6 +86,7 @@ class NarrativeAnalystWorkflow:
         chunk_limit: int = 3,
         chunk_offset: int = 0,
         max_chars_per_chunk: int = DEFAULT_MAX_CHARS_PER_CHUNK,
+        output_recovery: str | None = None,
         real_llm_requested: bool = False,
     ) -> NarrativeAnalystWorkflowResult:
         """Run or dry-run a NarrativeAnalyst mode over selected chunks."""
@@ -98,13 +99,11 @@ class NarrativeAnalystWorkflow:
         mode_spec = NarrativeAnalyst(_NoopProvider()).get_mode_spec(mode)
         if mode_spec.status != "implemented":
             raise NotImplementedError(
-                f"NarrativeAnalyst mode is not implemented: {mode} "
-                f"(status={mode_spec.status})"
+                f"NarrativeAnalyst mode is not implemented: {mode} (status={mode_spec.status})"
             )
         if mode_spec.output_schema is None:
             raise NotImplementedError(
-                f"NarrativeAnalyst mode is not implemented: {mode} "
-                f"(status={mode_spec.status})"
+                f"NarrativeAnalyst mode is not implemented: {mode} (status={mode_spec.status})"
             )
 
         selected_chunks = self._select_chunks(
@@ -153,8 +152,11 @@ class NarrativeAnalystWorkflow:
             )
 
         input_context = slim_input_context(context, visible_chunks)
+        if output_recovery is not None:
+            input_context["output_recovery"] = output_recovery
         if not self._settings.enable_real_llm:
             disabled_error_message = "ENABLE_REAL_LLM is false; provider was not called"
+            set_failure(summary, "REAL_LLM_DISABLED")
             disabled_provider_result = self._provider_result(
                 success=False,
                 output_schema=mode_spec.output_schema,

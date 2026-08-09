@@ -1,20 +1,35 @@
 """Agent run routes for the local development workbench."""
 
+from collections.abc import Callable
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request, status
+from sqlalchemy.orm import Session
+from starlette.datastructures import State
 
 from comic_agent.api.demo import require_demo_access_code
-from comic_agent.api.dependencies import get_agent_run_repository, get_repository
-from comic_agent.config import get_settings
+from comic_agent.api.dependencies import (
+    get_agent_run_repository,
+    get_narrative_analysis_repository,
+    get_repository,
+)
+from comic_agent.config import Settings, get_settings
 from comic_agent.providers.mocks import MockLLMProvider
 from comic_agent.repositories.agent_run_repository import AgentRunRepository
+from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
 from comic_agent.repositories.source_repository import SourceRepository
 from comic_agent.schemas.base import RealityLayer
 from comic_agent.schemas.narrative import EventProposalBatchV1
 from comic_agent.schemas.source import SourceChunkV1
-from comic_agent.schemas.workflow import AgentRunV1
+from comic_agent.schemas.workflow import (
+    AgentRunV1,
+    NarrativeAnalysisCreateRequestV1,
+    NarrativeAnalysisRunV1,
+    NarrativeAnalysisWindowV1,
+)
 from comic_agent.services.id_service import checksum_text, stable_id
+from comic_agent.services.narrative_analysis import create_narrative_analysis_run
+from comic_agent.services.narrative_analysis_worker import NarrativeAnalysisWorker
 from comic_agent.workflows.mock_event_workflow import MockEventWorkflow
 from comic_agent.workflows.narrative_analyst_workflow import NarrativeAnalystWorkflow
 from comic_agent.workflows.real_event_workflow import RealEventWorkflow
@@ -23,6 +38,9 @@ router = APIRouter()
 
 SourceRepositoryDep = Annotated[SourceRepository, Depends(get_repository)]
 AgentRunRepositoryDep = Annotated[AgentRunRepository, Depends(get_agent_run_repository)]
+NarrativeAnalysisRepositoryDep = Annotated[
+    NarrativeAnalysisRepository, Depends(get_narrative_analysis_repository)
+]
 
 
 @router.get("/projects/{project_id}/agent-runs")
@@ -153,6 +171,183 @@ def run_narrative_analyst(
     return result.response_payload()
 
 
+@router.post(
+    "/projects/{project_id}/documents/{document_id}/narrative-analysis-runs",
+    status_code=status.HTTP_201_CREATED,
+)
+def create_whole_document_analysis(
+    project_id: str,
+    document_id: str,
+    payload: NarrativeAnalysisCreateRequestV1,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    source_repository: SourceRepositoryDep,
+    analysis_repository: NarrativeAnalysisRepositoryDep,
+) -> dict[str, Any]:
+    """Create a resumable normal-flow analysis task without exposing chunk selection."""
+
+    _require_real_llm_enabled(payload.real_llm_requested, get_settings())
+    try:
+        run = create_narrative_analysis_run(
+            source_repository=source_repository,
+            analysis_repository=analysis_repository,
+            project_id=project_id,
+            document_id=document_id,
+            modes=payload.modes,
+            real_llm_requested=payload.real_llm_requested,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    background_tasks.add_task(
+        _run_whole_document_analysis,
+        request.app.state.session_factory,
+        request.app.state,
+        run.analysis_run_id,
+        payload.real_llm_requested,
+    )
+    return _analysis_run_payload(run, analysis_repository)
+
+
+@router.get("/narrative-analysis-runs/{analysis_run_id}")
+def get_whole_document_analysis(
+    analysis_run_id: str,
+    analysis_repository: NarrativeAnalysisRepositoryDep,
+) -> dict[str, Any]:
+    """Return sanitized progress for a whole-document analysis task."""
+
+    run = analysis_repository.get_run(analysis_run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="NarrativeAnalysisRun not found")
+    return _analysis_run_payload(run, analysis_repository)
+
+
+@router.get("/narrative-analysis-runs/{analysis_run_id}/windows")
+def list_whole_document_analysis_windows(
+    analysis_run_id: str,
+    analysis_repository: NarrativeAnalysisRepositoryDep,
+) -> dict[str, list[dict[str, Any]]]:
+    """Return sanitized execution audit records for each analysis window."""
+
+    if analysis_repository.get_run(analysis_run_id) is None:
+        raise HTTPException(status_code=404, detail="NarrativeAnalysisRun not found")
+    return {
+        "items": [
+            _analysis_window_payload(window)
+            for window in analysis_repository.list_windows(analysis_run_id)
+        ]
+    }
+
+
+@router.get("/narrative-analysis-runs/{analysis_run_id}/result")
+def get_whole_document_analysis_result(
+    analysis_run_id: str,
+    analysis_repository: NarrativeAnalysisRepositoryDep,
+) -> dict[str, Any]:
+    """Return the typed, sanitized aggregate proposal result."""
+
+    result = analysis_repository.get_result(analysis_run_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="NarrativeAnalysisResult not available")
+    return result.model_dump(mode="json")
+
+
+@router.post(
+    "/narrative-analysis-runs/{analysis_run_id}/resume", status_code=status.HTTP_202_ACCEPTED
+)
+def resume_whole_document_analysis(
+    analysis_run_id: str,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    analysis_repository: NarrativeAnalysisRepositoryDep,
+) -> dict[str, Any]:
+    """Requeue only pending or failed windows after interruption or partial failure."""
+
+    run = analysis_repository.get_run(analysis_run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="NarrativeAnalysisRun not found")
+    _require_real_llm_enabled(run.real_llm_requested, get_settings())
+    background_tasks.add_task(
+        _run_whole_document_analysis,
+        request.app.state.session_factory,
+        request.app.state,
+        analysis_run_id,
+        run.real_llm_requested,
+    )
+    return _analysis_run_payload(run, analysis_repository)
+
+
+def _run_whole_document_analysis(
+    session_factory: Callable[[], Session],
+    app_state: State,
+    analysis_run_id: str,
+    real_llm_requested: bool,
+) -> None:
+    """Run one task using a fresh background session after the request has closed."""
+
+    session = session_factory()
+    try:
+        worker = NarrativeAnalysisWorker(
+            settings=get_settings(),
+            source_repository=SourceRepository(session),
+            agent_run_repository=AgentRunRepository(session),
+            analysis_repository=NarrativeAnalysisRepository(session),
+            provider=getattr(app_state, "narrative_analyst_provider", None),
+        )
+        worker.run_pending(analysis_run_id, real_llm_requested=real_llm_requested)
+    finally:
+        session.close()
+
+
+def _analysis_run_payload(
+    run: NarrativeAnalysisRunV1,
+    analysis_repository: NarrativeAnalysisRepository,
+) -> dict[str, Any]:
+    """Return progress metadata only; proposal data is served by the result route."""
+
+    payload = run.model_dump(mode="json")
+    windows = analysis_repository.list_windows(run.analysis_run_id)
+    payload["windows_total"] = len(windows)
+    payload["windows_succeeded"] = sum(str(window.status) == "SUCCEEDED" for window in windows)
+    payload["windows_failed"] = sum(str(window.status) == "FAILED" for window in windows)
+    payload["windows_pending"] = sum(
+        str(window.status) in {"PENDING", "RUNNING"} for window in windows
+    )
+    return dict(payload)
+
+
+def _analysis_window_payload(window: NarrativeAnalysisWindowV1) -> dict[str, Any]:
+    """Return the fixed, content-free audit surface for a task window."""
+
+    return {
+        "analysis_window_id": window.analysis_window_id,
+        "mode": window.mode,
+        "window_index": window.window_index,
+        "chunk_ids": window.chunk_ids,
+        "status": window.status,
+        "agent_run_id": window.agent_run_id,
+        "error_message": window.error_message,
+        "failure_category": window.failure_category,
+        "recommended_action": window.recommended_action,
+        "provider_error_diagnostics": window.provider_error_diagnostics,
+        "attempt_count": window.attempt_count,
+        "effective_max_chars_per_chunk": window.effective_max_chars_per_chunk,
+        "previous_failure_category": window.previous_failure_category,
+    }
+
+
+def _require_real_llm_enabled(real_llm_requested: bool, settings: Settings) -> None:
+    """Fail normal-flow real tasks before planning windows when the server gate is off."""
+
+    if real_llm_requested and not settings.enable_real_llm:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Real LLM is disabled by server settings; "
+                "restart the API with ENABLE_REAL_LLM=true"
+            ),
+        )
+
+
 @router.get("/agent-runs/{agent_run_id}")
 def get_agent_run(
     agent_run_id: str,
@@ -204,6 +399,7 @@ def get_agent_run_evidence(
                 "proposal_id": evidence_item.get("proposal_id"),
                 "event_type": evidence_item.get("event_type"),
                 "entity_type": evidence_item.get("entity_type"),
+                "creature_subtype": evidence_item.get("creature_subtype"),
                 "claim_type": evidence_item.get("claim_type"),
                 "source_type": evidence_item.get("source_type"),
                 "temporal_scope": evidence_item.get("temporal_scope"),
@@ -246,6 +442,7 @@ def _proposal_evidence_refs(proposal: object) -> list[dict[str, Any]]:
                     {
                         "proposal_id": entity.get("proposal_id"),
                         "entity_type": entity.get("entity_type"),
+                        "creature_subtype": entity.get("creature_subtype"),
                         "evidence": evidence,
                     }
                 )
@@ -314,9 +511,7 @@ def _real_event_summary(
         "event_proposal_ids": [event.proposal_id for event in proposal.events] if proposal else [],
         "proposal_id": first_event.proposal_id if first_event else None,
         "confidence": first_event.confidence if first_event else None,
-        "actor_resolution_status": (
-            first_event.actor_resolution_status if first_event else None
-        ),
+        "actor_resolution_status": (first_event.actor_resolution_status if first_event else None),
         "evidence_validation_passed": agent_run.payload.get("evidence_validation_passed"),
         "evidence_chunk_id": None,
         "quote_matched": None,

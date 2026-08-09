@@ -21,6 +21,20 @@ RepositoryDep = Annotated[SourceRepository, Depends(get_repository)]
 UploadFileDep = Annotated[UploadFile, File(...)]
 
 
+@router.get("/projects/{project_id}/documents")
+def list_documents(project_id: str, repository: RepositoryDep) -> list[dict[str, object]]:
+    """List safe document-selection metadata without source text or storage paths."""
+
+    return [
+        {
+            "document_id": document.document_id,
+            "filename": document.filename,
+            "revision": document.revision,
+        }
+        for document in repository.list_documents(project_id)
+    ]
+
+
 @router.post("/projects/{project_id}/documents/import", status_code=status.HTTP_201_CREATED)
 async def import_document(
     project_id: str,

@@ -45,6 +45,30 @@ Record sanitized summaries only. Do not paste `.env`, API keys, real source
 text, `quote_text`, `claim_text`, aliases, raw provider responses, or
 `message.content`.
 
+## Whole-Document Analysis v0.1
+
+`NarrativeAnalyst` remains one top-level Agent with internal modes. The ordinary
+user flow is document selection plus mode selection, not chunk selection. A
+persisted analysis task plans three-chunk windows with stride two and runs them
+sequentially. Each window delegates to the existing NarrativeAnalyst workflow,
+keeps a linked AgentRun when a call is requested, and can fail independently.
+
+The result aggregates only conservative exact matches: Event uses event type,
+summary, and evidence; Entity uses canonical name plus entity type; Claim uses
+type, text, source type, and evidence. Similar-looking proposals with different
+evidence remain separate candidates for review.
+
+Fresh Entity proposals use schema 1.1. Reviewers should verify that non-human
+animals, monsters, and spirit beasts are `CREATURE`, not `CHARACTER`; subtype
+must be source-supported or null. `CONCEPT` is not a fallback for every invented
+or unfamiliar proper noun. Important source-grounded unnamed objects may be
+`OBJECT`.
+
+Whole-document work defaults to dry-run. A real provider call requires both the
+explicit request-level checkbox and server-side `ENABLE_REAL_LLM=true`. The
+in-process worker is restart-resumable through persisted pending/failed windows;
+it does not write StoryBible or canonical data.
+
 
 ## 开发格式
 

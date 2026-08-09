@@ -20,14 +20,7 @@ def test_parser_detects_chinese_chapters() -> None:
     parsed = DocumentParser().parse_txt(
         project_id="project-1",
         filename="demo.txt",
-        text=(
-            "第一章 开端\n\n"
-            "第一段。\n\n"
-            "第2章 转折\n\n"
-            "第二段。\n\n"
-            "第十章 尾声\n\n"
-            "第三段。"
-        ),
+        text=("第一章 开端\n\n第一段。\n\n第2章 转折\n\n第二段。\n\n第十章 尾声\n\n第三段。"),
     )
 
     assert [chapter.title for chapter in parsed.chapters] == [
@@ -366,9 +359,7 @@ def test_parser_handles_long_mixed_chapter_document() -> None:
     assert len(parsed.chunks) == LONG_EXPECTED_CHUNKS
     assert [chunk.order for chunk in parsed.chunks] == list(range(LONG_EXPECTED_CHUNKS))
     assert all(chunk.text.strip() for chunk in parsed.chunks)
-    assert "她在笔记里写下 Chapter 9 is not a heading." in [
-        chunk.text for chunk in parsed.chunks
-    ]
+    assert "她在笔记里写下 Chapter 9 is not a heading." in [chunk.text for chunk in parsed.chunks]
     assert "他说，第一章并不等于真相。" in [chunk.text for chunk in parsed.chunks]
 
 
@@ -396,12 +387,8 @@ def test_parser_is_stable_for_repeated_parse() -> None:
     second = parser.parse_txt("project-1", "long_mixed_chapters.txt", text)
 
     assert first.document.checksum == second.document.checksum
-    assert [chunk.chunk_id for chunk in first.chunks] == [
-        chunk.chunk_id for chunk in second.chunks
-    ]
-    assert [chunk.checksum for chunk in first.chunks] == [
-        chunk.checksum for chunk in second.chunks
-    ]
+    assert [chunk.chunk_id for chunk in first.chunks] == [chunk.chunk_id for chunk in second.chunks]
+    assert [chunk.checksum for chunk in first.chunks] == [chunk.checksum for chunk in second.chunks]
     assert [chunk.order for chunk in first.chunks] == [chunk.order for chunk in second.chunks]
 
 
@@ -417,9 +404,7 @@ def test_parser_normalizes_crlf_without_changing_chunk_semantics() -> None:
         chapter.title for chapter in lf.chapters
     ]
     assert [chunk.text for chunk in crlf.chunks] == [chunk.text for chunk in lf.chunks]
-    assert [chunk.checksum for chunk in crlf.chunks] == [
-        chunk.checksum for chunk in lf.chunks
-    ]
+    assert [chunk.checksum for chunk in crlf.chunks] == [chunk.checksum for chunk in lf.chunks]
     for chunk in crlf.chunks:
         assert chunk.char_start is not None
         assert chunk.char_end is not None

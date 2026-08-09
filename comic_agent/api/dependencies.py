@@ -7,6 +7,7 @@ from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 
 from comic_agent.repositories.agent_run_repository import AgentRunRepository
+from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
 from comic_agent.repositories.source_repository import SourceRepository
 
 
@@ -34,3 +35,9 @@ def get_agent_run_repository(session: SessionDep) -> AgentRunRepository:
     """Return an AgentRun repository bound to the request session."""
 
     return AgentRunRepository(session)
+
+
+def get_narrative_analysis_repository(session: SessionDep) -> NarrativeAnalysisRepository:
+    """Return whole-document analysis persistence bound to the request session."""
+
+    return NarrativeAnalysisRepository(session)
