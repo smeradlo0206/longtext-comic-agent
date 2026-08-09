@@ -35,3 +35,31 @@ UTF-8 TXT upload
 ### Deliberate Phase Boundary
 
 The Mock Agent does not understand text or call an LLM. It validates the typed proposal and evidence-traceability pipeline only. Canonical story-event commits remain intentionally unimplemented.
+
+## 2026-08-05: StoryBible Curator Contract and Persistence
+
+Delivered the StoryBible curation path with versioned Pydantic and exported JSON Schema
+contracts for bounded curator context, candidate proposals, conflicts, commit plans, and
+the canonical profile, state, relationship, and world-rule resources. All canonical facts
+remain evidence-backed through `EvidenceRefV1`.
+
+- `StoryBibleCurator` uses `deepseek-v4-pro` by default and produces
+  `StoryBibleCuratorProposalV1` candidates only; it has no canonical-write capability.
+- `ContextBuilder` supplies bounded context rather than database-wide agent reads, while
+  `StoryBibleRepository` exposes project-scoped StoryBible retrieval.
+- `CommitService` is the canonical boundary: it validates evidence and plan invariants,
+  then performs idempotent canonical persistence only for a reviewed commit plan.
+- Alembic migration `0004_storybible_resources` adds canonical StoryBible resource tables
+  and candidate commit-plan persistence.
+- Regression coverage includes schema validation, proposal-only curation, project
+  isolation, bounded context, retrieval, commit validation, idempotency, API behavior,
+  provider request shaping, and migration compatibility.
+
+### Test Policy
+
+Normal unit and regression tests use deterministic fakes or `httpx.MockTransport`; they
+must not make real provider or image-model requests. An explicitly user-requested live
+connectivity smoke test exists separately and is skipped unless
+`RUN_LIVE_LLM_SMOKE_TEST=1`; it requires live-provider configuration and is not run in the
+default suite. This preserves offline, repeatable regression tests while allowing an
+intentional opt-in connectivity check.

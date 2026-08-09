@@ -24,15 +24,28 @@ All V1 schemas use `schema_version = "1.0"` and live in `comic_agent/schemas`.
 
 Field types are implemented directly in Pydantic. The JSON Schema export script is the authoritative machine-readable contract.
 
-## StoryBible Task 1 Compatibility and Migration Note
+## StoryBible Contracts and Compatibility
 
-Task 1 additively introduces the public `schema_version = "1.0"` StoryBible contracts:
-`StoryBibleContextV1`, `StoryEntityProfileV1`, `StoryEntityStateV1`,
-`StoryRelationshipV1`, `WorldRuleV1`, the four StoryBible update proposal types,
-`StoryBibleUpdateV1`, `ConflictV1`, `CommitPlanV1`, and
-`StoryBibleCuratorProposalV1`. Existing V1 schemas and fields are unchanged, so this is a
-backward-compatible schema addition.
+The StoryBible is an additive set of public `schema_version = "1.0"` contracts. Its
+canonical resource types are `StoryEntityProfileV1`, `StoryEntityStateV1`,
+`StoryRelationshipV1`, and `WorldRuleV1`. Every canonical resource carries
+project ownership, revision, canonical status, and one or more `EvidenceRefV1` values.
+States and relationships additionally record a valid story-time interval.
 
-Task 1 defines and exports Pydantic and JSON Schema contracts only. It makes no database
-schema change and requires no database migration. StoryBible persistence tables and their
-migration are deferred to the persistence task.
+`ProfileUpdateProposalV1`, `StateUpdateProposalV1`,
+`RelationshipUpdateProposalV1`, and `WorldRuleUpdateProposalV1` are the candidate
+updates collected by `StoryBibleUpdateV1`. `ConflictV1` records reviewable conflicts;
+`CommitPlanV1` is the reviewed, evidence-backed plan eligible for promotion; and
+`StoryBibleCuratorProposalV1` is the candidate-only curator result. `StoryBibleContextV1`
+is the bounded input contract for that curator.
+
+`CommitService` is the only canonical owner: it validates evidence and plan-wide
+invariants, persists the candidate plan, applies valid updates idempotently through the
+repository, and marks the plan committed. Agents emit proposals only and cannot write
+canonical StoryBible facts directly.
+
+The contracts remain backward-compatible additions to existing V1 schemas. The
+corresponding persistence migration is `0004_storybible_resources`; it adds the
+canonical StoryBible resource tables and candidate commit-plan storage. The Pydantic
+models in `comic_agent/schemas` remain the only schema source of truth, and the JSON
+Schema export script produces the machine-readable contracts.
