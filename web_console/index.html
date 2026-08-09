@@ -310,11 +310,85 @@
     .table-scroll {
       width: 100%;
       max-width: 100%;
-      overflow-x: auto;
+      overflow-x: scroll;
       overscroll-behavior-inline: contain;
+      scrollbar-gutter: stable;
+      touch-action: pan-x;
     }
 
     .table-scroll > table { min-width: 880px; }
+
+    .table-scroll-toolbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      padding: 8px 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .table-scroll-controls { display: inline-flex; gap: 6px; }
+
+    .table-scroll-button {
+      min-height: 30px;
+      min-width: 34px;
+      padding: 4px 8px;
+    }
+
+    #narrative { overflow: visible; }
+
+    #wholeDocumentWindows {
+      min-width: 0;
+      overflow: visible;
+    }
+
+    .window-execution-shell {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+    }
+
+    .window-execution-toolbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      padding: 8px 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .window-execution-controls { display: inline-flex; gap: 6px; }
+
+    .window-execution-viewport {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+      overscroll-behavior-inline: contain;
+      scrollbar-gutter: stable;
+      touch-action: pan-x;
+    }
+
+    .window-execution-table {
+      width: max-content;
+      min-width: 1400px;
+    }
+
+    .window-execution-table th,
+    .window-execution-table td { white-space: nowrap; }
+
+    .window-execution-table th:nth-child(10),
+    .window-execution-table td:nth-child(10),
+    .window-execution-table th:nth-child(11),
+    .window-execution-table td:nth-child(11),
+    .window-execution-table th:nth-child(12),
+    .window-execution-table td:nth-child(12) {
+      min-width: 220px;
+      white-space: normal;
+    }
 
     th, td {
       text-align: left;
@@ -435,7 +509,7 @@
     <main>
       <div class="topbar">
         <label>API Base URL
-          <input id="apiBase" value="http://127.0.0.1:8000" />
+          <input id="apiBase" value="http://127.0.0.1:8080" />
         </label>
         <label>Project ID
           <input id="projectId" placeholder="manual-eval-YYYYMMDD" />
@@ -525,6 +599,65 @@
             </div>
             <div class="body">
               <div class="form-grid">
+                <label>Document
+                  <select id="analysisDocumentId">
+                    <option value="">Select an imported document</option>
+                  </select>
+                </label>
+                <div class="row">
+                  <button id="loadAnalysisDocuments">Load documents</button>
+                </div>
+                <label class="checkline">
+                  <input id="analysisModeEvent" data-analysis-mode="event_extraction" type="checkbox" checked />
+                  event_extraction
+                </label>
+                <label class="checkline">
+                  <input id="analysisModeEntity" data-analysis-mode="entity_extraction" type="checkbox" checked />
+                  entity_extraction
+                </label>
+                <label class="checkline">
+                  <input id="analysisModeClaim" data-analysis-mode="claim_extraction" type="checkbox" checked />
+                  claim_extraction
+                </label>
+                <label class="checkline">
+                  <input id="analysisRealLlmRequested" type="checkbox" />
+                  real LLM requested
+                </label>
+                <div class="row wide">
+                  <button id="startWholeDocumentAnalysis" class="primary">Start whole-document analysis</button>
+                  <button id="refreshWholeDocumentAnalysis">Refresh progress</button>
+                  <button id="resumeWholeDocumentAnalysis">Resume failed windows</button>
+                </div>
+              </div>
+              <div class="row" id="wholeDocumentOutcome"></div>
+              <div>
+                <h3>Whole-document progress</h3>
+                <pre id="wholeDocumentProgress">{}</pre>
+              </div>
+              <div>
+                <h3>Whole-document summary</h3>
+                <pre id="wholeDocumentSummary">{}</pre>
+              </div>
+              <details>
+                <summary>Whole-document Full Proposal JSON</summary>
+                <pre id="wholeDocumentFullProposal">{}</pre>
+              </details>
+              <div>
+                <h3>Whole-document proposal list</h3>
+                <div id="wholeDocumentProposalList"></div>
+              </div>
+              <div>
+                <h3>Window execution details</h3>
+                <div id="wholeDocumentWindows"><span class="muted">No analysis windows loaded.</span></div>
+              </div>
+              <div>
+                <h3>Selected whole-document proposal</h3>
+                <pre id="wholeDocumentProposalDetail">Select a proposal detail button from the list.</pre>
+              </div>
+              <details id="advancedNarrativeDebug">
+                <summary>Advanced debug: manual chunk selection</summary>
+                <div class="body">
+              <div class="form-grid">
                 <label>Mode
                   <select id="narrativeMode">
                     <option value="event_extraction">event_extraction · EventProposalBatchV1</option>
@@ -584,6 +717,8 @@
                 <p class="muted">这些字段需要人工复核，不是模型自动判断结果。</p>
                 <div id="manualReviewChecklist"></div>
               </div>
+                </div>
+              </details>
             </div>
           </section>
 
@@ -636,6 +771,12 @@
       chapters: [],
       chunksByChapter: new Map(),
       selectedChunks: new Map(),
+      analysisDocuments: [],
+      wholeDocumentAnalysisRunId: null,
+      wholeDocumentProgress: null,
+      wholeDocumentResult: null,
+      wholeDocumentWindows: [],
+      wholeDocumentPollTimer: null,
       accessGranted: true,
       requireAccessCode: false,
       lastNarrativeResponse: null
@@ -646,6 +787,7 @@
     const projectId = () => $("projectId").value.trim();
     const accessCode = () => $("accessCode").value;
     const projectStorageKey = "comic-agent-project-id";
+    const analysisDocumentStorageKey = "comic-agent-analysis-document-id";
 
     const capabilities = [
       ["TXT import", "UTF-8 text upload"],
@@ -746,6 +888,7 @@
       }
       $("runRealEvent").disabled = !state.accessGranted || state.selectedChunks.size < 1;
       $("runNarrativeAnalyst").disabled = !state.accessGranted;
+      $("startWholeDocumentAnalysis").disabled = !state.accessGranted;
     }
 
     async function createProject() {
@@ -770,6 +913,7 @@
       });
       $("importResult").textContent = pretty(data);
       clearSelectedChunks();
+      await loadAnalysisDocuments();
       showLog(`导入完成：${data.status}, chapters=${data.chapters_count}, chunks=${data.chunks_count}。请点击“查看章节”并选择本次要分析的 chunks。`);
     }
 
@@ -789,6 +933,252 @@
       document.querySelectorAll("[data-chapter]").forEach((button) => {
         button.addEventListener("click", () => loadChunks(button.dataset.chapter));
       });
+    }
+
+    function analysisDocumentId() {
+      return $("analysisDocumentId").value;
+    }
+
+    function selectedAnalysisModes() {
+      return Array.from(document.querySelectorAll("[data-analysis-mode]:checked"))
+        .map((input) => input.dataset.analysisMode);
+    }
+
+    function rememberAnalysisDocumentId() {
+      const documentId = analysisDocumentId();
+      if (documentId) localStorage.setItem(analysisDocumentStorageKey, documentId);
+    }
+
+    async function loadAnalysisDocuments() {
+      rememberProjectId();
+      const documents = await request(`/projects/${encodeURIComponent(projectId())}/documents`);
+      state.analysisDocuments = documents;
+      const remembered = localStorage.getItem(analysisDocumentStorageKey);
+      $("analysisDocumentId").innerHTML = [
+        `<option value="">Select an imported document</option>`,
+        ...documents.map((document) => (
+          `<option value="${escapeHtml(document.document_id)}">${escapeHtml(document.filename)} · rev ${escapeHtml(document.revision)}</option>`
+        ))
+      ].join("");
+      if (documents.some((document) => document.document_id === remembered)) {
+        $("analysisDocumentId").value = remembered;
+      }
+    }
+
+    function renderWholeDocumentProgress(data) {
+      state.wholeDocumentProgress = data;
+      $("wholeDocumentProgress").textContent = pretty({
+        analysis_run_id: data.analysis_run_id,
+        document_id: data.document_id,
+        modes: data.modes,
+        status: data.status,
+        real_llm_requested: data.real_llm_requested,
+        concurrency: data.concurrency,
+        windows_total: data.windows_total,
+        windows_succeeded: data.windows_succeeded,
+        windows_failed: data.windows_failed,
+        windows_pending: data.windows_pending
+      });
+      $("wholeDocumentOutcome").innerHTML = [
+        statusPill("status", data.status),
+        statusPill("windows succeeded", data.windows_succeeded),
+        statusPill("windows failed", data.windows_failed),
+        statusPill("windows pending", data.windows_pending)
+      ].join("");
+    }
+
+    function renderWholeDocumentWindows(items) {
+      state.wholeDocumentWindows = Array.isArray(items) ? items : [];
+      const rows = state.wholeDocumentWindows.map((windowItem) => [
+        escapeHtml(windowItem.mode ?? "-"),
+        escapeHtml(windowItem.window_index ?? "-"),
+        escapeHtml((windowItem.chunk_ids || []).join(", ")),
+        statusPill("status", windowItem.status ?? "-"),
+        escapeHtml(windowItem.agent_run_id ?? "-"),
+        escapeHtml(windowItem.attempt_count ?? 0),
+        escapeHtml(windowItem.effective_max_chars_per_chunk ?? "-"),
+        escapeHtml(windowItem.previous_failure_category ?? "-"),
+        escapeHtml(windowItem.failure_category ?? "-"),
+        escapeHtml(windowItem.error_message ?? "-"),
+        escapeHtml(windowItem.recommended_action ?? "-"),
+        escapeHtml(shortPreview(pretty(windowItem.provider_error_diagnostics ?? {}), 240))
+      ]);
+      $("wholeDocumentWindows").innerHTML = windowExecutionTable(
+        ["mode", "window", "chunk ids", "status", "AgentRun", "attempts", "input budget", "previous failure", "failure", "sanitized error", "recommended action", "safe diagnostics"],
+        rows
+      );
+    }
+
+    async function loadWholeDocumentWindows() {
+      const runId = state.wholeDocumentAnalysisRunId;
+      if (!runId) return;
+      const payload = await request(`/narrative-analysis-runs/${encodeURIComponent(runId)}/windows`);
+      renderWholeDocumentWindows(payload.items || []);
+    }
+
+    async function ensureWholeDocumentRealLlmEnabled() {
+      const llmStatus = await request("/settings/llm/status");
+      if (llmStatus.enable_real_llm !== true) {
+        throw new Error(
+          "Real LLM is disabled by server settings. Restart the API with ENABLE_REAL_LLM=true."
+        );
+      }
+    }
+
+    function clearWholeDocumentResult() {
+      state.wholeDocumentResult = null;
+      state.wholeDocumentWindows = [];
+      $("wholeDocumentSummary").textContent = "{}";
+      $("wholeDocumentFullProposal").textContent = "{}";
+      $("wholeDocumentProposalList").innerHTML = `<span class="muted">暂无数据。</span>`;
+      $("wholeDocumentProposalDetail").textContent = "Select a proposal detail button from the list.";
+    }
+
+    function renderWholeDocumentSummary(result) {
+      const progress = state.wholeDocumentProgress || {};
+      $("wholeDocumentSummary").textContent = pretty({
+        analysis_run_id: result.analysis_run_id,
+        document_id: result.document_id,
+        modes: progress.modes || [],
+        status: progress.status || null,
+        event_proposals_count: result.events.length,
+        entity_proposals_count: result.entities.length,
+        claim_proposals_count: result.claims.length,
+        total_proposals: result.events.length + result.entities.length + result.claims.length,
+        windows_total: progress.windows_total ?? null,
+        windows_succeeded: progress.windows_succeeded ?? null,
+        windows_failed: progress.windows_failed ?? null
+      });
+    }
+
+    function proposalItemsForWholeDocumentMode(mode) {
+      const result = state.wholeDocumentResult;
+      if (!result) return [];
+      if (mode === "event_extraction") return result.events || [];
+      if (mode === "entity_extraction") return result.entities || [];
+      if (mode === "claim_extraction") return result.claims || [];
+      return [];
+    }
+
+    function renderWholeDocumentProposalDetail(mode, index) {
+      const item = proposalItemsForWholeDocumentMode(mode)[Number(index)];
+      if (!item) {
+        $("wholeDocumentProposalDetail").textContent = "Proposal detail is unavailable.";
+        return;
+      }
+      $("wholeDocumentProposalDetail").textContent = pretty({
+        mode,
+        proposal: item.proposal || null,
+        agent_run_ids: item.agent_run_ids || [],
+        evidence_refs: item.evidence_refs || []
+      });
+    }
+
+    function renderWholeDocumentResult(result) {
+      state.wholeDocumentResult = result;
+      renderWholeDocumentSummary(result);
+      $("wholeDocumentFullProposal").textContent = pretty(result);
+      $("wholeDocumentProposalDetail").textContent = "Select a proposal detail button from the list.";
+      const rows = [
+        ...(result.events || []).map((item, index) => ["event_extraction", item, index]),
+        ...(result.entities || []).map((item, index) => ["entity_extraction", item, index]),
+        ...(result.claims || []).map((item, index) => ["claim_extraction", item, index])
+      ].map(([mode, item, index]) => {
+        const proposal = item.proposal || {};
+        const evidence = Array.isArray(item.evidence_refs) ? item.evidence_refs[0] : null;
+        return [
+          escapeHtml(mode),
+          escapeHtml(proposal.proposal_id ?? "-"),
+          escapeHtml(proposal.event_type ?? proposal.entity_type ?? proposal.claim_type ?? "-"),
+          escapeHtml(proposal.creature_subtype ?? "-"),
+          escapeHtml(proposal.temporal_scope ?? "-"),
+          escapeHtml(shortPreview(proposal.summary ?? proposal.canonical_name ?? proposal.claim_text ?? "", 48)),
+          escapeHtml((item.agent_run_ids || []).join(", ")),
+          escapeHtml((item.evidence_refs || []).map((ref) => ref.chunk_id).join(", ")),
+          escapeHtml(shortPreview(evidence?.quote_text ?? "", 40)),
+          `<button data-whole-proposal-mode="${mode}" data-whole-proposal-index="${index}">View details</button>`
+        ];
+      });
+      $("wholeDocumentProposalList").innerHTML = table(
+        ["mode", "proposal_id", "type", "creature_subtype", "temporal_scope", "summary/name", "AgentRuns", "Evidence chunks", "quote preview", "review"],
+        rows
+      );
+      document.querySelectorAll("[data-whole-proposal-mode]").forEach((button) => {
+        button.addEventListener("click", () => {
+          renderWholeDocumentProposalDetail(
+            button.dataset.wholeProposalMode,
+            button.dataset.wholeProposalIndex
+          );
+        });
+      });
+    }
+
+    function stopWholeDocumentProgressPoll() {
+      if (state.wholeDocumentPollTimer !== null) {
+        window.clearTimeout(state.wholeDocumentPollTimer);
+        state.wholeDocumentPollTimer = null;
+      }
+    }
+
+    function scheduleWholeDocumentProgressPoll() {
+      stopWholeDocumentProgressPoll();
+      state.wholeDocumentPollTimer = window.setTimeout(() => {
+        loadWholeDocumentProgress().catch((error) => showLog(error.message));
+      }, 2500);
+    }
+
+    async function loadWholeDocumentProgress() {
+      const runId = state.wholeDocumentAnalysisRunId;
+      if (!runId) throw new Error("Start or select a whole-document analysis run first.");
+      const progress = await request(`/narrative-analysis-runs/${encodeURIComponent(runId)}`);
+      renderWholeDocumentProgress(progress);
+      await loadWholeDocumentWindows();
+      if (progress.status === "PENDING" || progress.status === "RUNNING") {
+        scheduleWholeDocumentProgressPoll();
+        return;
+      }
+      stopWholeDocumentProgressPoll();
+      const result = await request(`/narrative-analysis-runs/${encodeURIComponent(runId)}/result`);
+      renderWholeDocumentResult(result);
+    }
+
+    async function startWholeDocumentAnalysis() {
+      const documentId = analysisDocumentId();
+      const modes = selectedAnalysisModes();
+      if (!documentId) throw new Error("Select an imported document first.");
+      if (!modes.length) throw new Error("Select at least one Narrative Analyst mode.");
+      if ($("analysisRealLlmRequested").checked) {
+        await ensureWholeDocumentRealLlmEnabled();
+      }
+      rememberAnalysisDocumentId();
+      const data = await request(
+        `/projects/${encodeURIComponent(projectId())}/documents/${encodeURIComponent(documentId)}/narrative-analysis-runs`,
+        {
+          method: "POST",
+          headers: demoHeaders(),
+          body: JSON.stringify({
+            modes,
+            real_llm_requested: $("analysisRealLlmRequested").checked
+          })
+        }
+      );
+      stopWholeDocumentProgressPoll();
+      clearWholeDocumentResult();
+      state.wholeDocumentAnalysisRunId = data.analysis_run_id;
+      renderWholeDocumentProgress(data);
+      await loadWholeDocumentProgress();
+    }
+
+    async function resumeWholeDocumentAnalysis() {
+      const runId = state.wholeDocumentAnalysisRunId;
+      if (!runId) throw new Error("Start or select a whole-document analysis run first.");
+      const data = await request(`/narrative-analysis-runs/${encodeURIComponent(runId)}/resume`, {
+        method: "POST",
+        headers: demoHeaders()
+      });
+      clearWholeDocumentResult();
+      renderWholeDocumentProgress(data);
+      await loadWholeDocumentProgress();
     }
 
     async function loadChunks(chapterId) {
@@ -1059,7 +1449,7 @@
       }
       const rows = proposalItems(proposal).map((item) => proposalRow(item));
       $("narrativeProposalList").innerHTML = table(
-        ["proposal_id", "type", "temporal_scope", "source_type", "summary/name", "confidence", "evidence chunk", "quote preview"],
+        ["proposal_id", "type", "creature_subtype", "temporal_scope", "source_type", "summary/name", "confidence", "evidence chunk", "quote preview"],
         rows
       );
     }
@@ -1078,6 +1468,7 @@
       return [
         escapeHtml(proposal.proposal_id ?? "-"),
         escapeHtml(type),
+        escapeHtml(proposal.creature_subtype ?? "-"),
         escapeHtml(proposal.temporal_scope ?? "-"),
         escapeHtml(proposal.source_type ?? "-"),
         escapeHtml(shortPreview(title, 48)),
@@ -1199,6 +1590,10 @@
           entity_count_reasonable: null,
           no_duplicate_entities: null,
           entity_types_correct: null,
+          creature_classification_correct: null,
+          creature_subtype_supported_or_null: null,
+          important_unnamed_objects_allowed: null,
+          concept_is_not_a_catch_all: null,
           names_and_aliases_not_invented: null,
           every_entity_has_supporting_evidence: null,
           manual_score: null,
@@ -1273,10 +1668,40 @@
     function table(headers, rows) {
       if (!rows.length) return `<span class="muted">暂无数据。</span>`;
       return `
-        <div class="table-scroll"><table>
-          <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>
-          <tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody>
-        </table></div>
+        <div class="table-scroll-shell">
+          <div class="table-scroll-toolbar">
+            <span>Wide table: swipe or use arrows to view all columns.</span>
+            <span class="table-scroll-controls">
+              <button type="button" class="table-scroll-button" data-table-scroll="left" aria-label="Scroll table left">←</button>
+              <button type="button" class="table-scroll-button" data-table-scroll="right" aria-label="Scroll table right">→</button>
+            </span>
+          </div>
+          <div class="table-scroll"><table>
+            <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>
+            <tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody>
+          </table></div>
+        </div>
+      `;
+    }
+
+    function windowExecutionTable(headers, rows) {
+      if (!rows.length) return `<span class="muted">No analysis windows loaded.</span>`;
+      return `
+        <div class="window-execution-shell">
+          <div class="window-execution-toolbar">
+            <span>Wide table: swipe or use arrows to view all columns.</span>
+            <span class="window-execution-controls">
+              <button type="button" class="table-scroll-button" data-window-scroll="left" aria-label="Scroll window execution table left" title="View columns to the left">&larr;</button>
+              <button type="button" class="table-scroll-button" data-window-scroll="right" aria-label="Scroll window execution table right" title="View columns to the right">&rarr;</button>
+            </span>
+          </div>
+          <div class="window-execution-viewport" tabindex="0">
+            <table class="window-execution-table">
+              <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>
+              <tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody>
+            </table>
+          </div>
+        </div>
       `;
     }
 
@@ -1297,12 +1722,39 @@
     $("runMock").addEventListener("click", () => runMock().catch((error) => showLog(error.message)));
     $("runRealEvent").addEventListener("click", () => runRealEvent().catch((error) => showLog(error.message)));
     $("runNarrativeAnalyst").addEventListener("click", () => runNarrativeAnalyst().catch((error) => showLog(error.message)));
+    $("loadAnalysisDocuments").addEventListener("click", () => loadAnalysisDocuments().catch((error) => showLog(error.message)));
+    $("startWholeDocumentAnalysis").addEventListener("click", () => startWholeDocumentAnalysis().catch((error) => showLog(error.message)));
+    $("refreshWholeDocumentAnalysis").addEventListener("click", () => loadWholeDocumentProgress().catch((error) => showLog(error.message)));
+    $("resumeWholeDocumentAnalysis").addEventListener("click", () => resumeWholeDocumentAnalysis().catch((error) => showLog(error.message)));
     $("refreshNarrativeRuns").addEventListener("click", () => loadRuns().catch((error) => showLog(error.message)));
     $("loadRuns").addEventListener("click", () => loadRuns().catch((error) => showLog(error.message)));
     $("narrativeChunkIds").addEventListener("input", () => renderNarrativeSelectedChunks());
     $("projectId").addEventListener("input", () => {
       rememberProjectId();
       clearSelectedChunks();
+      state.analysisDocuments = [];
+      state.wholeDocumentAnalysisRunId = null;
+      state.wholeDocumentProgress = null;
+      stopWholeDocumentProgressPoll();
+      clearWholeDocumentResult();
+      $("analysisDocumentId").innerHTML = `<option value="">Select an imported document</option>`;
+    });
+    $("analysisDocumentId").addEventListener("change", rememberAnalysisDocumentId);
+    document.addEventListener("click", (event) => {
+      const windowControl = event.target.closest("[data-window-scroll]");
+      if (windowControl) {
+        const windowExecutionViewport = windowControl.closest(".window-execution-shell")?.querySelector(".window-execution-viewport");
+        if (!windowExecutionViewport) return;
+        const direction = windowControl.dataset.windowScroll === "left" ? -1 : 1;
+        windowExecutionViewport.scrollBy({ left: direction * 420, behavior: "smooth" });
+        return;
+      }
+      const control = event.target.closest("[data-table-scroll]");
+      if (!control) return;
+      const scrollArea = control.closest(".table-scroll-shell")?.querySelector(".table-scroll");
+      if (!scrollArea) return;
+      const direction = control.dataset.tableScroll === "left" ? -1 : 1;
+      scrollArea.scrollBy({ left: direction * 360, behavior: "smooth" });
     });
 
     initializeProjectId();

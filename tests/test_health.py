@@ -14,6 +14,17 @@ def test_health_endpoint(tmp_path: Path) -> None:
     assert response.json()["status"] == "ok"
 
 
+def test_root_serves_web_console_without_shadowing_api_routes(tmp_path: Path) -> None:
+    app = create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'api.db'}")
+    with TestClient(app) as client:
+        console_response = client.get("/")
+        health_response = client.get("/health")
+
+    assert console_response.status_code == 200
+    assert "Longtext Comic Agent Demo" in console_response.text
+    assert health_response.status_code == 200
+
+
 def test_project_import_and_chunk_queries(tmp_path: Path) -> None:
     app = create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'api.db'}")
     with TestClient(app) as client:

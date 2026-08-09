@@ -37,10 +37,13 @@ def test_web_console_static_html_exposes_demo_controls_without_local_secrets() -
     assert "proposalItems" in html
     assert "event_evidence_results" in html
     assert "entity_evidence_results" in html
+    assert "creature_subtype" in html
     assert "claim_evidence_results" in html
     assert "temporal_scope" in html
     assert "events_cover_major_plot_points" in html
     assert "entities_cover_major_entities" in html
+    assert "creature_classification_correct" in html
+    assert "creature_subtype_supported_or_null" in html
     assert "claims_cover_major_claims" in html
     assert "event_count_reasonable" in html
     assert "no_duplicate_events" in html
@@ -91,6 +94,7 @@ def test_web_console_does_not_default_to_demo_project_after_refresh() -> None:
     html = Path("web_console/index.html").read_text(encoding="utf-8")
 
     assert 'id="projectId" value="demo-project"' not in html
+    assert 'id="apiBase" value="http://127.0.0.1:8080"' in html
     assert "initializeProjectId" in html
     assert "localStorage" in html
     assert "comic-agent-project-id" in html
@@ -109,15 +113,85 @@ def test_web_console_keeps_wide_proposal_tables_inside_their_own_scroll_area() -
 
     assert ".app, main, .grid, .stack, section, .body { min-width: 0; }" in html
     assert ".table-scroll {" in html
-    assert "overflow-x: auto;" in html
+    assert "overflow-x: scroll;" in html
     assert '<div class="table-scroll"><table>' in html
+    assert ".table-scroll-toolbar" in html
+    assert 'data-table-scroll="left"' in html
+    assert 'data-table-scroll="right"' in html
+    assert "scrollBy" in html
     assert ".full-span { grid-column: 1 / -1; }" in html
     assert ".full-span { order: 1; }" in html
     assert 'id="narrative" class="full-span"' in html
+
+
+def test_web_console_gives_window_execution_details_a_dedicated_scroll_viewport() -> None:
+    html = Path("web_console/index.html").read_text(encoding="utf-8")
+
+    assert "window-execution-shell" in html
+    assert "window-execution-toolbar" in html
+    assert "window-execution-viewport" in html
+    assert "window-execution-table" in html
+    assert "#narrative { overflow: visible; }" in html
+    assert ".window-execution-viewport" in html
+    assert "overflow-x: auto;" in html
+    assert "overflow-y: hidden;" in html
+    assert "touch-action: pan-x;" in html
+    assert "scrollbar-gutter: stable;" in html
+    assert "min-width: 1400px;" in html
+    assert 'data-window-scroll="left"' in html
+    assert 'data-window-scroll="right"' in html
+    assert "windowExecutionViewport.scrollBy" in html
 
 
 def test_web_console_manual_review_empty_values_are_explained_in_chinese() -> None:
     html = Path("web_console/index.html").read_text(encoding="utf-8")
 
     assert "待人工填写" in html
-    assert "? \"manual\"" not in html
+    assert '? "manual"' not in html
+
+
+def test_web_console_exposes_whole_document_analysis_as_the_normal_flow() -> None:
+    html = Path("web_console/index.html").read_text(encoding="utf-8")
+
+    assert '<input id="apiBase" value="http://127.0.0.1:8080" />' in html
+    assert 'id="analysisDocumentId"' in html
+    assert 'id="loadAnalysisDocuments"' in html
+    assert 'data-analysis-mode="event_extraction"' in html
+    assert 'data-analysis-mode="entity_extraction"' in html
+    assert 'data-analysis-mode="claim_extraction"' in html
+    assert 'id="analysisRealLlmRequested"' in html
+    assert 'id="startWholeDocumentAnalysis"' in html
+    assert 'id="wholeDocumentProgress"' in html
+    assert 'id="wholeDocumentProposalList"' in html
+    assert 'id="resumeWholeDocumentAnalysis"' in html
+    assert 'id="advancedNarrativeDebug"' in html
+    assert "startWholeDocumentAnalysis" in html
+    assert "loadWholeDocumentProgress" in html
+    assert "renderWholeDocumentResult" in html
+    assert "Window execution details" in html
+    assert 'id="wholeDocumentWindows"' in html
+    assert "loadWholeDocumentWindows" in html
+    assert "ensureWholeDocumentRealLlmEnabled" in html
+    assert 'request("/settings/llm/status")' in html
+    assert '"attempts"' in html
+    assert '"input budget"' in html
+    assert '"previous failure"' in html
+    assert '"safe diagnostics"' in html
+    assert "/narrative-analysis-runs/" in html
+    assert "/documents/${encodeURIComponent(documentId)}/narrative-analysis-runs" in html
+    advanced_start = html.index('id="advancedNarrativeDebug"')
+    manual_chunk_input = html.index('id="narrativeChunkIds"')
+    advanced_end = html.index("</details>", advanced_start)
+    assert advanced_start < manual_chunk_input < advanced_end
+
+
+def test_web_console_exposes_whole_document_outputs_for_manual_review() -> None:
+    html = Path("web_console/index.html").read_text(encoding="utf-8")
+
+    assert 'id="wholeDocumentSummary"' in html
+    assert 'id="wholeDocumentFullProposal"' in html
+    assert 'id="wholeDocumentProposalDetail"' in html
+    assert "renderWholeDocumentSummary" in html
+    assert "renderWholeDocumentProposalDetail" in html
+    assert "data-whole-proposal-mode" in html
+    assert "scheduleWholeDocumentProgressPoll" in html

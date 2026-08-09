@@ -1,7 +1,10 @@
 """FastAPI application entrypoint."""
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from comic_agent.agents.storybible_curator import StoryBibleCurator
 from comic_agent.api.agent_runs import router as agent_runs_router
@@ -47,6 +50,8 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(agent_runs_router)
     app.include_router(settings_router)
     app.include_router(demo_router)
+    web_console_directory = Path(__file__).resolve().parent.parent / "web_console"
+    app.mount("/", StaticFiles(directory=web_console_directory, html=True), name="web-console")
     return app
 
 
