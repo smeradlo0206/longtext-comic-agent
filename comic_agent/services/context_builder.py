@@ -18,6 +18,8 @@ from comic_agent.schemas.storybible import (
     WorldRuleV1,
 )
 
+MAX_STORYBIBLE_CONTEXT_ITEMS = 3
+
 
 @dataclass(frozen=True)
 class AgentContext:
@@ -67,14 +69,22 @@ class ContextBuilder:
             for resource in repository.list_related_resources(project_id, profile_id)[:3]:
                 if isinstance(resource, StoryEntityStateV1):
                     key = ("state", resource.state_id)
-                    if key not in seen_resources:
+                    if (
+                        key not in seen_resources
+                        and len(states) < MAX_STORYBIBLE_CONTEXT_ITEMS
+                    ):
                         seen_resources.add(key)
                         states.append(resource)
                 else:
                     key = ("relationship", resource.relationship_id)
-                    if key not in seen_resources:
+                    if (
+                        key not in seen_resources
+                        and len(relationships) < MAX_STORYBIBLE_CONTEXT_ITEMS
+                    ):
                         seen_resources.add(key)
                         relationships.append(resource)
+            if len(profiles) == MAX_STORYBIBLE_CONTEXT_ITEMS:
+                break
 
         candidate_chunks = list(source_chunks)
         if any(source_chunk.project_id != project_id for source_chunk in candidate_chunks):
@@ -93,13 +103,15 @@ class ContextBuilder:
 
         return StoryBibleContextV1(
             project_id=project_id,
-            entity_proposals=list(entity_proposals),
-            event_proposals=list(event_proposals),
-            state_change_proposals=list(state_change_proposals),
-            temporal_relation_proposals=list(temporal_relation_proposals),
+            entity_proposals=list(entity_proposals)[:MAX_STORYBIBLE_CONTEXT_ITEMS],
+            event_proposals=list(event_proposals)[:MAX_STORYBIBLE_CONTEXT_ITEMS],
+            state_change_proposals=list(state_change_proposals)[:MAX_STORYBIBLE_CONTEXT_ITEMS],
+            temporal_relation_proposals=list(temporal_relation_proposals)[
+                :MAX_STORYBIBLE_CONTEXT_ITEMS
+            ],
             profiles=profiles,
             states=states,
             relationships=relationships,
-            world_rules=selected_world_rules,
+            world_rules=selected_world_rules[:MAX_STORYBIBLE_CONTEXT_ITEMS],
             source_chunk_ids=selected_chunk_ids,
         )

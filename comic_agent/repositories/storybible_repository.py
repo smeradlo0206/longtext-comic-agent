@@ -58,7 +58,7 @@ class StoryBibleRepository:
             )
         )
         if existing_hash is not None:
-            return self._plan_from_row(existing_hash)
+            return self._require_matching_plan(existing_hash, plan)
 
         existing_id = self._session.get(CandidateCommitPlanModel, plan.commit_plan_id)
         if existing_id is not None:
@@ -66,7 +66,7 @@ class StoryBibleRepository:
                 existing_id.project_id == plan.project_id
                 and existing_id.content_hash == plan.content_hash
             ):
-                return self._plan_from_row(existing_id)
+                return self._require_matching_plan(existing_id, plan)
             raise ValueError("commit_plan_id already belongs to a different plan")
 
         self._session.add(
@@ -90,19 +90,31 @@ class StoryBibleRepository:
                 )
             )
             if existing_hash is not None:
-                return self._plan_from_row(existing_hash)
+                return self._require_matching_plan(existing_hash, plan)
             existing_id = self._session.get(CandidateCommitPlanModel, plan.commit_plan_id)
             if existing_id is not None:
                 if (
                     existing_id.project_id == plan.project_id
                     and existing_id.content_hash == plan.content_hash
                 ):
-                    return self._plan_from_row(existing_id)
+                    return self._require_matching_plan(existing_id, plan)
                 raise ValueError(
                     "commit_plan_id already belongs to a different plan"
                 ) from error
             raise
         return plan
+
+    def _require_matching_plan(
+        self,
+        existing_row: CandidateCommitPlanModel,
+        incoming_plan: CommitPlanV1,
+    ) -> CommitPlanV1:
+        """Reuse only an identical plan for a project-scoped content hash."""
+
+        existing_plan = self._plan_from_row(existing_row)
+        if existing_plan.model_dump(mode="json") != incoming_plan.model_dump(mode="json"):
+            raise ValueError("content_hash already belongs to a different commit plan")
+        return existing_plan
 
     def save_committed_plan(self, plan: CommitPlanV1) -> CommitPlanV1:
         """Persist a plan if needed and mark it as committed idempotently."""

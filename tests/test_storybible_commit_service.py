@@ -448,6 +448,76 @@ def test_storybible_context_is_selected_project_scoped_and_bounded(
     assert context.source_chunk_ids == ["chunk-0", "chunk-1", "chunk-2"]
 
 
+def test_storybible_context_caps_profiles_after_loading_their_related_resources(
+    storybible_store: tuple[Session, StoryBibleRepository],
+) -> None:
+    """The last selected profile must retain its repository-loaded related state."""
+
+    _, repository = storybible_store
+    for index in range(4):
+        repository.apply_canonical_update(
+            profile_update(profile_id=f"profile-{index}"), "seed-plan"
+        )
+    repository.apply_canonical_update(
+        StoryEntityStateV1(
+            state_id="state-profile-2",
+            project_id="project-a",
+            profile_id="profile-2",
+            state={"location": "market"},
+            evidence_refs=[EvidenceRefV1(chunk_id="chunk-a")],
+        ),
+        "seed-plan",
+    )
+
+    context = ContextBuilder().storybible_context(
+        project_id="project-a",
+        profile_ids=[f"profile-{index}" for index in range(4)],
+        source_chunks=[],
+        repository=repository,
+    )
+
+    assert [profile.profile_id for profile in context.profiles] == [
+        "profile-0",
+        "profile-1",
+        "profile-2",
+    ]
+    assert [state.state_id for state in context.states] == ["state-profile-2"]
+
+
+def test_storybible_context_caps_related_resources_across_selected_profiles(
+    storybible_store: tuple[Session, StoryBibleRepository],
+) -> None:
+    """Multiple selected profiles must not expand the bounded agent context."""
+
+    _, repository = storybible_store
+    for profile_id in ("profile-1", "profile-2"):
+        repository.apply_canonical_update(profile_update(profile_id=profile_id), "seed-plan")
+        for index in range(3):
+            repository.apply_canonical_update(
+                StoryEntityStateV1(
+                    state_id=f"state-{profile_id}-{index}",
+                    project_id="project-a",
+                    profile_id=profile_id,
+                    state={"location": f"place-{index}"},
+                    evidence_refs=[EvidenceRefV1(chunk_id="chunk-a")],
+                ),
+                "seed-plan",
+            )
+
+    context = ContextBuilder().storybible_context(
+        project_id="project-a",
+        profile_ids=["profile-1", "profile-2"],
+        source_chunks=[],
+        repository=repository,
+    )
+
+    assert [state.state_id for state in context.states] == [
+        "state-profile-1-0",
+        "state-profile-1-1",
+        "state-profile-1-2",
+    ]
+
+
 def test_storybible_context_rejects_cross_project_source_chunks(
     storybible_store: tuple[Session, StoryBibleRepository],
 ) -> None:

@@ -41,4 +41,52 @@ git diff --check                                                        # clean
 - Canonical writes are reachable from this API only through `CommitService.commit_storybible_plan`; candidate-plan persistence is non-canonical and idempotent by project/content hash.
 - `StoryBibleContextV1` remains the schema source for bounded input and `StoryBibleCuratorProposalV1` for agent output; no standalone API schemas were introduced.
 - The full test run has one pre-existing deprecation warning from FastAPI/Starlette's `TestClient` use of `httpx`; it is unrelated to this task.
-- No commit has been created yet: explicit approval is required before committing the scoped Task 5 changes.
+- The initial Task 5 implementation was committed as `d66c1bcec1c572eaa35cbb9817efe8c9dcae1fb2`.
+
+## Fix round 1 — Context construction and hash-collision safety
+
+### Requirements checked
+
+- The curation route rebuilds its agent input through `ContextBuilder` from project-scoped repositories. Caller-supplied canonical profile, state, relationship, and world-rule payloads are never forwarded as canonical context.
+- `ContextBuilder` limits selected profiles, related resources, source chunks, candidate proposal lists, and world rules to three items per category.
+- A project/content-hash collision reuses a candidate only when its complete `CommitPlanV1` JSON payload matches. Different plans now fail before a curator response can substitute another proposal's commit plan or before `CommitService` performs a canonical write.
+
+### RED/GREEN evidence
+
+RED was observed before the production changes:
+
+```text
+tests/test_storybible_api.py::test_curation_rebuilds_canonical_context_from_project_scoped_storage
+FAILED: expected persisted canonical name `Lin Xia`, received caller value `Forged Lin Xia`
+tests/test_storybible_api.py::test_curation_rejects_different_proposals_that_reuse_a_content_hash
+FAILED: expected 422, received 200
+tests/test_storybible_repository.py::test_save_candidate_plan_rejects_a_different_plan_with_the_same_hash
+FAILED: ValueError was not raised
+```
+
+Two further RED tests caught cap edge cases: the third selected profile initially lost its related resources, and multiple selected profiles could exceed the total related-resource cap. Moving the profile cap after its repository queries and applying the cap globally to states and relationships made both pass.
+
+GREEN verification:
+
+```text
+.venv\\Scripts\\python.exe -m pytest tests\\test_storybible_api.py tests\\test_storybible_repository.py tests\\test_storybible_commit_service.py -q
+48 passed, 1 warning
+.venv\\Scripts\\python.exe -m ruff check [changed files]
+All checks passed
+.venv\\Scripts\\python.exe -m mypy comic_agent
+Success: no issues found in 47 source files
+git diff --check
+clean
+```
+
+### Fix files
+
+- `comic_agent/api/storybible.py`
+- `comic_agent/services/context_builder.py`
+- `comic_agent/repositories/storybible_repository.py`
+- `comic_agent/services/commit_service.py`
+- `tests/test_storybible_api.py`
+- `tests/test_storybible_repository.py`
+- `tests/test_storybible_commit_service.py`
+
+The known FastAPI/Starlette `TestClient` deprecation warning remains unrelated to this change.

@@ -19,6 +19,7 @@ from comic_agent.schemas.storybible import (
     StoryEntityStateV1,
 )
 from comic_agent.services.commit_service import CommitService
+from comic_agent.services.context_builder import ContextBuilder
 from comic_agent.services.storybible_validator import StoryBibleValidator
 
 router = APIRouter()
@@ -91,6 +92,37 @@ def _require_project_context(
         _require_project_evidence(evidence_refs, project_id, source_repository)
 
 
+def _build_project_context(
+    requested_context: StoryBibleContextV1,
+    project_id: str,
+    repository: StoryBibleRepository,
+    source_repository: SourceRepository,
+) -> StoryBibleContextV1:
+    """Rebuild a bounded agent input from project-scoped canonical queries."""
+
+    _require_project_context(requested_context, project_id, source_repository)
+    source_chunks = [
+        source_repository.get_chunk(chunk_id)
+        for chunk_id in requested_context.source_chunk_ids
+    ]
+    if any(chunk is None for chunk in source_chunks):  # pragma: no cover - checked above
+        raise HTTPException(status_code=409, detail="StoryBible context project mismatch")
+    try:
+        return ContextBuilder().storybible_context(
+            project_id=project_id,
+            profile_ids=(profile.profile_id for profile in requested_context.profiles),
+            source_chunks=[chunk for chunk in source_chunks if chunk is not None],
+            repository=repository,
+            entity_proposals=requested_context.entity_proposals,
+            event_proposals=requested_context.event_proposals,
+            state_change_proposals=requested_context.state_change_proposals,
+            temporal_relation_proposals=requested_context.temporal_relation_proposals,
+            world_rules=repository.list_world_rules(project_id),
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
 def _require_project_evidence(
     evidence_refs: list[EvidenceRefV1],
     project_id: str,
@@ -117,9 +149,10 @@ def curate_storybible(
 ) -> StoryBibleCuratorProposalV1:
     """Create and persist a candidate plan without writing canonical facts."""
 
-    _require_project_context(context, project_id, source_repository)
-
-    proposal = curator.run(context)
+    bounded_context = _build_project_context(
+        context, project_id, repository, source_repository
+    )
+    proposal = curator.run(bounded_context)
     if proposal.project_id != project_id or proposal.commit_plan.project_id != project_id:
         raise HTTPException(status_code=409, detail="Curator proposal project mismatch")
     try:

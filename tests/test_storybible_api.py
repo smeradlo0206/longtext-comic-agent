@@ -1,8 +1,9 @@
 """API boundaries for candidate curation and canonical StoryBible resources."""
 
+import json
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from fastapi import FastAPI
@@ -16,7 +17,13 @@ from comic_agent.providers.mocks import MockLLMProvider
 from comic_agent.schemas.source import SourceChunkV1
 
 
-def candidate_payload(*, project_id: str = "project-a") -> dict[str, Any]:
+def candidate_payload(
+    *,
+    project_id: str = "project-a",
+    proposal_id: str = "proposal-a",
+    plan_id: str = "plan-a",
+    content_hash: str = "hash-a",
+) -> dict[str, Any]:
     """Return a complete mock provider response backed by one source chunk."""
 
     evidence = {"chunk_id": "chunk-a"}
@@ -39,33 +46,49 @@ def candidate_payload(*, project_id: str = "project-a") -> dict[str, Any]:
     }
     updates = [
         {
-            "update_id": "update-profile-a",
+            "update_id": f"update-{proposal_id}-profile-a",
             "project_id": project_id,
             "profile": profile,
             "evidence_refs": [evidence],
         },
         {
-            "update_id": "update-state-a",
+            "update_id": f"update-{proposal_id}-state-a",
             "project_id": project_id,
             "state": state,
             "evidence_refs": [evidence],
         },
     ]
     return {
-        "proposal_id": "proposal-a",
+        "proposal_id": proposal_id,
         "project_id": project_id,
         "status": "CANDIDATE",
         "commit_plan": {
-            "commit_plan_id": "plan-a",
+            "commit_plan_id": plan_id,
             "project_id": project_id,
-            "source_proposal_id": "proposal-a",
-            "content_hash": "hash-a",
+            "source_proposal_id": proposal_id,
+            "content_hash": content_hash,
             "updates": updates,
             "evidence_refs": [evidence],
         },
         "evidence_refs": [evidence],
         "confidence": 0.9,
     }
+
+
+class RecordingMockLLMProvider(MockLLMProvider):
+    """Mock provider that retains the bounded context passed to the agent."""
+
+    def __init__(self, response: dict[str, Any]) -> None:
+        super().__init__(response)
+        self.requests: list[dict[str, object]] = []
+
+    def structured_generate(
+        self,
+        request: dict[str, object],
+        output_model: type[Any],
+    ) -> Any:
+        self.requests.append(request)
+        return super().structured_generate(request, output_model)
 
 
 def seed_chunk(
@@ -152,6 +175,95 @@ def test_curation_persists_only_a_candidate_plan(storybible_client: TestClient) 
         ).status_code
         == 404
     )
+
+
+def test_curation_rebuilds_canonical_context_from_project_scoped_storage(
+    storybible_client: TestClient,
+) -> None:
+    """Caller-supplied canonical values must not be forwarded to the curator."""
+
+    curate(storybible_client)
+    approve(storybible_client)
+    provider = RecordingMockLLMProvider(
+        candidate_payload(proposal_id="proposal-b", plan_id="plan-b", content_hash="hash-b")
+    )
+    app = cast(FastAPI, storybible_client.app)
+    app.state.storybible_curator = StoryBibleCurator(provider)
+
+    response = storybible_client.post(
+        "/projects/project-a/storybible/curate",
+        json={
+            "project_id": "project-a",
+            "source_chunk_ids": ["chunk-a"],
+            "profiles": [
+                {
+                    "profile_id": "profile-a",
+                    "project_id": "project-a",
+                    "entity_kind": "PERSON",
+                    "canonical_name": "Forged Lin Xia",
+                    "evidence_refs": [{"chunk_id": "chunk-a"}],
+                }
+            ],
+            "states": [
+                {
+                    "state_id": "forged-state",
+                    "project_id": "project-a",
+                    "profile_id": "profile-a",
+                    "state": {"location": "forged"},
+                    "evidence_refs": [{"chunk_id": "chunk-a"}],
+                }
+            ],
+            "relationships": [
+                {
+                    "relationship_id": "forged-relationship",
+                    "project_id": "project-a",
+                    "source_profile_id": "profile-a",
+                    "target_profile_id": "other-profile",
+                    "relationship_type": "ALLY",
+                    "evidence_refs": [{"chunk_id": "chunk-a"}],
+                }
+            ],
+            "world_rules": [
+                {
+                    "rule_id": "forged-rule",
+                    "project_id": "project-a",
+                    "name": "Forged rule",
+                    "statement": "Forged canonical context must be ignored.",
+                    "evidence_refs": [{"chunk_id": "chunk-a"}],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    context = json.loads(str(provider.requests[0]["messages"][1]["content"]))
+    assert [profile["profile_id"] for profile in context["profiles"]] == ["profile-a"]
+    assert context["profiles"][0]["canonical_name"] == "Lin Xia"
+    assert [state["state_id"] for state in context["states"]] == ["state-a"]
+    assert context["relationships"] == []
+    assert context["world_rules"] == []
+
+
+def test_curation_rejects_different_proposals_that_reuse_a_content_hash(
+    storybible_client: TestClient,
+) -> None:
+    """A provider hash collision must not substitute another proposal's commit plan."""
+
+    curate(storybible_client)
+    app = cast(FastAPI, storybible_client.app)
+    app.state.storybible_curator = StoryBibleCurator(
+        MockLLMProvider(
+            candidate_payload(proposal_id="proposal-b", plan_id="plan-b", content_hash="hash-a")
+        )
+    )
+
+    response = storybible_client.post(
+        "/projects/project-a/storybible/curate",
+        json={"project_id": "project-a", "source_chunk_ids": ["chunk-a"]},
+    )
+
+    assert response.status_code == 422
+    assert "content_hash" in response.json()["detail"]
 
 
 def test_curation_rejects_context_for_another_project(

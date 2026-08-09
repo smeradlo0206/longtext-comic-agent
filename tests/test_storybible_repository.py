@@ -158,13 +158,24 @@ def test_save_candidate_plan_is_idempotent_by_project_and_content_hash(
     """Equivalent plans in one project must reuse the first persisted candidate."""
 
     first = storybible_repository.save_candidate_plan(candidate_plan())
-    second = storybible_repository.save_candidate_plan(
-        candidate_plan(plan_id="plan-2", canonical_name="A different serialization")
-    )
+    second = storybible_repository.save_candidate_plan(candidate_plan())
 
     assert second == first
     assert second.commit_plan_id == "plan-1"
     assert storybible_repository.get_plan_by_content_hash("project-a", "hash-1") == first
+
+
+def test_save_candidate_plan_rejects_a_different_plan_with_the_same_hash(
+    storybible_repository: StoryBibleRepository,
+) -> None:
+    """A provider-supplied hash must not silently replace proposal identity or updates."""
+
+    storybible_repository.save_candidate_plan(candidate_plan())
+
+    with pytest.raises(ValueError, match="content_hash"):
+        storybible_repository.save_candidate_plan(
+            candidate_plan(plan_id="plan-2", canonical_name="Different proposal output")
+        )
 
 
 def test_save_candidate_plan_recovers_when_a_competing_insert_wins(
@@ -178,7 +189,7 @@ def test_save_candidate_plan_recovers_when_a_competing_insert_wins(
     repository = StoryBibleRepository(session)
     competing_repository = StoryBibleRepository(competing_session)
     winner = candidate_plan(plan_id="plan-winner")
-    incoming = candidate_plan(plan_id="plan-loser")
+    incoming = winner
     race_next_insert_commit(
         session,
         lambda: competing_repository.save_candidate_plan(winner),
