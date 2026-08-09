@@ -198,11 +198,17 @@ import pytest
 
 from comic_agent.providers.openai_compatible import (
     OpenAICompatibleLLMProvider,
+    ProviderHttpError,
     ProviderResponseError,
     ProviderTimeoutError,
 )
 from comic_agent.schemas.base import EvidenceRefV1, RealityLayer
-from comic_agent.schemas.narrative import EventProposalBatchV1, EventProposalV1
+from comic_agent.schemas.narrative import (
+    ClaimProposalBatchV1,
+    EntityProposalBatchV1,
+    EventProposalBatchV1,
+    EventProposalV1,
+)
 
 
 class FakeResponse:
@@ -430,6 +436,28 @@ def test_openai_compatible_provider_sends_compact_resolved_output_contract() -> 
     assert len(user_message) < 2600
 
 
+def test_openai_compatible_provider_adds_fixed_schema_recovery_instruction() -> None:
+    client = FakeHttpClient(
+        response=_chat_response(json.dumps(_event_batch_json(), ensure_ascii=False))
+    )
+    provider = OpenAICompatibleLLMProvider(api_key="secret-test-key", http_client=client)
+
+    provider.structured_generate(
+        {
+            "input_context": {
+                "output_recovery": "schema_validation",
+                "source_chunks": [{"chunk_id": "chunk-1", "text": "Synthetic source."}],
+            }
+        },
+        EventProposalBatchV1,
+    )
+
+    user_message = client.requests[0]["json"]["messages"][1]["content"]
+    assert "Format recovery instruction:" in user_message
+    assert "exactly one EventProposalBatchV1 JSON object" in user_message
+    assert "non-empty events array" in user_message
+
+
 def test_openai_compatible_provider_extracts_markdown_wrapped_json() -> None:
     content = f"```json\n{json.dumps(_event_json(), ensure_ascii=False)}\n```"
     provider = OpenAICompatibleLLMProvider(
@@ -641,7 +669,50 @@ def test_openai_compatible_provider_adds_sanitized_diagnostics_for_schema_failur
         "usage_prompt_tokens": 5,
         "usage_completion_tokens": 4,
         "usage_total_tokens": 9,
+        "schema_error_kind": "missing",
+        "schema_error_field_paths": [
+            "confidence",
+            "event_type",
+            "evidence_refs",
+            "reality_layer",
+            "summary",
+        ],
+        "expected_output_schema": "EventProposalV1",
     }
+
+
+@pytest.mark.parametrize(
+    ("output_model", "batch_field"),
+    [
+        (EventProposalBatchV1, "events"),
+        (EntityProposalBatchV1, "entities"),
+        (ClaimProposalBatchV1, "claims"),
+    ],
+)
+def test_openai_compatible_provider_schema_failure_reports_batch_field_paths_only(
+    output_model: type[EventProposalBatchV1 | EntityProposalBatchV1 | ClaimProposalBatchV1],
+    batch_field: str,
+) -> None:
+    provider = OpenAICompatibleLLMProvider(
+        api_key="secret-test-key",
+        http_client=FakeHttpClient(
+            response=_chat_response(
+                json.dumps({"batch_id": "bad", batch_field: []}),
+                finish_reason="stop",
+            )
+        ),
+    )
+
+    with pytest.raises(ProviderResponseError) as exc_info:
+        provider.structured_generate({}, output_model)
+
+    diagnostics = exc_info.value.diagnostics
+    serialized = json.dumps(diagnostics, ensure_ascii=False)
+    assert diagnostics["schema_error_kind"] == "too_short"
+    assert diagnostics["schema_error_field_paths"] == [batch_field]
+    assert diagnostics["expected_output_schema"] == output_model.__name__
+    assert "batch_id" not in serialized
+    assert "secret-test-key" not in serialized
 
 
 @pytest.mark.parametrize("status_code", [401, 403, 429, 500])
@@ -656,6 +727,70 @@ def test_openai_compatible_provider_http_error_does_not_leak_key(status_code: in
 
     assert "HTTP" in str(exc_info.value)
     assert "secret-test-key" not in str(exc_info.value)
+
+
+def test_openai_compatible_provider_retries_one_transient_http_response() -> None:
+    client = SequenceHttpClient(
+        [
+            FakeResponse(503, {}),
+            _chat_response(json.dumps(_event_json(), ensure_ascii=False)),
+        ]
+    )
+    provider = OpenAICompatibleLLMProvider(api_key="secret-test-key", http_client=client)
+
+    proposal = provider.structured_generate({}, EventProposalV1)
+
+    assert proposal.proposal_id == "proposal-1"
+    assert len(client.requests) == 2
+
+
+def test_openai_compatible_provider_retries_one_rate_limit_response() -> None:
+    client = SequenceHttpClient(
+        [
+            FakeResponse(429, {}),
+            _chat_response(json.dumps(_event_json(), ensure_ascii=False)),
+        ]
+    )
+    provider = OpenAICompatibleLLMProvider(api_key="secret-test-key", http_client=client)
+
+    proposal = provider.structured_generate({}, EventProposalV1)
+
+    assert proposal.proposal_id == "proposal-1"
+    assert len(client.requests) == 2
+
+
+@pytest.mark.parametrize("status_code", [400, 401, 403, 404])
+def test_openai_compatible_provider_does_not_retry_nontransient_http_errors(
+    status_code: int,
+) -> None:
+    client = SequenceHttpClient(
+        [
+            FakeResponse(status_code, {}),
+            _chat_response(json.dumps(_event_json(), ensure_ascii=False)),
+        ]
+    )
+    provider = OpenAICompatibleLLMProvider(api_key="secret-test-key", http_client=client)
+
+    with pytest.raises(ProviderHttpError) as exc_info:
+        provider.structured_generate({}, EventProposalV1)
+
+    assert exc_info.value.diagnostics == {
+        "http_status_code": status_code,
+        "request_attempts": 1,
+    }
+    assert len(client.requests) == 1
+
+
+def test_openai_compatible_provider_keeps_final_http_diagnostics_sanitized() -> None:
+    client = SequenceHttpClient([FakeResponse(429, {}), FakeResponse(429, {})])
+    provider = OpenAICompatibleLLMProvider(api_key="secret-test-key", http_client=client)
+
+    with pytest.raises(ProviderHttpError) as exc_info:
+        provider.structured_generate({}, EventProposalV1)
+
+    assert exc_info.value.diagnostics == {"http_status_code": 429, "request_attempts": 2}
+    assert "secret-test-key" not in str(exc_info.value)
+    assert len(client.requests) == 2
 
 
 def test_openai_compatible_provider_timeout_does_not_leak_key() -> None:

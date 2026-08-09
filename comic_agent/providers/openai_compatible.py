@@ -80,6 +80,14 @@ class ProviderResponseError(ValueError):
         self.diagnostics = diagnostics
 
 
+class ProviderHttpError(ValueError):
+    """Sanitized HTTP provider error with status-only diagnostics."""
+
+    def __init__(self, message: str, diagnostics: ProviderDiagnostics) -> None:
+        super().__init__(message)
+        self.diagnostics = diagnostics
+
+
 class ProviderTimeoutError(TimeoutError):
     """Sanitized timeout error that records only request-level metadata."""
 
@@ -141,10 +149,16 @@ class OpenAICompatibleLLMProvider:
             payload["response_format"] = {"type": "json_object"}
 
         try:
-            response = self._post_with_one_timeout_retry(payload)
+            response, request_attempts = self._post_with_one_timeout_retry(payload)
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            raise ValueError(self._classify_http_status_error(exc.response.status_code)) from exc
+            raise ProviderHttpError(
+                self._classify_http_status_error(exc.response.status_code),
+                diagnostics={
+                    "http_status_code": exc.response.status_code,
+                    "request_attempts": request_attempts,
+                },
+            ) from exc
         except httpx.ConnectError as exc:
             raise ValueError(self._classify_connect_error(exc)) from exc
         except httpx.NetworkError as exc:
@@ -176,6 +190,7 @@ class OpenAICompatibleLLMProvider:
         try:
             return output_model.model_validate(payload)
         except ValidationError as exc:
+            diagnostics.update(self._schema_validation_diagnostics(exc, output_model))
             raise ProviderResponseError(
                 (
                     self._max_output_tokens_error_message()
@@ -185,8 +200,34 @@ class OpenAICompatibleLLMProvider:
                 diagnostics=diagnostics,
             ) from exc
 
-    def _post_with_one_timeout_retry(self, payload: dict[str, Any]) -> httpx.Response:
-        """Retry one transient request timeout for proposal-only generation."""
+    def _schema_validation_diagnostics(
+        self,
+        exc: ValidationError,
+        output_model: type[BaseModel],
+    ) -> ProviderDiagnostics:
+        """Return schema-only Pydantic metadata without invalid values or response content."""
+
+        field_paths: list[str] = []
+        error_kinds: list[str] = []
+        for error in exc.errors(include_input=False):
+            error_type = error.get("type")
+            if isinstance(error_type, str):
+                error_kinds.append(error_type)
+            location = error.get("loc")
+            if not isinstance(location, tuple):
+                continue
+            path_parts = [str(item) for item in location if isinstance(item, (str, int))]
+            if path_parts:
+                field_paths.append(".".join(path_parts))
+        unique_kinds = sorted(set(error_kinds))
+        return {
+            "schema_error_kind": unique_kinds[0] if len(unique_kinds) == 1 else "multiple",
+            "schema_error_field_paths": sorted(set(field_paths)),
+            "expected_output_schema": output_model.__name__,
+        }
+
+    def _post_with_one_timeout_retry(self, payload: dict[str, Any]) -> tuple[httpx.Response, int]:
+        """Retry one timeout or transient HTTP response without exposing its body."""
 
         headers = {
             "Content-Type": "application/json",
@@ -194,20 +235,21 @@ class OpenAICompatibleLLMProvider:
         }
         for request_attempt in range(1, MAX_TIMEOUT_ATTEMPTS + 1):
             try:
-                return self._http_client.post(
+                response = self._http_client.post(
                     f"{self._base_url}/chat/completions",
                     headers=headers,
                     json=payload,
                     timeout=self._timeout_seconds,
                 )
+                if self._is_retryable_http_status(response.status_code):
+                    if request_attempt < MAX_TIMEOUT_ATTEMPTS:
+                        continue
+                return response, request_attempt
             except httpx.TimeoutException as exc:
                 if request_attempt == MAX_TIMEOUT_ATTEMPTS:
                     timeout_kind = self._timeout_kind(exc)
                     raise ProviderTimeoutError(
-                        (
-                            f"LLM provider {timeout_kind} timeout after "
-                            f"{request_attempt} attempts"
-                        ),
+                        (f"LLM provider {timeout_kind} timeout after {request_attempt} attempts"),
                         diagnostics={
                             "timeout_kind": timeout_kind,
                             "timeout_seconds": self._timeout_seconds,
@@ -215,6 +257,11 @@ class OpenAICompatibleLLMProvider:
                         },
                     ) from exc
         raise AssertionError("timeout retry loop exited unexpectedly")
+
+    def _is_retryable_http_status(self, status_code: int) -> bool:
+        """Retry temporary capacity responses once, never auth or malformed requests."""
+
+        return status_code == 429 or status_code >= 500
 
     def _timeout_kind(self, exc: httpx.TimeoutException) -> str:
         """Return a safe, phase-level timeout label without provider details."""
@@ -260,10 +307,31 @@ class OpenAICompatibleLLMProvider:
                     f"{user_prompt}\n\n"
                     f"Output schema: {schema_name}\n"
                     f"Output contract: {schema_json}\n"
+                    f"{self._format_recovery_instruction(input_context, schema_name)}"
                     f"Input context: {context_json}"
                 ),
             },
         ]
+
+    def _format_recovery_instruction(self, input_context: object, schema_name: str) -> str:
+        """Return a fixed, source-free correction instruction for one schema retry."""
+
+        if not isinstance(input_context, dict):
+            return ""
+        if input_context.get("output_recovery") != "schema_validation":
+            return ""
+        batch_field = {
+            "EventProposalBatchV1": "events",
+            "EntityProposalBatchV1": "entities",
+            "ClaimProposalBatchV1": "claims",
+        }.get(schema_name)
+        if batch_field is None:
+            return ""
+        return (
+            "Format recovery instruction: Return exactly one "
+            f"{schema_name} JSON object. Return no markdown, explanation, reasoning, or alternate "
+            f"schema. Include a non-empty {batch_field} array and every required field.\n\n"
+        )
 
     def _compact_output_contract(self, output_model: type[BaseModel]) -> dict[str, object]:
         """Return a small, reference-free schema guide derived from Pydantic."""
