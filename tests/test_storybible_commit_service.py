@@ -82,6 +82,7 @@ def profile_update(
     project_id: str = "project-a",
     canonical_name: str | None = None,
     aliases: list[str] | None = None,
+    revision: int = 1,
     evidence_refs: list[EvidenceRefV1] | None = None,
 ) -> ProfileUpdateProposalV1:
     evidence = evidence_refs or [EvidenceRefV1(chunk_id="chunk-a")]
@@ -91,6 +92,7 @@ def profile_update(
         entity_kind="PERSON",
         canonical_name=canonical_name or f"Name {profile_id}",
         aliases=aliases or [],
+        revision=revision,
         evidence_refs=evidence,
     )
     return ProfileUpdateProposalV1(
@@ -111,6 +113,7 @@ def state_update(
     valid_until_order: int | None = 4,
     valid_from_event_id: str | None = None,
     valid_until_event_id: str | None = None,
+    revision: int = 1,
     evidence_refs: list[EvidenceRefV1] | None = None,
 ) -> StateUpdateProposalV1:
     evidence = evidence_refs or [EvidenceRefV1(chunk_id="chunk-a")]
@@ -123,6 +126,7 @@ def state_update(
         valid_until_event_id=valid_until_event_id,
         valid_from_order=valid_from_order,
         valid_until_order=valid_until_order,
+        revision=revision,
         evidence_refs=evidence,
     )
     return StateUpdateProposalV1(
@@ -374,6 +378,140 @@ def test_repeated_approved_plan_is_idempotent(
 
     assert second == first
     assert table_counts(session) == counts_after_first == (1, 0, 0, 0, 1)
+
+
+def test_retry_committed_plan_ignores_canonical_identity_changes_after_its_commit(
+    storybible_store: tuple[Session, StoryBibleRepository],
+) -> None:
+    """A matching committed retry is a no-op even when its old name was later reused."""
+
+    session, repository = storybible_store
+    service = CommitService(ChunkLookup(chunk()))
+    original_plan = plan(
+        profile_update(
+            profile_id="profile-a",
+            canonical_name="Alice",
+            revision=1,
+        )
+    )
+    rename_plan = plan(
+        profile_update(
+            profile_id="profile-a",
+            canonical_name="Alicia",
+            revision=2,
+        ),
+        commit_plan_id="plan-2",
+        content_hash="hash-2",
+    )
+    reuse_plan = plan(
+        profile_update(profile_id="profile-b", canonical_name="Alice"),
+        commit_plan_id="plan-3",
+        content_hash="hash-3",
+    )
+    service.commit_storybible_plan(original_plan, repository)
+    service.commit_storybible_plan(rename_plan, repository)
+    service.commit_storybible_plan(reuse_plan, repository)
+    counts_before_retry = table_counts(session)
+
+    assert service.commit_storybible_plan(original_plan, repository) == original_plan
+    assert table_counts(session) == counts_before_retry == (2, 0, 0, 0, 3)
+    assert repository.get_profile("project-a", "profile-a") == rename_plan.updates[0].profile
+    assert repository.get_profile("project-a", "profile-b") == reuse_plan.updates[0].profile
+
+
+def test_retry_committed_plan_ignores_canonical_state_changes_after_its_commit(
+    storybible_store: tuple[Session, StoryBibleRepository],
+) -> None:
+    """A matching committed retry is a no-op after its old temporal slot is reused."""
+
+    session, repository = storybible_store
+    service = CommitService(ChunkLookup(chunk()))
+    original_plan = plan(
+        profile_update(),
+        state_update(
+            state_id="state-a",
+            value="market",
+            valid_from_order=1,
+            valid_until_order=5,
+        ),
+    )
+    replacement_plan = plan(
+        state_update(
+            state_id="state-a",
+            value="station",
+            valid_from_order=1,
+            valid_until_order=5,
+            revision=2,
+        ),
+        commit_plan_id="plan-2",
+        content_hash="hash-2",
+    )
+    reuse_plan = plan(
+        state_update(
+            state_id="state-b",
+            value="station",
+            valid_from_order=1,
+            valid_until_order=5,
+        ),
+        commit_plan_id="plan-3",
+        content_hash="hash-3",
+    )
+    service.commit_storybible_plan(original_plan, repository)
+    service.commit_storybible_plan(replacement_plan, repository)
+    service.commit_storybible_plan(reuse_plan, repository)
+    counts_before_retry = table_counts(session)
+
+    assert service.commit_storybible_plan(original_plan, repository) == original_plan
+    assert table_counts(session) == counts_before_retry == (1, 2, 0, 0, 3)
+
+
+def test_committed_plan_short_circuit_rejects_altered_payload(
+    storybible_store: tuple[Session, StoryBibleRepository],
+) -> None:
+    """A committed plan id/hash cannot bypass exact persisted-payload matching."""
+
+    session, repository = storybible_store
+    service = CommitService(ChunkLookup(chunk()))
+    original_plan = plan(profile_update(canonical_name="Alice"))
+    service.commit_storybible_plan(original_plan, repository)
+    counts_before = table_counts(session)
+    altered_plan = plan(profile_update(canonical_name="Mallory"))
+
+    with pytest.raises(ValueError, match="content_hash"):
+        service.commit_storybible_plan(altered_plan, repository)
+
+    assert table_counts(session) == counts_before
+
+
+def test_committed_plan_short_circuit_rejects_wrong_project(
+    storybible_store: tuple[Session, StoryBibleRepository],
+) -> None:
+    """A globally reused committed plan id cannot be replayed through another project."""
+
+    session, repository = storybible_store
+    service = CommitService(ChunkLookup(chunk(), chunk("chunk-b", "project-b")))
+    original_plan = plan(profile_update(canonical_name="Alice"))
+    service.commit_storybible_plan(original_plan, repository)
+    counts_before = table_counts(session)
+    wrong_project_plan = CommitPlanV1(
+        commit_plan_id=original_plan.commit_plan_id,
+        project_id="project-b",
+        source_proposal_id=original_plan.source_proposal_id,
+        content_hash=original_plan.content_hash,
+        updates=[
+            profile_update(
+                profile_id="profile-b",
+                project_id="project-b",
+                evidence_refs=[EvidenceRefV1(chunk_id="chunk-b")],
+            )
+        ],
+        evidence_refs=[EvidenceRefV1(chunk_id="chunk-b")],
+    )
+
+    with pytest.raises(ValueError, match="commit_plan_id"):
+        service.commit_storybible_plan(wrong_project_plan, repository)
+
+    assert table_counts(session) == counts_before
 
 
 def test_commit_rejects_reused_plan_id_before_canonical_writes(

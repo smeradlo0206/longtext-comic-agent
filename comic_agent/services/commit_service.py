@@ -30,8 +30,14 @@ class CommitService:
 
         validator = StoryBibleValidator(self._evidence_lookup)
         validator.validate_commit_plan(plan)
+        committed_plan = repository.get_matching_committed_plan(plan)
+        if committed_plan is not None:
+            return committed_plan
         repository.preflight_commit_plan(plan)
         with repository.commit_unit_of_work():
+            committed_plan = repository.get_matching_committed_plan(plan)
+            if committed_plan is not None:
+                return committed_plan
             effective_plan = repository.save_candidate_plan(plan)
             repository.preflight_commit_plan(effective_plan)
             validator.validate_commit_plan(

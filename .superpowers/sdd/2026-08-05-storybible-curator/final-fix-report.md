@@ -107,3 +107,46 @@ is not installed in this environment. All commands used the worktree's existing 
   tables or new database uniqueness constraints.
 - The only verification warning is the pre-existing Starlette `TestClient` deprecation
   notice regarding httpx; it is unrelated to this fix wave.
+
+## Residual P1 follow-up: committed retry after canonical replacement
+
+### Root cause
+
+The initial atomic/canonical-context fix still ran canonical snapshot validation for an
+exact plan whose stored candidate row was already `COMMITTED`. This made historical plan
+payloads compete with facts introduced later. The reproduced identity sequence was:
+
+1. commit profile A as `Alice` at revision 1;
+2. rename A to `Alicia` at revision 2;
+3. commit profile B as `Alice`;
+4. retry the exact revision-1 plan.
+
+Step 4 incorrectly raised a duplicate-identity error even though revision gating made the
+retry a no-op. The same ordering defect applied to replaced temporal state followed by
+reuse of the replacement value in another state.
+
+### RED/GREEN evidence
+
+- RED: `test_retry_committed_plan_ignores_canonical_identity_changes_after_its_commit`
+  failed at canonical snapshot validation with `duplicate StoryBible identity belongs to
+  multiple profiles`.
+- Existing/new guard characterizations for an altered payload and a wrong-project replay
+  passed before the change, establishing the security/idempotency behavior that the fix
+  had to preserve.
+- GREEN: the repository now returns a stored plan early only when its row is already
+  `COMMITTED`, its project and content hash match, and its complete serialized payload is
+  identical. `CommitService` checks this before canonical snapshot validation and repeats
+  the check inside the unit of work to close a concurrent status-transition window.
+- GREEN focused: four tests passed covering identity replacement/reuse retry, temporal
+  replacement/reuse retry, altered-payload rejection, and wrong-project rejection.
+
+### Follow-up verification
+
+- Full pytest: **114 passed, 1 skipped** (the explicit opt-in live-provider smoke test).
+- Ruff: **passed**.
+- mypy: **passed** for 47 source files.
+- `git diff --check`: **passed** with only Windows line-ending notices.
+- No provider or external network call was made.
+
+No new compatibility or migration concern was introduced; this change only restores
+idempotent behavior for already-committed, exactly matching plan retries.

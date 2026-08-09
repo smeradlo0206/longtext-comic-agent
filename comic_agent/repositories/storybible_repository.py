@@ -169,6 +169,16 @@ class StoryBibleRepository:
         )
         return None if row is None else self._plan_from_row(row)
 
+    def get_matching_committed_plan(self, plan: CommitPlanV1) -> CommitPlanV1 | None:
+        """Return an exact committed retry while rejecting id or payload substitution."""
+
+        row = self._session.get(CandidateCommitPlanModel, plan.commit_plan_id)
+        if row is None or row.status != "COMMITTED":
+            return None
+        if row.project_id != plan.project_id or row.content_hash != plan.content_hash:
+            raise ValueError("commit_plan_id already belongs to a different plan")
+        return self._require_matching_plan(row, plan)
+
     def get_plan_by_content_hash(
         self, project_id: str, content_hash: str
     ) -> CommitPlanV1 | None:
