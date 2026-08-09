@@ -3,6 +3,7 @@
 from typing import cast
 
 import httpx
+from pydantic import SecretStr
 
 from comic_agent.providers.llm import OutputModelT
 
@@ -14,7 +15,7 @@ class OpenAICompatibleProvider:
         self,
         *,
         base_url: str,
-        api_key: str,
+        api_key: SecretStr,
         model: str,
         timeout_seconds: float = 60,
         transport: httpx.BaseTransport | None = None,
@@ -36,7 +37,7 @@ class OpenAICompatibleProvider:
         payload["model"] = self._model
         payload["response_format"] = {"type": "json_object"}
         headers = {
-            "Authorization": f"Bearer {self._api_key}",
+            "Authorization": f"Bearer {self._api_key.get_secret_value()}",
             "Content-Type": "application/json",
         }
 

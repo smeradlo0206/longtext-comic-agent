@@ -4,7 +4,7 @@ from typing import Literal
 
 import httpx
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, SecretStr, ValidationError
 
 from comic_agent.config import Settings
 from comic_agent.providers.openai_compatible import OpenAICompatibleProvider
@@ -37,7 +37,7 @@ def test_openai_provider_posts_json_request_with_key_only_in_authorization_heade
     transport, requests = _transport()
     provider = OpenAICompatibleProvider(
         base_url="https://api.example/v1/",
-        api_key="test-api-key",
+        api_key=SecretStr("test-api-key"),
         model="deepseek-v4-pro",
         transport=transport,
     )
@@ -64,7 +64,7 @@ def test_openai_provider_validates_message_content_through_output_model() -> Non
     transport, _ = _transport('{"answer":42}')
     provider = OpenAICompatibleProvider(
         base_url="https://api.example/v1",
-        api_key="test-api-key",
+        api_key=SecretStr("test-api-key"),
         model="deepseek-v4-pro",
         transport=transport,
     )
@@ -85,9 +85,76 @@ def test_settings_load_openai_compatible_provider_environment(
     settings = Settings(_env_file=None)
 
     assert settings.llm_base_url == "https://api.example/v1"
-    assert settings.llm_api_key == "test-api-key"
+    assert settings.llm_api_key.get_secret_value() == "test-api-key"
     assert settings.storybible_model == "deepseek-v4-pro"
     assert settings.llm_timeout_seconds == 60.0
+
+
+def test_settings_redacts_llm_api_key_from_repr_and_model_dump(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "credential-that-must-stay-secret"
+    monkeypatch.setenv("LLM_API_KEY", secret)
+
+    settings = Settings(_env_file=None)
+
+    assert isinstance(settings.llm_api_key, SecretStr)
+    assert secret not in repr(settings)
+    assert secret not in repr(settings.model_dump())
+    assert settings.model_dump(mode="json")["llm_api_key"] == "**********"
+
+
+def test_openai_provider_rejects_malformed_top_level_json() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"not-json", request=request)
+
+    provider = OpenAICompatibleProvider(
+        base_url="https://api.example/v1",
+        api_key=SecretStr("test-api-key"),
+        model="deepseek-v4-pro",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(json.JSONDecodeError):
+        provider.structured_generate(
+            {"messages": [{"role": "user", "content": "x"}]},
+            OutputModel,
+        )
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ([], "provider response must be a JSON object"),
+        ({}, "provider response must contain at least one choice"),
+        ({"choices": []}, "provider response must contain at least one choice"),
+        ({"choices": [None]}, "provider choice must be a JSON object"),
+        ({"choices": [{}]}, "provider choice must contain a message object"),
+        (
+            {"choices": [{"message": {}}]},
+            "provider message content must be a JSON string",
+        ),
+    ],
+)
+def test_openai_provider_rejects_malformed_response_envelopes(
+    payload: object,
+    message: str,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload, request=request)
+
+    provider = OpenAICompatibleProvider(
+        base_url="https://api.example/v1",
+        api_key=SecretStr("test-api-key"),
+        model="deepseek-v4-pro",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(ValueError, match=f"^{message}$"):
+        provider.structured_generate(
+            {"messages": [{"role": "user", "content": "x"}]},
+            OutputModel,
+        )
 
 
 def test_live_openai_compatible_connectivity_when_explicitly_enabled() -> None:

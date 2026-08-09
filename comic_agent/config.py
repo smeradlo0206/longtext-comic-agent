@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,7 +24,10 @@ class Settings(BaseSettings):
         default="https://api.deepseek.com/v1",
         validation_alias="LLM_BASE_URL",
     )
-    llm_api_key: str = Field(default="", validation_alias="LLM_API_KEY")
+    llm_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias="LLM_API_KEY",
+    )
     storybible_model: str = Field(
         default="deepseek-v4-pro",
         validation_alias="STORYBIBLE_MODEL",
