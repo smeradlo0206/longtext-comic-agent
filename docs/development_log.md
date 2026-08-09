@@ -55,6 +55,21 @@ remain evidence-backed through `EvidenceRefV1`.
   isolation, bounded context, retrieval, commit validation, idempotency, API behavior,
   provider request shaping, and migration compatibility.
 
+### 2026-08-09 Final consistency hardening
+
+- StoryBible plan promotion now uses one unit of work for every canonical update and the
+  candidate plan's `COMMITTED` transition; a later database failure restores the prior
+  candidate state and rolls back earlier canonical flushes.
+- Commit validation now includes project canonical profiles/states, rejecting identity
+  collisions and incompatible overlapping state facts introduced by separate plans.
+- State owners and both relationship endpoints must resolve to a profile owned by the
+  plan project or created in that same plan.
+- StoryBible V1 identifiers and names now enforce the 128/255-character persistence
+  limits, and `StoryBibleUpdateV1` is included in JSON Schema export.
+- Migration note: this pre-release V1 contract hardening requires no new Alembic revision
+  because migration `0004_storybible_resources` already carries those storage lengths;
+  no database shape or payload representation changed.
+
 ### Test Policy
 
 Normal unit and regression tests use deterministic fakes or `httpx.MockTransport`; they

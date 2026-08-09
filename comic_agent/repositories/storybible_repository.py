@@ -1,5 +1,8 @@
 """Project-scoped persistence for StoryBible resources and candidate plans."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -47,6 +50,31 @@ class StoryBibleRepository:
 
     def __init__(self, session: Session) -> None:
         self._session = session
+        self._atomic_write_depth = 0
+
+    @contextmanager
+    def commit_unit_of_work(self) -> Iterator[None]:
+        """Commit all enclosed StoryBible writes together or roll them all back."""
+
+        if self._atomic_write_depth:
+            raise RuntimeError("nested StoryBible commit units of work are not supported")
+        self._atomic_write_depth = 1
+        try:
+            yield
+            self._session.commit()
+        except Exception:
+            self._session.rollback()
+            raise
+        finally:
+            self._atomic_write_depth = 0
+
+    def _finish_write(self) -> None:
+        """Flush inside a commit unit of work; otherwise preserve standalone commits."""
+
+        if self._atomic_write_depth:
+            self._session.flush()
+        else:
+            self._session.commit()
 
     def save_candidate_plan(self, plan: CommitPlanV1) -> CommitPlanV1:
         """Persist a candidate once per project and deterministic content hash."""
@@ -80,8 +108,10 @@ class StoryBibleRepository:
             )
         )
         try:
-            self._session.commit()
+            self._finish_write()
         except IntegrityError as error:
+            if self._atomic_write_depth:
+                raise
             self._session.rollback()
             existing_hash = self._session.scalar(
                 select(CandidateCommitPlanModel).where(
@@ -125,7 +155,7 @@ class StoryBibleRepository:
             raise RuntimeError("candidate plan was not persisted")
         if row.status != "COMMITTED":
             row.status = "COMMITTED"
-            self._session.commit()
+            self._finish_write()
         return self._plan_from_row(row)
 
     def get_plan(self, project_id: str, plan_id: str) -> CommitPlanV1 | None:
@@ -153,7 +183,7 @@ class StoryBibleRepository:
         return None if row is None else self._plan_from_row(row)
 
     def preflight_commit_plan(self, plan: CommitPlanV1) -> None:
-        """Reject global identity collisions before any plan update is written."""
+        """Reject global resource and profile-reference conflicts before writes."""
 
         existing_plan = self._session.get(CandidateCommitPlanModel, plan.commit_plan_id)
         if existing_plan is not None and (
@@ -161,6 +191,13 @@ class StoryBibleRepository:
             or existing_plan.content_hash != plan.content_hash
         ):
             raise ValueError("commit_plan_id already belongs to a different plan")
+
+        planned_profile_ids = {
+            update.profile.profile_id
+            for update in plan.updates
+            if isinstance(update, ProfileUpdateProposalV1)
+        }
+        referenced_profile_ids: set[str] = set()
 
         for proposed_update in plan.updates:
             resource = self._unwrap_update(proposed_update)
@@ -191,6 +228,22 @@ class StoryBibleRepository:
                 )
             if stored_project_id is not None:
                 self._guard_project(stored_project_id, resource.project_id)
+            if isinstance(resource, StoryEntityStateV1):
+                referenced_profile_ids.add(resource.profile_id)
+            elif isinstance(resource, StoryRelationshipV1):
+                referenced_profile_ids.update(
+                    (resource.source_profile_id, resource.target_profile_id)
+                )
+
+        for profile_id in sorted(referenced_profile_ids - planned_profile_ids):
+            stored_project_id = self._session.scalar(
+                select(StoryEntityProfileModel.project_id).where(
+                    StoryEntityProfileModel.profile_id == profile_id
+                )
+            )
+            if stored_project_id is None:
+                raise ValueError(f"canonical update references nonexistent profile: {profile_id}")
+            self._guard_project(stored_project_id, plan.project_id)
 
     def get_profile(self, project_id: str, profile_id: str) -> StoryEntityProfileV1 | None:
         """Return one profile only when it belongs to the requested project."""
@@ -212,6 +265,16 @@ class StoryBibleRepository:
             .order_by(StoryEntityProfileModel.profile_id)
         ).all()
         return [self._profile_from_row(row) for row in rows]
+
+    def list_states(self, project_id: str) -> list[StoryEntityStateV1]:
+        """Return all canonical states for deterministic commit validation."""
+
+        rows = self._session.scalars(
+            select(StoryEntityStateModel)
+            .where(StoryEntityStateModel.project_id == project_id)
+            .order_by(StoryEntityStateModel.state_id)
+        ).all()
+        return [StoryEntityStateV1.model_validate(row.payload) for row in rows]
 
     def find_profiles(self, project_id: str, query: str) -> list[StoryEntityProfileV1]:
         """Find exact case-insensitive canonical-name or alias matches in one project."""
@@ -342,8 +405,10 @@ class StoryBibleRepository:
             )
             self._session.add(row)
             try:
-                self._session.commit()
+                self._finish_write()
             except IntegrityError:
+                if self._atomic_write_depth:
+                    raise
                 self._session.rollback()
                 if self._session.get(StoryEntityProfileModel, profile.profile_id) is None:
                     raise
@@ -374,7 +439,7 @@ class StoryBibleRepository:
             )
             .execution_options(synchronize_session=False)
         )
-        self._session.commit()
+        self._finish_write()
         row = self._session.scalar(
             select(StoryEntityProfileModel)
             .where(StoryEntityProfileModel.profile_id == profile.profile_id)
@@ -399,8 +464,10 @@ class StoryBibleRepository:
             )
             self._session.add(row)
             try:
-                self._session.commit()
+                self._finish_write()
             except IntegrityError:
+                if self._atomic_write_depth:
+                    raise
                 self._session.rollback()
                 if self._session.get(StoryEntityStateModel, state.state_id) is None:
                     raise
@@ -432,7 +499,7 @@ class StoryBibleRepository:
             )
             .execution_options(synchronize_session=False)
         )
-        self._session.commit()
+        self._finish_write()
         row = self._session.scalar(
             select(StoryEntityStateModel)
             .where(StoryEntityStateModel.state_id == state.state_id)
@@ -460,8 +527,10 @@ class StoryBibleRepository:
             )
             self._session.add(row)
             try:
-                self._session.commit()
+                self._finish_write()
             except IntegrityError:
+                if self._atomic_write_depth:
+                    raise
                 self._session.rollback()
                 if (
                     self._session.get(
@@ -499,7 +568,7 @@ class StoryBibleRepository:
             )
             .execution_options(synchronize_session=False)
         )
-        self._session.commit()
+        self._finish_write()
         row = self._session.scalar(
             select(StoryRelationshipModel)
             .where(StoryRelationshipModel.relationship_id == relationship.relationship_id)
@@ -522,8 +591,10 @@ class StoryBibleRepository:
             )
             self._session.add(row)
             try:
-                self._session.commit()
+                self._finish_write()
             except IntegrityError:
+                if self._atomic_write_depth:
+                    raise
                 self._session.rollback()
                 if self._session.get(WorldRuleModel, rule.rule_id) is None:
                     raise
@@ -553,7 +624,7 @@ class StoryBibleRepository:
             )
             .execution_options(synchronize_session=False)
         )
-        self._session.commit()
+        self._finish_write()
         row = self._session.scalar(
             select(WorldRuleModel)
             .where(WorldRuleModel.rule_id == rule.rule_id)

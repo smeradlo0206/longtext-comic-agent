@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from comic_agent.database.base import Base
@@ -21,10 +21,12 @@ from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.storybible import (
     CommitPlanV1,
     ProfileUpdateProposalV1,
+    RelationshipUpdateProposalV1,
     StateUpdateProposalV1,
     StoryBibleCuratorProposalV1,
     StoryEntityProfileV1,
     StoryEntityStateV1,
+    StoryRelationshipV1,
 )
 from comic_agent.services.commit_service import CommitService
 from comic_agent.services.context_builder import ContextBuilder
@@ -78,6 +80,8 @@ def profile_update(
     *,
     profile_id: str = "profile-1",
     project_id: str = "project-a",
+    canonical_name: str | None = None,
+    aliases: list[str] | None = None,
     evidence_refs: list[EvidenceRefV1] | None = None,
 ) -> ProfileUpdateProposalV1:
     evidence = evidence_refs or [EvidenceRefV1(chunk_id="chunk-a")]
@@ -85,7 +89,8 @@ def profile_update(
         profile_id=profile_id,
         project_id=project_id,
         entity_kind="PERSON",
-        canonical_name=f"Name {profile_id}",
+        canonical_name=canonical_name or f"Name {profile_id}",
+        aliases=aliases or [],
         evidence_refs=evidence,
     )
     return ProfileUpdateProposalV1(
@@ -100,6 +105,7 @@ def state_update(
     *,
     state_id: str = "state-1",
     project_id: str = "project-a",
+    profile_id: str = "profile-1",
     value: str = "market",
     valid_from_order: int | None = 2,
     valid_until_order: int | None = 4,
@@ -111,7 +117,7 @@ def state_update(
     state = StoryEntityStateV1(
         state_id=state_id,
         project_id=project_id,
-        profile_id="profile-1",
+        profile_id=profile_id,
         state={"location": value},
         valid_from_event_id=valid_from_event_id,
         valid_until_event_id=valid_until_event_id,
@@ -127,15 +133,46 @@ def state_update(
     )
 
 
+def relationship_update(
+    *,
+    relationship_id: str = "relationship-1",
+    project_id: str = "project-a",
+    source_profile_id: str = "profile-1",
+    target_profile_id: str = "profile-2",
+) -> RelationshipUpdateProposalV1:
+    evidence = [EvidenceRefV1(chunk_id="chunk-a")]
+    relationship = StoryRelationshipV1(
+        relationship_id=relationship_id,
+        project_id=project_id,
+        source_profile_id=source_profile_id,
+        target_profile_id=target_profile_id,
+        relationship_type="ALLY",
+        evidence_refs=evidence,
+    )
+    return RelationshipUpdateProposalV1(
+        update_id=f"update-{relationship_id}",
+        project_id=project_id,
+        relationship=relationship,
+        evidence_refs=evidence,
+    )
+
+
 def plan(
-    *updates: ProfileUpdateProposalV1 | StateUpdateProposalV1,
+    *updates: (
+        ProfileUpdateProposalV1
+        | StateUpdateProposalV1
+        | RelationshipUpdateProposalV1
+    ),
+    commit_plan_id: str = "plan-1",
+    project_id: str = "project-a",
+    content_hash: str = "hash-1",
     evidence_refs: list[EvidenceRefV1] | None = None,
 ) -> CommitPlanV1:
     return CommitPlanV1(
-        commit_plan_id="plan-1",
-        project_id="project-a",
-        source_proposal_id="proposal-1",
-        content_hash="hash-1",
+        commit_plan_id=commit_plan_id,
+        project_id=project_id,
+        source_proposal_id=f"proposal-{commit_plan_id}",
+        content_hash=content_hash,
         updates=list(updates) or [profile_update()],
         evidence_refs=evidence_refs or [EvidenceRefV1(chunk_id="chunk-a")],
     )
@@ -239,6 +276,7 @@ def test_commit_allows_incompatible_state_values_at_distinct_event_only_anchors(
 ) -> None:
     session, repository = storybible_store
     event_anchored_plan = plan(
+        profile_update(),
         state_update(
             state_id="state-1",
             value="market",
@@ -259,7 +297,7 @@ def test_commit_allows_incompatible_state_values_at_distinct_event_only_anchors(
         event_anchored_plan, repository
     )
 
-    assert table_counts(session) == (0, 2, 0, 0, 1)
+    assert table_counts(session) == (1, 2, 0, 0, 1)
 
 
 def test_commit_rejects_incompatible_state_values_at_identical_event_only_anchor(
@@ -396,6 +434,175 @@ def test_commit_rejects_later_cross_project_resource_id_before_any_write(
         CommitService(ChunkLookup(chunk())).commit_storybible_plan(conflicting, repository)
 
     assert table_counts(session) == counts_before == (0, 1, 0, 0, 0)
+
+
+def test_commit_rolls_back_all_updates_and_status_when_a_later_write_fails(
+    storybible_store: tuple[Session, StoryBibleRepository],
+) -> None:
+    """A database failure after an earlier flush must leave no partial canonical plan."""
+
+    session, repository = storybible_store
+    approved_plan = plan(profile_update(), state_update())
+    repository.save_candidate_plan(approved_plan)
+    bind = session.get_bind()
+
+    def fail_state_insert(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        if statement.startswith("INSERT INTO story_entity_states"):
+            raise RuntimeError("injected state persistence failure")
+
+    event.listen(bind, "before_cursor_execute", fail_state_insert)
+    try:
+        with pytest.raises(RuntimeError, match="injected state persistence failure"):
+            CommitService(ChunkLookup(chunk())).commit_storybible_plan(
+                approved_plan, repository
+            )
+    finally:
+        event.remove(bind, "before_cursor_execute", fail_state_insert)
+
+    assert table_counts(session) == (0, 0, 0, 0, 1)
+    stored_plan = session.get(CandidateCommitPlanModel, approved_plan.commit_plan_id)
+    assert stored_plan is not None
+    assert stored_plan.status == "CANDIDATE"
+
+
+def test_commit_rejects_identity_collision_with_an_existing_canonical_profile(
+    storybible_store: tuple[Session, StoryBibleRepository],
+) -> None:
+    """A later plan must not claim an existing canonical name or alias for another id."""
+
+    session, repository = storybible_store
+    service = CommitService(ChunkLookup(chunk()))
+    service.commit_storybible_plan(
+        plan(profile_update(canonical_name="Xia Ming")), repository
+    )
+    counts_before = table_counts(session)
+    conflicting_plan = plan(
+        profile_update(
+            profile_id="profile-2",
+            canonical_name="Other Name",
+            aliases=["xia ming"],
+        ),
+        commit_plan_id="plan-2",
+        content_hash="hash-2",
+    )
+
+    with pytest.raises(ValueError, match="duplicate StoryBible identity"):
+        service.commit_storybible_plan(conflicting_plan, repository)
+
+    assert table_counts(session) == counts_before
+
+
+def test_commit_rejects_state_conflict_with_existing_canonical_interval(
+    storybible_store: tuple[Session, StoryBibleRepository],
+) -> None:
+    """A later plan must compare temporal facts with canonical state, not only itself."""
+
+    session, repository = storybible_store
+    service = CommitService(ChunkLookup(chunk()))
+    service.commit_storybible_plan(
+        plan(
+            profile_update(),
+            state_update(value="market", valid_from_order=1, valid_until_order=5),
+        ),
+        repository,
+    )
+    counts_before = table_counts(session)
+    conflicting_plan = plan(
+        state_update(
+            state_id="state-2",
+            value="station",
+            valid_from_order=3,
+            valid_until_order=7,
+        ),
+        commit_plan_id="plan-2",
+        content_hash="hash-2",
+    )
+
+    with pytest.raises(ValueError, match="incompatible"):
+        service.commit_storybible_plan(conflicting_plan, repository)
+
+    assert table_counts(session) == counts_before
+
+
+def test_commit_rejects_state_reference_to_nonexistent_profile(
+    storybible_store: tuple[Session, StoryBibleRepository],
+) -> None:
+    """A state cannot become canonical unless its profile is owned by the project."""
+
+    session, repository = storybible_store
+
+    with pytest.raises(ValueError, match="nonexistent profile"):
+        CommitService(ChunkLookup(chunk())).commit_storybible_plan(
+            plan(state_update(profile_id="missing-profile")), repository
+        )
+
+    assert table_counts(session) == (0, 0, 0, 0, 0)
+
+
+def test_commit_rejects_state_reference_to_cross_project_profile(
+    storybible_store: tuple[Session, StoryBibleRepository],
+) -> None:
+    """A state cannot reference a profile owned by another project."""
+
+    session, repository = storybible_store
+    repository.apply_canonical_update(
+        profile_update(profile_id="foreign-profile", project_id="project-b"),
+        "seed-plan",
+    )
+    counts_before = table_counts(session)
+
+    with pytest.raises(ValueError, match="another project"):
+        CommitService(ChunkLookup(chunk())).commit_storybible_plan(
+            plan(state_update(profile_id="foreign-profile")), repository
+        )
+
+    assert table_counts(session) == counts_before
+
+
+def test_commit_rejects_relationship_reference_to_nonexistent_profile(
+    storybible_store: tuple[Session, StoryBibleRepository],
+) -> None:
+    """Both relationship endpoints must resolve in the plan's project."""
+
+    session, repository = storybible_store
+
+    with pytest.raises(ValueError, match="nonexistent profile"):
+        CommitService(ChunkLookup(chunk())).commit_storybible_plan(
+            plan(profile_update(), relationship_update()), repository
+        )
+
+    assert table_counts(session) == (0, 0, 0, 0, 0)
+
+
+def test_commit_rejects_relationship_reference_to_cross_project_profile(
+    storybible_store: tuple[Session, StoryBibleRepository],
+) -> None:
+    """Relationship endpoints cannot cross project ownership boundaries."""
+
+    session, repository = storybible_store
+    repository.apply_canonical_update(
+        profile_update(profile_id="foreign-profile", project_id="project-b"),
+        "seed-plan",
+    )
+    counts_before = table_counts(session)
+
+    with pytest.raises(ValueError, match="another project"):
+        CommitService(ChunkLookup(chunk())).commit_storybible_plan(
+            plan(
+                profile_update(),
+                relationship_update(target_profile_id="foreign-profile"),
+            ),
+            repository,
+        )
+
+    assert table_counts(session) == counts_before
 
 
 def test_validate_proposal_enforces_proposal_plan_identity() -> None:

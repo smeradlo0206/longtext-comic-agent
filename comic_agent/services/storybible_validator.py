@@ -72,7 +72,13 @@ class StoryBibleValidator:
             )
         self.validate_commit_plan(proposal.commit_plan)
 
-    def validate_commit_plan(self, plan: CommitPlanV1) -> None:
+    def validate_commit_plan(
+        self,
+        plan: CommitPlanV1,
+        *,
+        canonical_profiles: Iterable[StoryEntityProfileV1] | None = None,
+        canonical_states: Iterable[StoryEntityStateV1] | None = None,
+    ) -> None:
         """Validate a complete plan before CommitService performs its first write."""
 
         self.validate_evidence_refs(
@@ -88,8 +94,38 @@ class StoryBibleValidator:
         identity_owners: dict[str, str] = {}
         state_values: dict[
             tuple[str, str],
-            list[tuple[int | None, int | None, str | None, str | None, Any]],
+            list[
+                tuple[
+                    str,
+                    int | None,
+                    int | None,
+                    str | None,
+                    str | None,
+                    Any,
+                ]
+            ],
         ] = {}
+
+        stored_profiles = list(canonical_profiles or ())
+        for profile in stored_profiles:
+            if profile.project_id != plan.project_id:
+                raise ValueError("canonical validation profile belongs to another project")
+            self._validate_profile_identity(profile, identity_owners)
+
+        stored_states = list(canonical_states or ())
+        for state in stored_states:
+            if state.project_id != plan.project_id:
+                raise ValueError("canonical validation state belongs to another project")
+            self._validate_state(state, state_values)
+
+        validate_profile_references = canonical_profiles is not None
+        owned_profile_ids = {
+            profile.profile_id for profile in stored_profiles
+        } | {
+            update.profile.profile_id
+            for update in plan.updates
+            if isinstance(update, ProfileUpdateProposalV1)
+        }
 
         for update in plan.updates:
             if update.update_id in update_ids:
@@ -123,8 +159,25 @@ class StoryBibleValidator:
             if isinstance(resource, StoryEntityProfileV1):
                 self._validate_profile_identity(resource, identity_owners)
             elif isinstance(resource, StoryEntityStateV1):
+                if (
+                    validate_profile_references
+                    and resource.profile_id not in owned_profile_ids
+                ):
+                    raise ValueError(
+                        f"state references nonexistent profile: {resource.profile_id}"
+                    )
                 self._validate_state(resource, state_values)
             elif isinstance(resource, StoryRelationshipV1):
+                if validate_profile_references:
+                    missing_profile_ids = {
+                        resource.source_profile_id,
+                        resource.target_profile_id,
+                    } - owned_profile_ids
+                    if missing_profile_ids:
+                        missing = ", ".join(sorted(missing_profile_ids))
+                        raise ValueError(
+                            f"relationship references nonexistent profile: {missing}"
+                        )
                 self._validate_interval(
                     resource.valid_from_order,
                     resource.valid_until_order,
@@ -199,7 +252,16 @@ class StoryBibleValidator:
         state: StoryEntityStateV1,
         state_values: dict[
             tuple[str, str],
-            list[tuple[int | None, int | None, str | None, str | None, Any]],
+            list[
+                tuple[
+                    str,
+                    int | None,
+                    int | None,
+                    str | None,
+                    str | None,
+                    Any,
+                ]
+            ],
         ],
     ) -> None:
         self._validate_interval(state.valid_from_order, state.valid_until_order, "state")
@@ -207,21 +269,26 @@ class StoryBibleValidator:
             fact_key = (state.profile_id, attribute_path)
             intervals = state_values.setdefault(fact_key, [])
             for (
+                existing_state_id,
                 valid_from_order,
                 valid_until_order,
                 valid_from_event_id,
                 valid_until_event_id,
                 existing_value,
             ) in intervals:
-                if existing_value != value and self._state_intervals_overlap(
-                    valid_from_order,
-                    valid_until_order,
-                    valid_from_event_id,
-                    valid_until_event_id,
-                    state.valid_from_order,
-                    state.valid_until_order,
-                    state.valid_from_event_id,
-                    state.valid_until_event_id,
+                if (
+                    existing_state_id != state.state_id
+                    and existing_value != value
+                    and self._state_intervals_overlap(
+                        valid_from_order,
+                        valid_until_order,
+                        valid_from_event_id,
+                        valid_until_event_id,
+                        state.valid_from_order,
+                        state.valid_until_order,
+                        state.valid_from_event_id,
+                        state.valid_until_event_id,
+                    )
                 ):
                     raise ValueError(
                         "incompatible state values for the same entity, attribute, "
@@ -229,6 +296,7 @@ class StoryBibleValidator:
                     )
             intervals.append(
                 (
+                    state.state_id,
                     state.valid_from_order,
                     state.valid_until_order,
                     state.valid_from_event_id,

@@ -31,12 +31,18 @@ class CommitService:
         validator = StoryBibleValidator(self._evidence_lookup)
         validator.validate_commit_plan(plan)
         repository.preflight_commit_plan(plan)
-        effective_plan = repository.save_candidate_plan(plan)
-        validator.validate_commit_plan(effective_plan)
-        repository.preflight_commit_plan(effective_plan)
-        for update in effective_plan.updates:
-            repository.apply_canonical_update(update, effective_plan.commit_plan_id)
-        return repository.save_committed_plan(effective_plan)
+        with repository.commit_unit_of_work():
+            effective_plan = repository.save_candidate_plan(plan)
+            repository.preflight_commit_plan(effective_plan)
+            validator.validate_commit_plan(
+                effective_plan,
+                canonical_profiles=repository.list_profiles(effective_plan.project_id),
+                canonical_states=repository.list_states(effective_plan.project_id),
+            )
+            for update in effective_plan.updates:
+                repository.apply_canonical_update(update, effective_plan.commit_plan_id)
+            committed_plan = repository.save_committed_plan(effective_plan)
+        return committed_plan
 
     def commit_source_document(self, document: SourceDocumentV1) -> SourceDocumentV1:
         """Return source document as already canonical after repository persistence."""

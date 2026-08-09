@@ -1,16 +1,22 @@
 """Regression tests for StoryBible contract validation."""
 
+import json
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
 from comic_agent.schemas import EvidenceRefV1
 from comic_agent.schemas.storybible import (
     CommitPlanV1,
+    ConflictV1,
+    ProfileUpdateProposalV1,
     StoryEntityProfileV1,
     StoryEntityStateV1,
     StoryRelationshipV1,
     WorldRuleV1,
 )
+from scripts.export_json_schemas import main as export_json_schemas
 
 EVIDENCE = [EvidenceRefV1(chunk_id="chunk-1")]
 
@@ -134,3 +140,102 @@ def test_temporal_resources_accept_open_ended_intervals(model: type, values: dic
 
     assert resource.valid_from_order == 1
     assert resource.valid_until_order is None
+
+
+def test_storybible_identifiers_reject_values_longer_than_database_contract() -> None:
+    """Public ids must fail validation before a VARCHAR(128) persistence boundary."""
+
+    profile = StoryEntityProfileV1(
+        profile_id="profile-1",
+        project_id="project-1",
+        entity_kind="PERSON",
+        canonical_name="Xia Ming",
+        evidence_refs=EVIDENCE,
+    )
+    update = ProfileUpdateProposalV1(
+        update_id="update-1",
+        project_id="project-1",
+        profile=profile,
+        evidence_refs=EVIDENCE,
+    )
+    plan = CommitPlanV1(
+        commit_plan_id="plan-1",
+        project_id="project-1",
+        source_proposal_id="proposal-1",
+        content_hash="hash-1",
+        updates=[update],
+        evidence_refs=EVIDENCE,
+    )
+    conflict = ConflictV1(
+        conflict_id="conflict-1",
+        project_id="project-1",
+        category="IDENTITY",
+        summary="Two profiles share a name.",
+        affected_update_ids=["update-1"],
+        evidence_refs=EVIDENCE,
+    )
+    cases = [
+        (profile, "profile_id"),
+        (profile, "project_id"),
+        (update, "update_id"),
+        (plan, "commit_plan_id"),
+        (plan, "source_proposal_id"),
+        (plan, "content_hash"),
+        (conflict, "conflict_id"),
+    ]
+
+    for instance, field_name in cases:
+        payload = instance.model_dump(mode="python")
+        payload[field_name] = "x" * 129
+        with pytest.raises(ValidationError, match="at most 128"):
+            type(instance).model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("model", "values", "field_name"),
+    [
+        (
+            StoryEntityProfileV1,
+            {
+                "profile_id": "profile-1",
+                "project_id": "project-1",
+                "entity_kind": "PERSON",
+                "evidence_refs": EVIDENCE,
+            },
+            "canonical_name",
+        ),
+        (
+            WorldRuleV1,
+            {
+                "rule_id": "rule-1",
+                "project_id": "project-1",
+                "statement": "Names bind magic.",
+                "evidence_refs": EVIDENCE,
+            },
+            "name",
+        ),
+    ],
+)
+def test_storybible_names_reject_values_longer_than_database_contract(
+    model: type,
+    values: dict,
+    field_name: str,
+) -> None:
+    """Canonical names must fail validation before a VARCHAR(255) boundary."""
+
+    values[field_name] = "x" * 256
+    with pytest.raises(ValidationError, match="at most 255"):
+        model(**values)
+
+
+def test_json_schema_export_includes_storybible_update_union(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The public update union must have a generated machine-readable contract."""
+
+    monkeypatch.chdir(tmp_path)
+    export_json_schemas()
+
+    schema_path = tmp_path / "schema_exports" / "StoryBibleUpdateV1.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    assert len(schema["anyOf"]) == 4

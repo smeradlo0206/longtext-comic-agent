@@ -43,9 +43,12 @@ bounded project context
 ```
 
 `CommitService` is the sole canonical write boundary. It validates `EvidenceRefV1`
-traceability and commit-plan invariants before applying updates through the repository.
-Migration `0004_storybible_resources` persists canonical profiles, states, relationships,
-world rules, and candidate commit plans.
+traceability, project-owned profile references, and plan-wide plus already-canonical
+identity/temporal invariants before applying updates through the repository. Canonical
+updates and the plan's `COMMITTED` transition share one repository unit of work: any
+later constraint or persistence failure rolls the entire promotion back. Migration
+`0004_storybible_resources` persists canonical profiles, states, relationships, world
+rules, and candidate commit plans.
 
 ## Startup Phase Boundary
 

@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from comic_agent.schemas import (
     AgentRunV1,
@@ -31,6 +31,7 @@ from comic_agent.schemas import (
     StoryBeatV1,
     StoryBibleContextV1,
     StoryBibleCuratorProposalV1,
+    StoryBibleUpdateV1,
     StoryEntityProfileV1,
     StoryEntityStateV1,
     StoryRelationshipV1,
@@ -82,6 +83,15 @@ def main() -> None:
             json.dumps(model.model_json_schema(), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+    update_path = output_dir / "StoryBibleUpdateV1.json"
+    update_path.write_text(
+        json.dumps(
+            TypeAdapter(StoryBibleUpdateV1).json_schema(),
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
 if __name__ == "__main__":
