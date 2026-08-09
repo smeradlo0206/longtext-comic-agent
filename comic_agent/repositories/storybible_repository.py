@@ -191,6 +191,16 @@ class StoryBibleRepository:
         )
         return None if row is None else self._profile_from_row(row)
 
+    def list_profiles(self, project_id: str) -> list[StoryEntityProfileV1]:
+        """Return canonical profiles owned by one project in stable id order."""
+
+        rows = self._session.scalars(
+            select(StoryEntityProfileModel)
+            .where(StoryEntityProfileModel.project_id == project_id)
+            .order_by(StoryEntityProfileModel.profile_id)
+        ).all()
+        return [self._profile_from_row(row) for row in rows]
+
     def find_profiles(self, project_id: str, query: str) -> list[StoryEntityProfileV1]:
         """Find exact case-insensitive canonical-name or alias matches in one project."""
 
