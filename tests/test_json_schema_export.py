@@ -1,5 +1,29 @@
 import json
 
+from comic_agent.schemas import (
+    NarrativeAnalysisWindowPlanV1,
+    NarrativeAnalysisWindowV1,
+    RelationshipAssertionPolarity,
+    RelationshipContextEventRefV1,
+    RelationshipDirectionality,
+    RelationshipDomain,
+    RelationshipEvidenceBasis,
+    RelationshipKind,
+    RelationshipParticipantKind,
+    RelationshipParticipantRefV1,
+    RelationshipResolutionStatus,
+    RelationshipSignalEffect,
+    RelationshipSignalProposalBatchV1,
+    RelationshipSignalProposalV1,
+    RelationshipSourceSpeakerRefV1,
+    RelationshipSupportLevel,
+    RelationshipTemporalAnchorV1,
+    StateChangeAttributePath,
+    StateChangeEventRefV1,
+    StateChangeProposalBatchV1,
+    StateChangeTargetKind,
+    StateChangeTargetRefV1,
+)
 from scripts import export_json_schemas
 
 
@@ -16,11 +40,46 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     assert (output_dir / "ClaimProposalBatchV1.json").exists()
     assert (output_dir / "ClaimProposalV1.json").exists()
     assert (output_dir / "KnowledgeStateProposalV1.json").exists()
+    assert (output_dir / "KnowledgeStateProposalBatchV1.json").exists()
+    assert (output_dir / "KnowledgeStateEvaluationReportV1.json").exists()
+    assert (output_dir / "KnowledgeStateEvaluationReportRequestV1.json").exists()
+    assert (output_dir / "KnowledgeStateEvaluationRunFailureV1.json").exists()
+    assert (output_dir / "KnowledgeStateEvaluationFailureDiagnosticsV1.json").exists()
+    assert (output_dir / "StateChangeProposalV1.json").exists()
+    assert (output_dir / "StateChangeProposalBatchV1.json").exists()
+    assert (output_dir / "StateChangeEventRefV1.json").exists()
+    assert (output_dir / "StateChangeTargetRefV1.json").exists()
+    assert (output_dir / "NarrativeAnalysisResultV1.json").exists()
+    assert (output_dir / "NarrativeAnalysisWindowPlanV1.json").exists()
+    assert (output_dir / "NarrativeAnalysisWindowV1.json").exists()
+    assert (output_dir / "RelationshipParticipantRefV1.json").exists()
+    assert (output_dir / "RelationshipTemporalAnchorV1.json").exists()
+    assert (output_dir / "RelationshipContextEventRefV1.json").exists()
+    assert (output_dir / "RelationshipSignalProposalV1.json").exists()
+    assert (output_dir / "RelationshipSignalProposalBatchV1.json").exists()
 
     event_schema = json.loads((output_dir / "EventProposalV1.json").read_text(encoding="utf-8"))
     claim_schema = json.loads((output_dir / "ClaimProposalV1.json").read_text(encoding="utf-8"))
     knowledge_schema = json.loads(
         (output_dir / "KnowledgeStateProposalV1.json").read_text(encoding="utf-8")
+    )
+    state_change_schema = json.loads(
+        (output_dir / "StateChangeProposalV1.json").read_text(encoding="utf-8")
+    )
+    state_change_batch_schema = json.loads(
+        (output_dir / "StateChangeProposalBatchV1.json").read_text(encoding="utf-8")
+    )
+    result_schema = json.loads(
+        (output_dir / "NarrativeAnalysisResultV1.json").read_text(encoding="utf-8")
+    )
+    window_schema = json.loads(
+        (output_dir / "NarrativeAnalysisWindowV1.json").read_text(encoding="utf-8")
+    )
+    relationship_schema = json.loads(
+        (output_dir / "RelationshipSignalProposalV1.json").read_text(encoding="utf-8")
+    )
+    relationship_batch_schema = json.loads(
+        (output_dir / "RelationshipSignalProposalBatchV1.json").read_text(encoding="utf-8")
     )
     source_chunk_schema = json.loads(
         (output_dir / "SourceChunkV1.json").read_text(encoding="utf-8")
@@ -40,8 +99,81 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     assert "evidence_refs" in claim_schema["required"]
     assert claim_schema["additionalProperties"] is False
     assert "epistemic_status" in knowledge_schema["properties"]
+    assert "subject" in knowledge_schema["properties"]
+    assert "target" in knowledge_schema["properties"]
+    assert "epistemic_basis" in knowledge_schema["properties"]
     assert "evidence_refs" in knowledge_schema["required"]
     assert knowledge_schema["additionalProperties"] is False
+    assert state_change_schema["properties"]["schema_version"]["enum"] == [
+        "1.0",
+        "1.1",
+        "1.2",
+        "1.3",
+    ]
+    assert "event" in state_change_schema["properties"]
+    assert "target" in state_change_schema["properties"]
+    assert "new_value_evidence_indexes" in state_change_schema["properties"]
+    assert "persistence_evidence_indexes" in state_change_schema["properties"]
+    assert state_change_batch_schema["properties"]["schema_version"]["enum"] == [
+        "1.1",
+        "1.2",
+        "1.3",
+    ]
+    assert "appearance.clothing" in json.dumps(state_change_schema)
+    assert "appearance.hairstyle" in json.dumps(state_change_schema)
+    assert result_schema["properties"]["schema_version"]["enum"] == ["1.0", "1.1", "1.2", "1.3"]
+    assert "state_changes" in result_schema["properties"]
+    assert StateChangeEventRefV1.__name__ == "StateChangeEventRefV1"
+    assert StateChangeTargetRefV1.__name__ == "StateChangeTargetRefV1"
+    assert StateChangeProposalBatchV1.__name__ == "StateChangeProposalBatchV1"
+    assert NarrativeAnalysisWindowPlanV1.__name__ == "NarrativeAnalysisWindowPlanV1"
+    assert NarrativeAnalysisWindowV1.__name__ == "NarrativeAnalysisWindowV1"
+    assert window_schema["properties"]["schema_version"]["enum"] == [
+        "1.0",
+        "1.1",
+        "1.2",
+        "1.3",
+        "1.4",
+    ]
+    assert "owned_chunk_ids" in window_schema["properties"]
+    assert "parent_window_id" in window_schema["properties"]
+    assert relationship_schema["properties"]["schema_version"]["const"] == "1.0"
+    assert relationship_schema["properties"]["subject"]
+    assert relationship_schema["properties"]["counterpart"]
+    assert relationship_schema["properties"]["evidence_basis"]
+    assert relationship_schema["properties"]["temporal_anchor"]
+    assert relationship_batch_schema["properties"]["signals"]
+    assert "source-first" in relationship_schema["description"].lower()
+    relationship_text = json.dumps(relationship_schema, ensure_ascii=False)
+    for enum_value in (
+        "CHARACTER",
+        "ORGANIZATION",
+        "DIRECTED",
+        "SYMMETRIC",
+        "DENIAL",
+        "UNRESOLVED",
+        "EntityProposalV1",
+        "EventProposalV1",
+    ):
+        assert enum_value in relationship_text
+    assert "relationship_signals" not in result_schema["properties"]
+    assert RelationshipAssertionPolarity.DENIED == "DENIED"
+    assert RelationshipDirectionality.SYMMETRIC == "SYMMETRIC"
+    assert RelationshipDomain.TRUST == "TRUST"
+    assert RelationshipEvidenceBasis.NARRATED == "NARRATED"
+    assert RelationshipKind.TRUSTS == "TRUSTS"
+    assert RelationshipParticipantKind.CHARACTER == "CHARACTER"
+    assert RelationshipResolutionStatus.UNRESOLVED == "UNRESOLVED"
+    assert RelationshipSignalEffect.PRESENT == "PRESENT"
+    assert RelationshipSupportLevel.LIMITED == "LIMITED"
+    assert RelationshipSourceSpeakerRefV1.__name__ == "RelationshipSourceSpeakerRefV1"
+    assert RelationshipParticipantRefV1.__name__ == "RelationshipParticipantRefV1"
+    assert RelationshipTemporalAnchorV1.__name__ == "RelationshipTemporalAnchorV1"
+    assert RelationshipContextEventRefV1.__name__ == "RelationshipContextEventRefV1"
+    assert RelationshipSignalProposalV1.__name__ == "RelationshipSignalProposalV1"
+    assert RelationshipSignalProposalBatchV1.__name__ == "RelationshipSignalProposalBatchV1"
+    assert StateChangeTargetKind.LOCATION == "LOCATION"
+    assert StateChangeAttributePath.QUANTITY == "quantity"
     assert "char_start" in source_chunk_schema["properties"]
     assert "char_end" in source_chunk_schema["properties"]
     assert "checksum" in source_chunk_schema["properties"]

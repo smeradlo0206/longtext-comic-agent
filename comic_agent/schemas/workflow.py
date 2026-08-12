@@ -11,6 +11,8 @@ from comic_agent.schemas.narrative import (
     ClaimProposalV1,
     EntityProposalV1,
     EventProposalV1,
+    KnowledgeStateProposalV1,
+    StateChangeProposalV1,
 )
 
 
@@ -40,6 +42,7 @@ class NarrativeAnalysisWindowStatus(StrEnum):
     RUNNING = "RUNNING"
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
+    SPLIT = "SPLIT"
 
 
 class ProviderType(StrEnum):
@@ -67,16 +70,31 @@ class WorkflowRunV1(StrictBaseModel):
 class NarrativeAnalysisWindowPlanV1(StrictBaseModel):
     """Deterministic source chunk window planned before execution."""
 
-    schema_version: Literal["1.0", "1.1", "1.2"] = Field(
-        default="1.2",
-        description="Schema version. Versions 1.0 and 1.1 records remain readable.",
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4"] = Field(
+        default="1.4",
+        description=(
+            "Schema version. Historical 1.0 through 1.3 records remain readable; "
+            "1.4 adds deterministic output ownership."
+        ),
     )
     window_index: int = Field(ge=0, description="Zero-based window sequence.")
     chunk_ids: list[str] = Field(min_length=1, description="Ordered source chunk ids.")
+    owned_chunk_ids: list[str] = Field(
+        default_factory=list,
+        description="Source chunks whose proposals this window exclusively owns.",
+    )
 
 
 class NarrativeAnalysisWindowV1(NarrativeAnalysisWindowPlanV1):
     """Auditable state for one mode over one planned source window."""
+
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4"] = Field(
+        default="1.4",
+        description=(
+            "Schema version. Historical 1.0 through 1.3 window records remain readable; "
+            "1.4 adds deterministic split recovery ownership."
+        ),
+    )
 
     analysis_window_id: str = Field(description="Persistent analysis window id.")
     analysis_run_id: str = Field(description="Owning whole-document analysis run id.")
@@ -112,6 +130,24 @@ class NarrativeAnalysisWindowV1(NarrativeAnalysisWindowPlanV1):
         default=None,
         description="Failure category that triggered the current retry policy.",
     )
+    parent_window_id: str | None = Field(
+        default=None,
+        description="Parent window id for a deterministic split child.",
+    )
+    split_reason: str | None = Field(
+        default=None,
+        description="Sanitized reason recorded when this window is split.",
+    )
+
+    @model_validator(mode="after")
+    def normalize_owned_chunk_ids(self) -> "NarrativeAnalysisWindowV1":
+        if not self.owned_chunk_ids:
+            self.owned_chunk_ids = list(self.chunk_ids)
+        if len(self.owned_chunk_ids) != len(set(self.owned_chunk_ids)):
+            raise ValueError("owned_chunk_ids must be unique")
+        if not set(self.owned_chunk_ids).issubset(self.chunk_ids):
+            raise ValueError("owned_chunk_ids must be a subset of chunk_ids")
+        return self
 
 
 class NarrativeAnalysisRunV1(StrictBaseModel):
@@ -154,8 +190,14 @@ class NarrativeAnalysisProposalSourceV1(StrictBaseModel):
     schema_version: Literal["1.0"] = Field(default="1.0", description="Schema version.")
     mode: str = Field(description="NarrativeAnalyst mode that produced the proposal.")
     agent_run_id: str = Field(description="Auditable AgentRun id.")
-    proposal: EventProposalV1 | EntityProposalV1 | ClaimProposalV1 = Field(
-        description="Typed proposal to aggregate."
+    proposal: (
+        EventProposalV1
+        | EntityProposalV1
+        | ClaimProposalV1
+        | KnowledgeStateProposalV1
+        | StateChangeProposalV1
+    ) = (
+        Field(description="Typed proposal to aggregate.")
     )
 
 
@@ -183,14 +225,58 @@ class AggregatedClaimProposalV1(StrictBaseModel):
     evidence_refs: list[EvidenceRefV1] = Field(min_length=1, description="All retained evidence.")
 
 
+class AggregatedKnowledgeStateProposalV1(StrictBaseModel):
+    """Conservatively merged knowledge-state candidate with audit references."""
+
+    proposal: KnowledgeStateProposalV1 = Field(
+        description="Representative knowledge-state proposal."
+    )
+    agent_run_ids: list[str] = Field(min_length=1, description="Source AgentRun ids.")
+    evidence_refs: list[EvidenceRefV1] = Field(min_length=1, description="All retained evidence.")
+
+
+class AggregatedStateChangeProposalV1(StrictBaseModel):
+    """Conservatively merged State Change candidate with audit references."""
+
+    proposal: StateChangeProposalV1 = Field(
+        description="Representative State Change proposal."
+    )
+    agent_run_ids: list[str] = Field(min_length=1, description="Source AgentRun ids.")
+    evidence_refs: list[EvidenceRefV1] = Field(min_length=1, description="All retained evidence.")
+
+
 class NarrativeAnalysisResultV1(StrictBaseModel):
     """Typed, sanitized aggregate result for one whole-document task."""
 
-    schema_version: Literal["1.0"] = Field(default="1.0", description="Schema version.")
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3"] = Field(
+        default="1.3", description="Schema version; v1.0-v1.2 results remain readable."
+    )
     analysis_run_id: str = Field(description="Owning whole-document analysis run id.")
     events: list[AggregatedEventProposalV1] = Field(default_factory=list)
     entities: list[AggregatedEntityProposalV1] = Field(default_factory=list)
     claims: list[AggregatedClaimProposalV1] = Field(default_factory=list)
+    knowledge_states: list[AggregatedKnowledgeStateProposalV1] = Field(default_factory=list)
+    state_changes: list[AggregatedStateChangeProposalV1] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_legacy_result_version(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or "schema_version" in value:
+            return value
+        if "knowledge_states" not in value and any(
+            field in value for field in ("events", "entities", "claims")
+        ):
+            return {
+                **value,
+                "schema_version": "1.0",
+                "knowledge_states": [],
+                "state_changes": [],
+            }
+        if "state_changes" not in value and "knowledge_states" in value:
+            return {**value, "schema_version": "1.1", "state_changes": []}
+        if "state_changes" in value:
+            return {**value, "schema_version": "1.3"}
+        return {**value, "schema_version": "1.3"}
 
 
 class AgentInputRefV1(StrictBaseModel):

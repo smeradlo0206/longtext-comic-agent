@@ -9,6 +9,7 @@ from comic_agent.schemas.workflow import (
     AgentRunStatus,
     AgentRunV1,
     MockProviderResultV1,
+    NarrativeAnalysisResultV1,
     ProviderResultV1,
     ProviderType,
 )
@@ -225,6 +226,61 @@ def test_mock_provider_result_records_mock_event_output() -> None:
     assert result.provider_type == ProviderType.MOCK
     assert result.provider_name == "mock"
     assert result.structured_output["proposal_id"] == "proposal-1"
+
+
+def test_unversioned_legacy_analysis_result_defaults_to_empty_knowledge_states() -> None:
+    result = NarrativeAnalysisResultV1.model_validate(
+        {"analysis_run_id": "analysis-legacy", "events": [], "entities": [], "claims": []}
+    )
+
+    assert result.schema_version == "1.0"
+    assert result.knowledge_states == []
+
+
+def test_analysis_result_reads_legacy_payloads_and_defaults_state_changes() -> None:
+    v10 = NarrativeAnalysisResultV1.model_validate(
+        {"analysis_run_id": "analysis-v10", "events": [], "entities": [], "claims": []}
+    )
+    v11 = NarrativeAnalysisResultV1.model_validate(
+        {
+            "analysis_run_id": "analysis-v11",
+            "events": [],
+            "entities": [],
+            "claims": [],
+            "knowledge_states": [],
+        }
+    )
+    v12 = NarrativeAnalysisResultV1.model_validate(
+        {
+            "schema_version": "1.2",
+            "analysis_run_id": "analysis-v12",
+            "events": [],
+            "entities": [],
+            "claims": [],
+            "knowledge_states": [],
+            "state_changes": [],
+        }
+    )
+    current = NarrativeAnalysisResultV1(analysis_run_id="analysis-current")
+
+    assert v10.schema_version == "1.0"
+    assert v10.knowledge_states == []
+    assert v10.state_changes == []
+    assert v11.schema_version == "1.1"
+    assert v11.state_changes == []
+    assert v12.schema_version == "1.2"
+    assert current.schema_version == "1.3"
+    assert current.knowledge_states == []
+    assert current.state_changes == []
+
+
+def test_analysis_result_unversioned_state_changes_payload_reads_as_v13() -> None:
+    result = NarrativeAnalysisResultV1.model_validate(
+        {"analysis_run_id": "analysis-v13-unversioned", "state_changes": []}
+    )
+
+    assert result.schema_version == "1.3"
+    assert result.state_changes == []
 
 
 def test_workflow_schemas_reject_extra_fields() -> None:
