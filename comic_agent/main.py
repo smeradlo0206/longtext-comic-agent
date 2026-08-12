@@ -11,6 +11,7 @@ from comic_agent.api.agent_runs import router as agent_runs_router
 from comic_agent.api.demo import router as demo_router
 from comic_agent.api.documents import router as documents_router
 from comic_agent.api.health import router as health_router
+from comic_agent.api.knowledge_state_evaluation import router as knowledge_state_evaluation_router
 from comic_agent.api.projects import router as projects_router
 from comic_agent.api.settings import router as settings_router
 from comic_agent.api.storybible import router as storybible_router
@@ -50,6 +51,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(agent_runs_router)
     app.include_router(settings_router)
     app.include_router(demo_router)
+    app.include_router(knowledge_state_evaluation_router)
     web_console_directory = Path(__file__).resolve().parent.parent / "web_console"
     app.mount("/", StaticFiles(directory=web_console_directory, html=True), name="web-console")
     return app

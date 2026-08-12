@@ -8,7 +8,10 @@ from typing import Any
 from comic_agent.agents.event_extraction import EventExtractionAgent
 from comic_agent.config import Settings
 from comic_agent.providers.llm import LLMProvider
-from comic_agent.providers.openai_compatible import OpenAICompatibleLLMProvider
+from comic_agent.providers.openai_compatible import (
+    OpenAICompatibleLLMProvider,
+    build_openai_compatible_provider,
+)
 from comic_agent.repositories.agent_run_repository import AgentRunRepository
 from comic_agent.repositories.source_repository import SourceRepository
 from comic_agent.schemas.narrative import EventProposalBatchV1
@@ -104,19 +107,7 @@ class RealEventWorkflow:
         return RealEventWorkflowResult(agent_run=saved, proposal=proposal)
 
     def _build_provider(self) -> OpenAICompatibleLLMProvider:
-        api_key = (
-            self._settings.llm_api_key.get_secret_value()
-            if self._settings.llm_api_key is not None
-            else None
-        )
-        return OpenAICompatibleLLMProvider(
-            api_key=api_key,
-            base_url=self._settings.llm_base_url,
-            model=self._settings.llm_model,
-            response_format=self._settings.llm_response_format,
-            timeout_seconds=self._settings.llm_timeout_seconds,
-            max_output_tokens=self._settings.llm_max_output_tokens,
-        )
+        return build_openai_compatible_provider(self._settings)
 
     def _input_context_payload(self, context: AgentContext) -> dict[str, object]:
         return {

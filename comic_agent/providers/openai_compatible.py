@@ -4,6 +4,7 @@ import json
 import re
 import socket
 import ssl
+from collections.abc import Mapping
 from typing import Any, Protocol, TypeVar
 
 import httpx
@@ -67,6 +68,8 @@ class OpenAICompatibleProvider:
             raise ValueError("provider message content must be a JSON string")
         return content
 
+from comic_agent.config import Settings
+
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
 ProviderDiagnostics = dict[str, object]
 MAX_TIMEOUT_ATTEMPTS = 2
@@ -90,6 +93,14 @@ class ProviderHttpError(ValueError):
 
 class ProviderTimeoutError(TimeoutError):
     """Sanitized timeout error that records only request-level metadata."""
+
+    def __init__(self, message: str, diagnostics: ProviderDiagnostics) -> None:
+        super().__init__(message)
+        self.diagnostics = diagnostics
+
+
+class ProviderNetworkError(ValueError):
+    """Sanitized transport failure without URL, body, or credential details."""
 
     def __init__(self, message: str, diagnostics: ProviderDiagnostics) -> None:
         super().__init__(message)
@@ -148,6 +159,7 @@ class OpenAICompatibleLLMProvider:
         if self._response_format == "json_object":
             payload["response_format"] = {"type": "json_object"}
 
+        request_attempts = 1
         try:
             response, request_attempts = self._post_with_one_timeout_retry(payload)
             response.raise_for_status()
@@ -160,11 +172,18 @@ class OpenAICompatibleLLMProvider:
                 },
             ) from exc
         except httpx.ConnectError as exc:
-            raise ValueError(self._classify_connect_error(exc)) from exc
+            raise ProviderNetworkError(
+                self._classify_connect_error(exc),
+                diagnostics={"request_attempts": request_attempts},
+            ) from exc
         except httpx.NetworkError as exc:
-            raise ValueError("LLM provider network error") from exc
+            raise ProviderNetworkError(
+                "LLM provider network error", diagnostics={"request_attempts": request_attempts}
+            ) from exc
         except httpx.HTTPError as exc:
-            raise ValueError("LLM provider request error") from exc
+            raise ProviderNetworkError(
+                "LLM provider request error", diagnostics={"request_attempts": request_attempts}
+            ) from exc
 
         try:
             response_payload = response.json()
@@ -190,7 +209,7 @@ class OpenAICompatibleLLMProvider:
         try:
             return output_model.model_validate(payload)
         except ValidationError as exc:
-            diagnostics.update(self._schema_validation_diagnostics(exc, output_model))
+            diagnostics.update(self.schema_validation_diagnostics(exc, output_model))
             raise ProviderResponseError(
                 (
                     self._max_output_tokens_error_message()
@@ -200,15 +219,16 @@ class OpenAICompatibleLLMProvider:
                 diagnostics=diagnostics,
             ) from exc
 
-    def _schema_validation_diagnostics(
-        self,
+    @staticmethod
+    def schema_validation_diagnostics(
         exc: ValidationError,
-        output_model: type[BaseModel],
+        output_model: type[BaseModel] | str,
     ) -> ProviderDiagnostics:
         """Return schema-only Pydantic metadata without invalid values or response content."""
 
         field_paths: list[str] = []
         error_kinds: list[str] = []
+        rule_codes: list[str] = []
         for error in exc.errors(include_input=False):
             error_type = error.get("type")
             if isinstance(error_type, str):
@@ -219,12 +239,82 @@ class OpenAICompatibleLLMProvider:
             path_parts = [str(item) for item in location if isinstance(item, (str, int))]
             if path_parts:
                 field_paths.append(".".join(path_parts))
+            rule_code = OpenAICompatibleLLMProvider._schema_validation_rule_code(error)
+            if rule_code is not None:
+                rule_codes.append(rule_code)
         unique_kinds = sorted(set(error_kinds))
-        return {
+        diagnostics: ProviderDiagnostics = {
             "schema_error_kind": unique_kinds[0] if len(unique_kinds) == 1 else "multiple",
             "schema_error_field_paths": sorted(set(field_paths)),
-            "expected_output_schema": output_model.__name__,
+            "expected_output_schema": (
+                output_model if isinstance(output_model, str) else output_model.__name__
+            ),
         }
+        if rule_codes:
+            diagnostics["schema_error_rule_codes"] = sorted(set(rule_codes))
+        return diagnostics
+
+    @staticmethod
+    def _schema_validation_rule_code(error: Mapping[str, object]) -> str | None:
+        """Map only known static model rules to safe recovery labels."""
+
+        message = str(error.get("msg", ""))
+        known_rules = {
+            "for quantity must be numeric": "STATE_CHANGE_QUANTITY_MUST_BE_JSON_NUMBER",
+            "must be a JSON scalar": "STATE_CHANGE_VALUE_MUST_BE_SCALAR",
+            "cannot be blank": "STATE_CHANGE_VALUE_MUST_NOT_BE_BLANK",
+            "new_value must not be null": "STATE_CHANGE_NEW_VALUE_REQUIRED",
+            "old_value cannot use an unknown placeholder": (
+                "STATE_CHANGE_OLD_VALUE_MUST_NOT_BE_UNKNOWN"
+            ),
+            "attribute_path is incompatible with target_kind": (
+                "STATE_CHANGE_TARGET_KIND_ATTRIBUTE_PATH_MISMATCH"
+            ),
+            "contains an out-of-range index": "STATE_CHANGE_EVIDENCE_INDEX_OUT_OF_RANGE",
+            "new_value_evidence_indexes is required": "STATE_CHANGE_NEW_VALUE_EVIDENCE_REQUIRED",
+            "new_value_evidence_indexes must not be empty": (
+                "STATE_CHANGE_NEW_VALUE_EVIDENCE_REQUIRED"
+            ),
+            "new_value_evidence_indexes must not contain duplicate": (
+                "STATE_CHANGE_NEW_VALUE_EVIDENCE_DUPLICATE"
+            ),
+            "persistence_evidence_indexes is required": (
+                "STATE_CHANGE_PERSISTENCE_EVIDENCE_REQUIRED"
+            ),
+            "persistence_evidence_indexes must not contain duplicate": (
+                "STATE_CHANGE_PERSISTENCE_EVIDENCE_DUPLICATE"
+            ),
+            "persistent=false requires": "STATE_CHANGE_PERSISTENCE_INDEX_RULE",
+            "must not contain semantic duplicate": "STATE_CHANGE_SEMANTIC_DUPLICATE",
+            "must have unique proposal_id": "STATE_CHANGE_DUPLICATE_PROPOSAL_ID",
+            "requires event and target": "STATE_CHANGE_SOURCE_FIRST_REFERENCES_REQUIRED",
+            "BELIEVES, SUSPECTS, and DISBELIEVES must target WORLD_FACT or EVENT": (
+                "BELIEF_ATTITUDE_REQUIRES_WORLD_FACT_OR_EVENT"
+            ),
+            "v1.1 cannot include legacy": "V1_1_LEGACY_FIELDS_FORBIDDEN",
+            "UNRESOLVED target requires proposal_id and proposal_schema to be null": (
+                "TARGET_REFERENCE_MUST_STAY_UNRESOLVED"
+            ),
+            "UNRESOLVED event requires proposal_id and proposal_schema to be null": (
+                "EVENT_REFERENCE_MUST_STAY_UNRESOLVED"
+            ),
+            "RESOLVED event requires proposal_id and proposal_schema": (
+                "RESOLVED_EVENT_REQUIRES_CANDIDATE_PROPOSAL"
+            ),
+            "RESOLVED target requires proposal_id and proposal_schema": (
+                "RESOLVED_TARGET_REQUIRES_CANDIDATE_PROPOSAL"
+            ),
+            "target_kind and proposal_schema must match a candidate Proposal type": (
+                "TARGET_KIND_PROPOSAL_SCHEMA_MISMATCH"
+            ),
+            "supporting_claim_proposal_id requires CLAIM target or STATED/HEARD basis": (
+                "SUPPORTING_CLAIM_REQUIRES_SUPPORTED_LINK"
+            ),
+        }
+        for message_prefix, code in known_rules.items():
+            if message_prefix in message:
+                return code
+        return None
 
     def _post_with_one_timeout_retry(self, payload: dict[str, Any]) -> tuple[httpx.Response, int]:
         """Retry one timeout or transient HTTP response without exposing its body."""
@@ -318,19 +408,65 @@ class OpenAICompatibleLLMProvider:
 
         if not isinstance(input_context, dict):
             return ""
-        if input_context.get("output_recovery") != "schema_validation":
+        if input_context.get("output_recovery") not in {
+            "schema_validation",
+            "state_change_schema_recovery",
+        }:
             return ""
-        batch_field = {
-            "EventProposalBatchV1": "events",
-            "EntityProposalBatchV1": "entities",
-            "ClaimProposalBatchV1": "claims",
+        batch_contract = {
+            "EventProposalBatchV1": ("events", True),
+            "EntityProposalBatchV1": ("entities", True),
+            "ClaimProposalBatchV1": ("claims", True),
+            "KnowledgeStateProposalBatchV1": ("states", False),
+            "StateChangeProposalBatchV1": ("changes", False),
         }.get(schema_name)
-        if batch_field is None:
+        if batch_contract is None:
             return ""
+        batch_field, requires_non_empty_items = batch_contract
+        rule_codes = input_context.get("schema_error_rule_codes")
+        safe_rule_codes = (
+            sorted({item for item in rule_codes if isinstance(item, str)})
+            if isinstance(rule_codes, list)
+            else []
+        )
+        batch_instruction = (
+            f"Include a non-empty {batch_field} array and every required field."
+            if requires_non_empty_items
+            else (
+                "Include a states array and every required field for each item. "
+                "states may be empty only when no explicit, auditable knowledge state is supported."
+            )
+        )
+        knowledge_state_shape = ""
+        if schema_name == "KnowledgeStateProposalBatchV1":
+            knowledge_state_shape = (
+                ' For each v1.1 state, use this unresolved-reference shape: '
+                '{"schema_version":"1.1","subject":{"mention_text":"...",'
+                '"entity_proposal_id":null,"resolution_status":"UNRESOLVED"},'
+                '"target":{"target_kind":"WORLD_FACT","target_text":"...",'
+                '"proposal_id":null,"proposal_schema":null,'
+                '"resolution_status":"UNRESOLVED"},"valid_from":null,"valid_until":null}. '
+                'Do not emit legacy id fields. Use EVENT instead of WORLD_FACT only when '
+                'the target is a concrete occurrence.'
+            )
+        state_change_shape = ""
+        if schema_name == "StateChangeProposalBatchV1":
+            state_change_shape = (
+                " For every change, return a complete valid StateChangeProposalV1. "
+                "quantity old_value and new_value must be JSON numbers: correct 4; "
+                'wrong "4", "四", "四瓶", or {"count":4}. Do not coerce values, '
+                "drop other valid changes, or return a partial batch."
+            )
+        rule_hint = (
+            f" The previous output violated these safe schema rules: {', '.join(safe_rule_codes)}."
+            if safe_rule_codes
+            else ""
+        )
         return (
             "Format recovery instruction: Return exactly one "
             f"{schema_name} JSON object. Return no markdown, explanation, reasoning, or alternate "
-            f"schema. Include a non-empty {batch_field} array and every required field.\n\n"
+            f"schema. {batch_instruction}{rule_hint}{knowledge_state_shape}"
+            f"{state_change_shape}\n\n"
         )
 
     def _compact_output_contract(self, output_model: type[BaseModel]) -> dict[str, object]:
@@ -524,3 +660,17 @@ class OpenAICompatibleLLMProvider:
             causes.append(current)
             current = current.__cause__
         return causes
+
+
+def build_openai_compatible_provider(settings: Settings) -> OpenAICompatibleLLMProvider:
+    """Build the configured production provider from one authoritative settings object."""
+
+    api_key = settings.llm_api_key.get_secret_value() if settings.llm_api_key is not None else None
+    return OpenAICompatibleLLMProvider(
+        api_key=api_key,
+        base_url=settings.llm_base_url,
+        model=settings.llm_model,
+        response_format=settings.llm_response_format,
+        timeout_seconds=settings.llm_timeout_seconds,
+        max_output_tokens=settings.llm_max_output_tokens,
+    )

@@ -208,6 +208,8 @@ from comic_agent.schemas.narrative import (
     EntityProposalBatchV1,
     EventProposalBatchV1,
     EventProposalV1,
+    KnowledgeStateProposalBatchV1,
+    StateChangeProposalBatchV1,
 )
 
 
@@ -325,6 +327,72 @@ def _event_batch_json() -> dict[str, Any]:
     return {"batch_id": "event-batch-1", "events": [_event_json()]}
 
 
+def _knowledge_state_batch_json(*, target_kind: str) -> dict[str, Any]:
+    target_text = "山中有鬼" if target_kind == "WORLD_FACT" else "山中有鬼的传言"
+    return {
+        "batch_id": "knowledge-batch-1",
+        "states": [
+            {
+                "proposal_id": "knowledge-1",
+                "subject": {
+                    "mention_text": "林舟",
+                    "entity_proposal_id": None,
+                    "resolution_status": "UNRESOLVED",
+                },
+                "target": {
+                    "target_kind": target_kind,
+                    "target_text": target_text,
+                    "proposal_id": None,
+                    "proposal_schema": None,
+                    "resolution_status": "UNRESOLVED",
+                },
+                "epistemic_status": "DISBELIEVES",
+                "epistemic_basis": "STATED",
+                "reality_layer": "PRIMARY",
+                "evidence_refs": [{"chunk_id": "chunk-1", "quote_text": "不信山中有鬼"}],
+                "confidence": 0.9,
+            }
+        ],
+    }
+
+
+def _state_change_batch_json(*, quantity_value: object = 4) -> dict[str, Any]:
+    return {
+        "schema_version": "1.3",
+        "batch_id": "state-change-batch-1",
+        "changes": [
+            {
+                "schema_version": "1.3",
+                "proposal_id": "state-change-quantity-1",
+                "event": {
+                    "event_summary": "药瓶数量从六变为四",
+                    "event_proposal_id": None,
+                    "proposal_schema": None,
+                    "resolution_status": "UNRESOLVED",
+                },
+                "target": {
+                    "mention_text": "药瓶",
+                    "target_kind": "OBJECT",
+                    "entity_proposal_id": None,
+                    "proposal_schema": None,
+                    "resolution_status": "UNRESOLVED",
+                },
+                "attribute_path": "quantity",
+                "old_value": 6,
+                "new_value": quantity_value,
+                "persistent": False,
+                "reality_layer": "PRIMARY",
+                "evidence_refs": [
+                    {"chunk_id": "chunk-1", "quote_text": "药瓶数量从六变为四"}
+                ],
+                "new_value_evidence_indexes": [0],
+                "persistence_evidence_indexes": [],
+                "confidence": 0.9,
+            }
+        ],
+    }
+
+
 def _chat_response(
     content: Any,
     *,
@@ -344,6 +412,42 @@ def _chat_response(
     return FakeResponse(
         200,
         payload,
+    )
+
+
+@pytest.mark.parametrize(
+    ("message", "expected_code"),
+    [
+        (
+            "v1.2 old_value for quantity must be numeric",
+            "STATE_CHANGE_QUANTITY_MUST_BE_JSON_NUMBER",
+        ),
+        ("v1.2 new_value must be a JSON scalar", "STATE_CHANGE_VALUE_MUST_BE_SCALAR"),
+        (
+            "v1.2 new_value_evidence_indexes contains an out-of-range index",
+            "STATE_CHANGE_EVIDENCE_INDEX_OUT_OF_RANGE",
+        ),
+        (
+            "v1.2 persistent=false requires persistence_evidence_indexes to be empty",
+            "STATE_CHANGE_PERSISTENCE_INDEX_RULE",
+        ),
+        ("changes must have unique proposal_id values", "STATE_CHANGE_DUPLICATE_PROPOSAL_ID"),
+        (
+            "changes must not contain semantic duplicate state changes",
+            "STATE_CHANGE_SEMANTIC_DUPLICATE",
+        ),
+        (
+            "UNRESOLVED event requires proposal_id and proposal_schema to be null",
+            "EVENT_REFERENCE_MUST_STAY_UNRESOLVED",
+        ),
+    ],
+)
+def test_state_change_schema_rule_codes_are_safe_and_stable(
+    message: str, expected_code: str
+) -> None:
+    assert (
+        OpenAICompatibleLLMProvider._schema_validation_rule_code({"msg": message})
+        == expected_code
     )
 
 
@@ -456,6 +560,121 @@ def test_openai_compatible_provider_adds_fixed_schema_recovery_instruction() -> 
     assert "Format recovery instruction:" in user_message
     assert "exactly one EventProposalBatchV1 JSON object" in user_message
     assert "non-empty events array" in user_message
+
+
+def test_state_change_schema_recovery_instruction_is_numeric_and_source_free() -> None:
+    client = FakeHttpClient(
+        response=_chat_response(json.dumps(_state_change_batch_json(), ensure_ascii=False))
+    )
+    provider = OpenAICompatibleLLMProvider(api_key="secret-test-key", http_client=client)
+
+    recovered = provider.structured_generate(
+        {
+            "input_context": {
+                "output_recovery": "state_change_schema_recovery",
+                "schema_error_rule_codes": ["STATE_CHANGE_QUANTITY_MUST_BE_JSON_NUMBER"],
+                "source_chunks": [{"chunk_id": "chunk-1", "text": "敏感原文不应进入固定指令。"}],
+            }
+        },
+        StateChangeProposalBatchV1,
+    )
+
+    user_message = client.requests[0]["json"]["messages"][1]["content"]
+    assert recovered.changes[0].new_value == 4
+    assert "STATE_CHANGE_QUANTITY_MUST_BE_JSON_NUMBER" in user_message
+    assert "quantity old_value and new_value must be JSON numbers" in user_message
+    assert 'wrong "4", "四", "四瓶", or {"count":4}' in user_message
+    recovery_instruction = user_message.split("Input context:", 1)[0]
+    assert "敏感原文不应进入固定指令。" not in recovery_instruction
+
+
+def test_state_change_quantity_validation_exposes_only_safe_rule_code() -> None:
+    provider = OpenAICompatibleLLMProvider(
+        api_key="secret-test-key",
+        http_client=FakeHttpClient(
+            response=_chat_response(
+                json.dumps(_state_change_batch_json(quantity_value="4"), ensure_ascii=False)
+            )
+        ),
+    )
+
+    with pytest.raises(ProviderResponseError) as exc_info:
+        provider.structured_generate({}, StateChangeProposalBatchV1)
+
+    diagnostics = exc_info.value.diagnostics
+    assert diagnostics["schema_error_rule_codes"] == [
+        "STATE_CHANGE_QUANTITY_MUST_BE_JSON_NUMBER"
+    ]
+    assert "4" not in str(diagnostics)
+    assert "敏感" not in str(diagnostics)
+
+
+def test_provider_recovery_rejects_disbelief_of_claim_and_recovers_world_fact() -> (
+    None
+):
+    invalid_provider = OpenAICompatibleLLMProvider(
+        api_key="secret-test-key",
+        http_client=FakeHttpClient(
+            response=_chat_response(
+                json.dumps(_knowledge_state_batch_json(target_kind="CLAIM"), ensure_ascii=False)
+            )
+        ),
+    )
+    with pytest.raises(ProviderResponseError, match="failed schema validation") as exc_info:
+        invalid_provider.structured_generate({}, KnowledgeStateProposalBatchV1)
+    assert exc_info.value.diagnostics["expected_output_schema"] == "KnowledgeStateProposalBatchV1"
+    assert exc_info.value.diagnostics["schema_error_rule_codes"] == [
+        "BELIEF_ATTITUDE_REQUIRES_WORLD_FACT_OR_EVENT"
+    ]
+
+    client = FakeHttpClient(
+        response=_chat_response(
+            json.dumps(_knowledge_state_batch_json(target_kind="WORLD_FACT"), ensure_ascii=False)
+        )
+    )
+    recovery_provider = OpenAICompatibleLLMProvider(api_key="secret-test-key", http_client=client)
+
+    recovered = recovery_provider.structured_generate(
+        {
+            "input_context": {
+                "output_recovery": "schema_validation",
+                "source_chunks": [{"chunk_id": "chunk-1", "text": "Synthetic source."}],
+            }
+        },
+        KnowledgeStateProposalBatchV1,
+    )
+
+    user_message = client.requests[0]["json"]["messages"][1]["content"]
+    assert recovered.states[0].target.target_kind == "WORLD_FACT"
+    assert "exactly one KnowledgeStateProposalBatchV1 JSON object" in user_message
+    assert "states array" in user_message
+    assert "may be empty" in user_message
+
+
+def test_knowledge_state_schema_recovery_includes_safe_rule_codes_and_v11_shape() -> None:
+    client = FakeHttpClient(
+        response=_chat_response(
+            json.dumps(_knowledge_state_batch_json(target_kind="WORLD_FACT"), ensure_ascii=False)
+        )
+    )
+    provider = OpenAICompatibleLLMProvider(api_key="secret-test-key", http_client=client)
+
+    provider.structured_generate(
+        {
+            "input_context": {
+                "output_recovery": "schema_validation",
+                "schema_error_rule_codes": ["TARGET_REFERENCE_MUST_STAY_UNRESOLVED"],
+                "source_chunks": [{"chunk_id": "chunk-1", "text": "Synthetic source."}],
+            }
+        },
+        KnowledgeStateProposalBatchV1,
+    )
+
+    user_message = client.requests[0]["json"]["messages"][1]["content"]
+    assert "TARGET_REFERENCE_MUST_STAY_UNRESOLVED" in user_message
+    assert '"schema_version":"1.1"' in user_message
+    assert '"resolution_status":"UNRESOLVED"' in user_message
+    assert '"proposal_id":null' in user_message
 
 
 def test_openai_compatible_provider_extracts_markdown_wrapped_json() -> None:

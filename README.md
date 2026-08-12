@@ -52,7 +52,7 @@ Website-ready audit surfaces:
 - LLM status
 - Sanitized real eval summary
 - Narrative Analyst Console for `event_extraction`, `entity_extraction`, and
-  `claim_extraction`
+  `claim_extraction`, and `knowledge_state_extraction`
 
 Internal hosted demo console:
 
@@ -77,6 +77,10 @@ Internal hosted demo console:
   should read entity proposals from `proposal.entities[]`.
 - `claim_extraction` now returns `ClaimProposalBatchV1`; downstream consumers
   should read claim proposals from `proposal.claims[]`.
+- `knowledge_state_extraction` returns `KnowledgeStateProposalBatchV1`; an empty
+  `proposal.states[]` is a valid success and nonempty states retain source
+  EvidenceRef values. Unresolved subject, target, and temporal links are
+  intentionally preserved for a later linker rather than fabricated.
 - Fresh `entity_extraction` output uses Entity schema version `1.1`. The closed
   taxonomy is `CHARACTER`, `CREATURE`, `LOCATION`, `ORGANIZATION`, `OBJECT`,
   `ABILITY`, and `CONCEPT`; `creature_subtype` is set only for a source-supported
@@ -107,8 +111,8 @@ Internal hosted demo console:
   View Chapters, select the intended chunks, and verify the Selected input
   chunks preview before running. Full Proposal evidence quotes should match the
   selected input chunks.
-- The demo does not expose KnowledgeState, multi-agent orchestration, or
-  canonical StoryBible writes.
+- The demo exposes knowledge-state Proposal review only; it does not perform
+  multi-agent orchestration or canonical StoryBible writes.
 
 ## 项目文档
 

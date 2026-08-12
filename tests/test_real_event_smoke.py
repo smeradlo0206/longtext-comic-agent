@@ -238,6 +238,8 @@ def test_smoke_real_event_agent_summary_includes_sanitized_success_details(
     assert summary["char_range_matched"] is True
     assert "secret-test-key" not in serialized
     assert "林夏推开门" not in serialized
+
+
 def test_smoke_real_event_agent_summary_includes_sanitized_failure_diagnostics(
     tmp_path: Path,
     monkeypatch,
