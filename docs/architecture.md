@@ -17,6 +17,39 @@ The system separates semantic judgment from deterministic state control. Agents 
 
 TXT upload is parsed into `SourceDocumentV1`, `SourceChapterV1`, and `SourceChunkV1`. Chunks become the evidence anchor for proposals. Story proposals cannot become canonical without `CommitService` evidence validation.
 
+## StoryBible Curation Boundary
+
+The StoryBible Curator is proposal-only. It receives a `StoryBibleContextV1` and returns
+a schema-valid `StoryBibleCuratorProposalV1` with a candidate `CommitPlanV1`, conflicts,
+confidence, and evidence references. It neither owns repositories nor writes canonical
+story data. Its default configured model is `deepseek-v4-pro`, accessed only through the
+provider interface.
+
+`ContextBuilder` is the agent read boundary. It creates bounded, project-scoped context
+from selected source proposals and existing StoryBible resources; it does not expose a
+whole-database read to agents. `StoryBibleRepository` keeps retrieval project-scoped,
+including profile lookup, state-at-event lookup, and related state/relationship retrieval.
+The API rejects path/body or nested-resource project mismatches before curation.
+
+The proposed-to-canonical flow is:
+
+```text
+bounded project context
+-> StoryBible Curator candidate proposal
+-> evidence and invariant validation
+-> reviewed CommitPlanV1
+-> CommitService
+-> idempotent canonical StoryBible resources
+```
+
+`CommitService` is the sole canonical write boundary. It validates `EvidenceRefV1`
+traceability, project-owned profile references, and plan-wide plus already-canonical
+identity/temporal invariants before applying updates through the repository. Canonical
+updates and the plan's `COMMITTED` transition share one repository unit of work: any
+later constraint or persistence failure rolls the entire promotion back. Migration
+`0004_storybible_resources` persists canonical profiles, states, relationships, world
+rules, and candidate commit plans.
+
 ## Startup Phase Boundary
 
 This phase implements the source evidence chain, schema contracts, mock providers, API shell, database shell, docs, and tests. Full story compilation, image generation, QA repair loops, and frontend workflows are planned but not implemented.

@@ -1,17 +1,10 @@
-"""Minimal commit service gate for proposal validation."""
+"""Canonical commit boundary for evidence-backed story data."""
 
-from typing import Protocol
-
-from comic_agent.schemas.base import EvidenceRefV1
+from comic_agent.repositories.storybible_repository import StoryBibleRepository
 from comic_agent.schemas.narrative import EventProposalV1
 from comic_agent.schemas.source import SourceChapterV1, SourceChunkV1, SourceDocumentV1
-
-
-class EvidenceLookup(Protocol):
-    """Repository capability needed by CommitService."""
-
-    def get_chunk(self, chunk_id: str) -> SourceChunkV1 | None:
-        """Return a source chunk by id."""
+from comic_agent.schemas.storybible import CommitPlanV1
+from comic_agent.services.storybible_validator import EvidenceLookup, StoryBibleValidator
 
 
 class CommitService:
@@ -23,8 +16,39 @@ class CommitService:
     def validate_story_proposal_evidence(self, proposal: EventProposalV1) -> None:
         """Ensure every evidence reference resolves to a known SourceChunk."""
 
-        for evidence_ref in proposal.evidence_refs:
-            self._validate_evidence_ref(evidence_ref)
+        StoryBibleValidator(self._evidence_lookup).validate_evidence_refs(
+            proposal.evidence_refs,
+            owner=f"event proposal {proposal.proposal_id}",
+        )
+
+    def commit_storybible_plan(
+        self,
+        plan: CommitPlanV1,
+        repository: StoryBibleRepository,
+    ) -> CommitPlanV1:
+        """Validate a complete plan, then promote its updates idempotently."""
+
+        validator = StoryBibleValidator(self._evidence_lookup)
+        validator.validate_commit_plan(plan)
+        committed_plan = repository.get_matching_committed_plan(plan)
+        if committed_plan is not None:
+            return committed_plan
+        repository.preflight_commit_plan(plan)
+        with repository.commit_unit_of_work():
+            committed_plan = repository.get_matching_committed_plan(plan)
+            if committed_plan is not None:
+                return committed_plan
+            effective_plan = repository.save_candidate_plan(plan)
+            repository.preflight_commit_plan(effective_plan)
+            validator.validate_commit_plan(
+                effective_plan,
+                canonical_profiles=repository.list_profiles(effective_plan.project_id),
+                canonical_states=repository.list_states(effective_plan.project_id),
+            )
+            for update in effective_plan.updates:
+                repository.apply_canonical_update(update, effective_plan.commit_plan_id)
+            committed_plan = repository.save_committed_plan(effective_plan)
+        return committed_plan
 
     def commit_source_document(self, document: SourceDocumentV1) -> SourceDocumentV1:
         """Return source document as already canonical after repository persistence."""
@@ -46,23 +70,3 @@ class CommitService:
 
         self.validate_story_proposal_evidence(proposal)
         raise NotImplementedError("Story proposal canonical commits are not implemented in phase 1")
-
-    def _validate_evidence_ref(self, evidence_ref: EvidenceRefV1) -> None:
-        chunk = self._evidence_lookup.get_chunk(evidence_ref.chunk_id)
-        if chunk is None:
-            raise ValueError(f"EvidenceRef chunk not found: {evidence_ref.chunk_id}")
-
-        if evidence_ref.quote_start is None:
-            if evidence_ref.quote_text is not None and evidence_ref.quote_text not in chunk.text:
-                raise ValueError("EvidenceRef quote_text does not match source chunk")
-            return
-
-        quote_end = evidence_ref.quote_end
-        if quote_end is None:
-            raise ValueError("EvidenceRef quote range is incomplete")
-        if quote_end > len(chunk.text):
-            raise ValueError("EvidenceRef quote range exceeds source chunk")
-
-        source_quote = chunk.text[evidence_ref.quote_start : quote_end]
-        if evidence_ref.quote_text is not None and evidence_ref.quote_text != source_quote:
-            raise ValueError("EvidenceRef quote_text does not match source chunk")

@@ -23,3 +23,51 @@ All V1 schemas use `schema_version = "1.0"` and live in `comic_agent/schemas`.
 | AgentRunV1 | Immutable record of one agent execution. | run id, project, input chunk, agent, status | Links one input chunk to an optional output proposal | API, audit services | Agent runner | N/A |
 
 Field types are implemented directly in Pydantic. The JSON Schema export script is the authoritative machine-readable contract.
+
+## StoryBible Contracts and Compatibility
+
+The StoryBible is an additive set of public `schema_version = "1.0"` contracts. Its
+canonical resource types are `StoryEntityProfileV1`, `StoryEntityStateV1`,
+`StoryRelationshipV1`, and `WorldRuleV1`. Every canonical resource carries
+project ownership, revision, canonical status, and one or more `EvidenceRefV1` values.
+States and relationships additionally record a valid story-time interval.
+
+`ProfileUpdateProposalV1`, `StateUpdateProposalV1`,
+`RelationshipUpdateProposalV1`, and `WorldRuleUpdateProposalV1` are the candidate
+updates collected by `StoryBibleUpdateV1`. `ConflictV1` records reviewable conflicts;
+`CommitPlanV1` is the reviewed, evidence-backed plan eligible for promotion; and
+`StoryBibleCuratorProposalV1` is the candidate-only curator result. `StoryBibleContextV1`
+is the bounded input contract for that curator.
+
+StoryBible identifiers are limited to 128 characters and canonical/alias names to 255
+characters. These Pydantic constraints match the `VARCHAR(128)` and `VARCHAR(255)`
+persistence boundaries so invalid provider output is rejected before a database write.
+`StoryBibleUpdateV1` is exported as its own JSON Schema union alongside the concrete
+update models.
+
+`CommitService` is the only canonical owner: it validates evidence and plan-wide
+invariants, persists the candidate plan, applies valid updates idempotently through the
+repository, and marks the plan committed. Agents emit proposals only and cannot write
+canonical StoryBible facts directly.
+
+Commit validation is seeded with the project's existing canonical profiles and states.
+This prevents later plans from introducing duplicate identities or incompatible
+overlapping state values. State and relationship profile references must resolve either
+to a project-owned canonical profile or to a profile created in the same plan. All
+canonical writes and the committed-plan status transition occur in one transaction.
+
+The contracts remain backward-compatible additions to existing V1 schemas. The
+corresponding persistence migration is `0004_storybible_resources`; it adds the
+canonical StoryBible resource tables and candidate commit-plan storage. The Pydantic
+models in `comic_agent/schemas` remain the only schema source of truth, and the JSON
+Schema export script produces the machine-readable contracts.
+
+### 2026-08-09 V1 contract hardening and migration note
+
+The StoryBible contracts remain at `schema_version = "1.0"` because this correction is
+part of the initial, unreleased V1 feature branch required by the implementation plan.
+The accepted input domain is tightened only for identifiers longer than 128 characters
+and names longer than 255 characters, values the existing `0004_storybible_resources`
+columns could not portably store. No Alembic data migration is required: migration
+`0004` already defines the matching database lengths, and no column or stored-payload
+shape changed.

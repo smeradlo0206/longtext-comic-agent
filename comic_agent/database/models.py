@@ -127,3 +127,80 @@ class AgentRunModel(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
+
+
+class StoryEntityProfileModel(Base):
+    """Stored canonical StoryBible entity profile."""
+
+    __tablename__ = "story_entity_profiles"
+
+    profile_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    entity_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    canonical_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    last_plan_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class StoryEntityStateModel(Base):
+    """Stored canonical, time-bound StoryBible entity state."""
+
+    __tablename__ = "story_entity_states"
+
+    state_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    profile_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    valid_from_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    valid_until_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    last_plan_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class StoryRelationshipModel(Base):
+    """Stored canonical, time-bound relationship between StoryBible profiles."""
+
+    __tablename__ = "story_relationships"
+
+    relationship_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    source_profile_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    target_profile_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    valid_from_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    valid_until_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    last_plan_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class WorldRuleModel(Base):
+    """Stored canonical StoryBible world rule."""
+
+    __tablename__ = "world_rules"
+
+    rule_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    last_plan_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class CandidateCommitPlanModel(Base):
+    """Stored candidate plan awaiting CommitService processing."""
+
+    __tablename__ = "candidate_commit_plans"
+    __table_args__ = (
+        UniqueConstraint("project_id", "content_hash", name="uq_commit_plan_project_hash"),
+    )
+
+    commit_plan_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    source_proposal_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )

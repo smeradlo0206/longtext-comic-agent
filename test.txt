@@ -1,0 +1,329 @@
+StoryBible Curator 测试流程
+============================
+
+说明
+----
+本文件记录 StoryBible Curator 的本地测试流程，不包含 API 密钥。
+请使用 worktree 目录执行命令：
+
+  E:\study\3spring\107杯\longtext-comic-agent\.worktrees\storybible-curator
+
+所有 PowerShell 窗口均需切换到该目录：
+
+  cd E:\study\3spring\107杯\longtext-comic-agent\.worktrees\storybible-curator
+
+一、运行自动化测试
+------------------
+
+  .\.venv\Scripts\python.exe -m pytest -p no:cacheprovider
+
+预期：114 passed, 1 skipped（真实模型连通性测试默认跳过）。
+
+如果遇到 PermissionError / WinError 5，使用自定义临时目录：
+
+  .\.venv\Scripts\python.exe -m pytest -p no:cacheprovider --basetemp=./.pytest_tmp
+
+只测试真实模型连通性：
+
+  $env:RUN_LIVE_LLM_SMOKE_TEST="1"
+  .\.venv\Scripts\python.exe -m pytest `
+    tests\test_openai_compatible_provider.py `
+    -k live -v -p no:cacheprovider
+
+预期：1 passed。
+如果失败，先检查 VPN、代理、API 地址、密钥和模型名称。
+
+二、检查 API 配置
+----------------
+
+确保 worktree 根目录存在 .env 文件，并配置：
+
+  LLM_BASE_URL=https://api.llm.ustc.edu.cn/v1
+  LLM_API_KEY=你的密钥
+  STORYBIBLE_MODEL=deepseek-v4-pro
+  LLM_TIMEOUT_SECONDS=120
+
+注意：LLM_TIMEOUT_SECONDS 建议设为 120 或更高。Curator prompt 包含
+完整 JSON Schema，首次响应可能较慢。关闭 VPN 通常可以直连 API。
+
+检查配置是否被正确读取（不会输出密钥）：
+
+  .\.venv\Scripts\python.exe -c "from comic_agent.config import Settings; s=Settings(); print('base_url=', s.llm_base_url); print('model=', s.storybible_model); print('api_key_loaded=', bool(s.llm_api_key.get_secret_value())); print('timeout=', s.llm_timeout_seconds)"
+
+预期输出：
+
+  base_url= https://api.llm.ustc.edu.cn/v1
+  model= deepseek-v4-pro
+  api_key_loaded= True
+  timeout= 120.0
+
+三、启动本地 API
+----------------
+
+使用 SQLite（推荐）：
+
+  $env:DATABASE_URL="sqlite+pysqlite:///./comic_agent.db"
+  .\.venv\Scripts\python.exe -m uvicorn `
+    comic_agent.main:app `
+    --host 127.0.0.1 `
+    --port 8000 `
+    --log-level debug
+
+保持这个窗口运行。另开 PowerShell 窗口执行后续请求。
+
+浏览器测试页面：
+
+  http://127.0.0.1:8000/docs
+
+四、创建测试项目
+----------------
+
+  $project = @{
+      id = "demo-story"
+      name = "Demo Story"
+      project_type = "LONG_NOVEL"
+      fidelity_mode = "CANON_STRICT"
+      output_format = "PAGES"
+      reading_direction = "LTR"
+      allow_new_events = $false
+      allow_new_dialogue = $false
+      allow_event_reordering = $false
+      allow_visual_compression = $true
+      allow_dialogue_splitting = $false
+      require_source_traceability = $true
+      max_auto_repairs = 2
+  } | ConvertTo-Json
+
+  Invoke-RestMethod `
+    -Method Post `
+    -Uri "http://127.0.0.1:8000/projects" `
+    -ContentType "application/json" `
+    -Body $project
+
+预期：返回项目 JSON，状态码 200 或 201。
+
+五、准备并导入 TXT
+------------------
+
+创建测试 TXT 文件，例如 E:\study\3spring\demo.txt：
+
+  林夏在黄昏时抵达白鹭镇的旧车站。
+  她发现哥哥林川已经失踪三天。
+  巡警周衡告诉她，林川最后一次出现是在北边的黑石矿区。
+  居民相信黑石矿区午夜后不能进入，因为那里会出现失控的矿灯。
+
+导入：
+
+  curl.exe `
+    -X POST `
+    "http://127.0.0.1:8000/projects/demo-story/documents/import" `
+    -F "file=@E:\study\3spring\demo.txt;type=text/plain"
+
+预期：返回 created、chapters_count=1 和 chunks_count=1。
+
+六、取得 chunk_id
+-----------------
+
+  $chapters = Invoke-RestMethod `
+    "http://127.0.0.1:8000/projects/demo-story/chapters"
+
+  # 如果有多个文档，使用最后/正确的 chapter
+  $chunks = Invoke-RestMethod `
+    "http://127.0.0.1:8000/chapters/$($chapters[-1].chapter_id)/chunks"
+
+  $chunkId = $chunks[0].chunk_id
+  Write-Host "chunk_id: $chunkId"
+
+记录输出的 chunk_id（格式如 chunk_ebe256b34685236f）。
+
+七、调用真实 StoryBible Curator
+-------------------------------
+
+Curator 接收 source_chunk_ids 列表。API 端会自动从数据库解析
+chunk 文本并注入到 LLM prompt 中。
+
+  $context = @{
+      project_id = "demo-story"
+      source_chunk_ids = @($chunkId)
+  } | ConvertTo-Json
+
+  $proposal = Invoke-RestMethod `
+    -Method Post `
+    -Uri "http://127.0.0.1:8000/projects/demo-story/storybible/curate" `
+    -ContentType "application/json" `
+    -Body $context
+
+  $proposal | ConvertTo-Json -Depth 30
+
+重点检查：
+
+  - proposal.status 应为 CANDIDATE。
+  - commit_plan.updates 中是否识别出人物（PERSON）、
+    组织（ORGANIZATION）、地点（LOCATION）和状态。
+  - 每条事实是否有 evidence_refs（chunk_id + quote_text）。
+  - quote_text 是否精确匹配原文（验证器会逐字对比）。
+  - 是否出现明显脱离原文的事实（幻觉）。
+
+Curator 只生成候选提案，不会直接写入正式 StoryBible。
+
+八、审批并正式提交
+------------------
+
+审批前检查正式资源应为空：
+
+  Invoke-RestMethod `
+    "http://127.0.0.1:8000/projects/demo-story/storybible/profiles"
+  # 预期：[]
+
+取得 plan_id 并提交：
+
+  $planId = $proposal.commit_plan.commit_plan_id
+
+  $committed = Invoke-RestMethod `
+    -Method Post `
+    -Uri "http://127.0.0.1:8000/projects/demo-story/storybible/commit-plans/$planId" `
+    -ContentType "application/json" `
+    -Body '{"status":"APPROVED"}'
+
+  $committed | ConvertTo-Json -Depth 30
+
+预期：提交成功后返回正式 CommitPlan。
+
+幂等性测试 — 重复执行同一个提交请求：
+
+  Invoke-RestMethod `
+    -Method Post `
+    -Uri "http://127.0.0.1:8000/projects/demo-story/storybible/commit-plans/$planId" `
+    -ContentType "application/json" `
+    -Body '{"status":"APPROVED"}'
+
+预期：返回相同结果，不产生重复资源。
+
+九、查询正式 StoryBible 资源
+----------------------------
+
+列出所有 profiles：
+
+  $profiles = Invoke-RestMethod `
+    "http://127.0.0.1:8000/projects/demo-story/storybible/profiles"
+  $profiles | ConvertTo-Json -Depth 30
+
+查询单个 profile：
+
+  $profileId = $profiles[0].profile_id
+  Invoke-RestMethod `
+    "http://127.0.0.1:8000/projects/demo-story/storybible/profiles/$profileId" |
+    ConvertTo-Json -Depth 30
+
+查询 profile 的状态：
+
+  Invoke-RestMethod `
+    "http://127.0.0.1:8000/projects/demo-story/storybible/profiles/$profileId/states" |
+    ConvertTo-Json -Depth 30
+
+按事件过滤状态：
+
+  Invoke-RestMethod `
+    "http://127.0.0.1:8000/projects/demo-story/storybible/profiles/$profileId/states?event_id=event-a" |
+    ConvertTo-Json -Depth 30
+
+十、跨项目隔离测试
+------------------
+
+创建第二个项目，验证资源隔离：
+
+  $project2 = @{ id = "demo-story-2"
+      name = "Demo Story 2"
+      project_type = "LONG_NOVEL"
+      fidelity_mode = "CANON_STRICT"
+      output_format = "PAGES"
+      reading_direction = "LTR"
+      allow_new_events = $false
+      allow_new_dialogue = $false
+      allow_event_reordering = $false
+      allow_visual_compression = $true
+      allow_dialogue_splitting = $false
+      require_source_traceability = $true
+      max_auto_repairs = 2
+  } | ConvertTo-Json
+
+  Invoke-RestMethod -Method Post `
+    -Uri "http://127.0.0.1:8000/projects" `
+    -ContentType "application/json" -Body $project2
+
+跨项目 chunk 请求 — 应被拒绝（409）：
+
+  Invoke-RestMethod -Method Post `
+    -Uri "http://127.0.0.1:8000/projects/demo-story-2/storybible/curate" `
+    -ContentType "application/json" `
+    -Body "{`"project_id`":`"demo-story-2`",`"source_chunk_ids`":[`"$chunkId`"]}"
+
+跨项目 profile 访问 — 应返回 404：
+
+  Invoke-RestMethod `
+    "http://127.0.0.1:8000/projects/demo-story-2/storybible/profiles/$profileId"
+
+十一、错误排查
+--------------
+
+1. 看到 500 Internal Server Error：
+   查看运行 Uvicorn 的服务端窗口中的 traceback。
+   常见原因：LLM 返回的 JSON 不符合 schema（ValidationError）。
+
+2. ValidationError: Extra inputs are not permitted：
+   模型返回了 schema 未定义的字段。可能是 prompt 中的 JSON schema
+   与实际 Pydantic 模型不同步。检查 storybible_curator.py 中的
+   _OUTPUT_SCHEMA 是否与 schemas/storybible.py 一致。
+
+3. ValidationError: evidence_refs 为空 / updates 为空：
+   模型未生成有效内容。检查 prompt 是否明确要求 non-empty arrays。
+
+4. EvidenceRef quote_text does not match source chunk：
+   模型改写了原文。检查 prompt 是否要求逐字复制，
+   以及是否建议只使用 quote_text（不提供 quote_start/quote_end），
+   仅需子串匹配即可通过验证。
+
+5. ReadTimeout：
+   LLM 响应超时。增加 LLM_TIMEOUT_SECONDS（建议 120-180），
+   或检查网络和 VPN 状态。
+
+6. api_key_loaded=False：
+   .env 不在 worktree 根目录，或变量名不是 LLM_API_KEY。
+
+7. SSL、ConnectError：
+   检查 VPN 和代理。此前测试表明关闭 VPN 后可以直连 API。
+
+8. 401 或 403：
+   API 密钥无效、过期或没有对应模型权限。
+
+9. 400 或 404：
+   LLM_BASE_URL 是否包含 /v1，模型名是否正确。
+
+10. PytestCacheWarning / WinError 5：
+    使用 -p no:cacheprovider 和 --basetemp=./.pytest_tmp。
+
+11. 启动服务时端口被占用：
+     netstat -ano | findstr :8000
+     taskkill /PID <PID> /F
+
+12. 已有残留数据导致测试混乱：
+    删除 comic_agent.db 文件（SQLite 数据库），重启服务即可
+    从干净状态开始。
+
+13. "canonical resource id already belongs to another project"：
+    模型每次生成相同的短 ID（如 prof_linxia），跨项目会冲突。
+    Curator prompt 已要求所有 ID 带项目前缀，如 "long-story:prof_linxia"。
+    如果仍有此错误，检查模型是否正确遵守了 ID 前缀规则。
+
+验收标准
+--------
+
+- [ ] 自动化测试全部通过（115 passed, 1 skipped）
+- [ ] 模型能从 TXT 中提取合理的人物、组织、地点和状态
+- [ ] 每个正式事实都有 evidence_refs（chunk_id + quote_text）
+- [ ] quote_text 精确匹配原文
+- [ ] 审批前 profiles 查询为空
+- [ ] 审批后 profiles 和 states 可以查询
+- [ ] 重复提交不会产生重复资源（幂等）
+- [ ] 跨项目 chunk 或 profile 会被拒绝（409 / 404）
+- [ ] 模型不会生成原文没有的事实（无幻觉）
