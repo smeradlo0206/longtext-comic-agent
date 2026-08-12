@@ -323,6 +323,9 @@ def _analysis_window_payload(window: NarrativeAnalysisWindowV1) -> dict[str, Any
         "mode": window.mode,
         "window_index": window.window_index,
         "chunk_ids": window.chunk_ids,
+        "owned_chunk_ids": window.owned_chunk_ids,
+        "parent_window_id": window.parent_window_id,
+        "split_reason": window.split_reason,
         "status": window.status,
         "agent_run_id": window.agent_run_id,
         "error_message": window.error_message,
@@ -342,8 +345,7 @@ def _require_real_llm_enabled(real_llm_requested: bool, settings: Settings) -> N
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "Real LLM is disabled by server settings; "
-                "restart the API with ENABLE_REAL_LLM=true"
+                "Real LLM is disabled by server settings; restart the API with ENABLE_REAL_LLM=true"
             ),
         )
 
@@ -403,6 +405,10 @@ def get_agent_run_evidence(
                 "claim_type": evidence_item.get("claim_type"),
                 "source_type": evidence_item.get("source_type"),
                 "temporal_scope": evidence_item.get("temporal_scope"),
+                "epistemic_status": evidence_item.get("epistemic_status"),
+                "epistemic_basis": evidence_item.get("epistemic_basis"),
+                "subject_resolution_status": evidence_item.get("subject_resolution_status"),
+                "target_resolution_status": evidence_item.get("target_resolution_status"),
                 "chunk_id": chunk_id,
                 "quote": quote_text[:40],
                 "char_start": char_start,
@@ -460,6 +466,30 @@ def _proposal_evidence_refs(proposal: object) -> list[dict[str, Any]]:
                         "claim_type": claim.get("claim_type"),
                         "source_type": claim.get("source_type"),
                         "temporal_scope": claim.get("temporal_scope"),
+                        "evidence": evidence,
+                    }
+                )
+        return items
+    states = proposal.get("states")
+    if isinstance(states, list):
+        items = []
+        for state in states:
+            if not isinstance(state, dict):
+                continue
+            subject = state.get("subject")
+            target = state.get("target")
+            for evidence in state.get("evidence_refs", []):
+                items.append(
+                    {
+                        "proposal_id": state.get("proposal_id"),
+                        "epistemic_status": state.get("epistemic_status"),
+                        "epistemic_basis": state.get("epistemic_basis"),
+                        "subject_resolution_status": (
+                            subject.get("resolution_status") if isinstance(subject, dict) else None
+                        ),
+                        "target_resolution_status": (
+                            target.get("resolution_status") if isinstance(target, dict) else None
+                        ),
                         "evidence": evidence,
                     }
                 )

@@ -10,13 +10,15 @@ from comic_agent.agents.base import BaseAgent
 from comic_agent.agents.claim_extraction import ClaimExtractionAgent
 from comic_agent.agents.entity_extraction import EntityExtractionAgent
 from comic_agent.agents.event_extraction import EventExtractionAgent
+from comic_agent.agents.knowledge_state_extraction import KnowledgeStateExtractionAgent
+from comic_agent.agents.state_change_extraction import StateChangeExtractionAgent
 from comic_agent.providers.llm import LLMProvider
 from comic_agent.schemas.narrative import (
     ClaimProposalBatchV1,
     EntityProposalBatchV1,
     EventProposalBatchV1,
-    KnowledgeStateProposalV1,
-    StateChangeProposalV1,
+    KnowledgeStateProposalBatchV1,
+    StateChangeProposalBatchV1,
 )
 
 ModeStatus = Literal["implemented", "planned", "planned_without_schema"]
@@ -84,6 +86,14 @@ def _create_claim_agent(provider: LLMProvider) -> BaseAgent[Proposal]:
     return ClaimExtractionAgent(provider)
 
 
+def _create_knowledge_state_agent(provider: LLMProvider) -> BaseAgent[Proposal]:
+    return KnowledgeStateExtractionAgent(provider)
+
+
+def _create_state_change_agent(provider: LLMProvider) -> BaseAgent[Proposal]:
+    return StateChangeExtractionAgent(provider)
+
+
 NARRATIVE_ANALYST_MODE_REGISTRY: dict[str, NarrativeAnalystModeSpec] = {
     "event_extraction": NarrativeAnalystModeSpec(
         mode="event_extraction",
@@ -121,22 +131,24 @@ NARRATIVE_ANALYST_MODE_REGISTRY: dict[str, NarrativeAnalystModeSpec] = {
     "knowledge_state_extraction": NarrativeAnalystModeSpec(
         mode="knowledge_state_extraction",
         description_zh="知识状态抽取",
-        status="planned",
-        output_schema="KnowledgeStateProposalV1",
-        schema_class=KnowledgeStateProposalV1,
-        max_context_chunks=3,
-        requires_evidence=True,
-        proposal_only=True,
+        status="implemented",
+        output_schema=KnowledgeStateExtractionAgent.spec.output_schema,
+        schema_class=KnowledgeStateProposalBatchV1,
+        max_context_chunks=KnowledgeStateExtractionAgent.spec.max_context_chunks,
+        requires_evidence=KnowledgeStateExtractionAgent.spec.requires_evidence,
+        proposal_only=not KnowledgeStateExtractionAgent.spec.can_write_canonical_data,
+        agent_factory=_create_knowledge_state_agent,
     ),
     "state_change_extraction": NarrativeAnalystModeSpec(
         mode="state_change_extraction",
         description_zh="状态变化抽取",
-        status="planned",
-        output_schema="StateChangeProposalV1",
-        schema_class=StateChangeProposalV1,
-        max_context_chunks=3,
-        requires_evidence=True,
-        proposal_only=True,
+        status="implemented",
+        output_schema=StateChangeExtractionAgent.spec.output_schema,
+        schema_class=StateChangeProposalBatchV1,
+        max_context_chunks=StateChangeExtractionAgent.spec.max_context_chunks,
+        requires_evidence=StateChangeExtractionAgent.spec.requires_evidence,
+        proposal_only=not StateChangeExtractionAgent.spec.can_write_canonical_data,
+        agent_factory=_create_state_change_agent,
     ),
     "relationship_signal_extraction": NarrativeAnalystModeSpec(
         mode="relationship_signal_extraction",

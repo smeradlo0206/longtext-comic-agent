@@ -5,18 +5,23 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from comic_agent.agents.narrative_analyst import NarrativeAnalyst
 from comic_agent.config import Settings
 from comic_agent.providers.llm import LLMProvider
-from comic_agent.providers.openai_compatible import OpenAICompatibleLLMProvider
+from comic_agent.providers.openai_compatible import (
+    OpenAICompatibleLLMProvider,
+    build_openai_compatible_provider,
+)
 from comic_agent.repositories.agent_run_repository import AgentRunRepository
 from comic_agent.repositories.source_repository import SourceRepository
 from comic_agent.schemas.narrative import (
     ClaimProposalBatchV1,
     EntityProposalBatchV1,
     EventProposalBatchV1,
+    KnowledgeStateProposalBatchV1,
+    StateChangeProposalBatchV1,
 )
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.workflow import AgentRunStatus, AgentRunV1, ProviderResultV1, ProviderType
@@ -32,6 +37,7 @@ from comic_agent.services.narrative_analyst_summary import (
     manual_review_checklist,
     normalize_proposal_evidence,
     sanitize_error_message,
+    sanitize_provider_diagnostics,
     selected_chunk_metadata,
     set_failure,
     slim_input_context,
@@ -87,6 +93,7 @@ class NarrativeAnalystWorkflow:
         chunk_offset: int = 0,
         max_chars_per_chunk: int = DEFAULT_MAX_CHARS_PER_CHUNK,
         output_recovery: str | None = None,
+        output_recovery_rule_codes: list[str] | None = None,
         real_llm_requested: bool = False,
     ) -> NarrativeAnalystWorkflowResult:
         """Run or dry-run a NarrativeAnalyst mode over selected chunks."""
@@ -151,9 +158,15 @@ class NarrativeAnalystWorkflow:
                 agent_run=None,
             )
 
-        input_context = slim_input_context(context, visible_chunks)
+        input_context = slim_input_context(
+            context,
+            visible_chunks,
+            full_source_chunk_records=mode == "state_change_extraction",
+        )
         if output_recovery is not None:
             input_context["output_recovery"] = output_recovery
+        if output_recovery_rule_codes:
+            input_context["schema_error_rule_codes"] = output_recovery_rule_codes
         if not self._settings.enable_real_llm:
             disabled_error_message = "ENABLE_REAL_LLM is false; provider was not called"
             set_failure(summary, "REAL_LLM_DISABLED")
@@ -222,6 +235,12 @@ class NarrativeAnalystWorkflow:
                 selected_chunks=selected_chunks,
             )
             add_provider_diagnostics(summary, exc)
+            if isinstance(exc, ValidationError):
+                summary["provider_error_diagnostics"] = sanitize_provider_diagnostics(
+                    OpenAICompatibleLLMProvider.schema_validation_diagnostics(
+                        exc, mode_spec.output_schema
+                    )
+                )
             set_failure(summary, classify_exception(exc))
             provider_error_diagnostics = summary["provider_error_diagnostics"]
             status = AgentRunStatus.FAILED
@@ -332,19 +351,7 @@ class NarrativeAnalystWorkflow:
         return chunks
 
     def _build_provider(self) -> OpenAICompatibleLLMProvider:
-        api_key = (
-            self._settings.llm_api_key.get_secret_value()
-            if self._settings.llm_api_key is not None
-            else None
-        )
-        return OpenAICompatibleLLMProvider(
-            api_key=api_key,
-            base_url=self._settings.llm_base_url,
-            model=self._settings.llm_model,
-            response_format=self._settings.llm_response_format,
-            timeout_seconds=self._settings.llm_timeout_seconds,
-            max_output_tokens=self._settings.llm_max_output_tokens,
-        )
+        return build_openai_compatible_provider(self._settings)
 
     def _provider_result(
         self,
@@ -475,6 +482,10 @@ class NarrativeAnalystWorkflow:
             return [entity.proposal_id for entity in proposal.entities]
         if isinstance(proposal, ClaimProposalBatchV1):
             return [claim.proposal_id for claim in proposal.claims]
+        if isinstance(proposal, KnowledgeStateProposalBatchV1):
+            return [state.proposal_id for state in proposal.states]
+        if isinstance(proposal, StateChangeProposalBatchV1):
+            return [change.proposal_id for change in proposal.changes]
         proposal_id = getattr(proposal, "proposal_id", None)
         return [str(proposal_id)] if proposal_id is not None else []
 

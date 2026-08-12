@@ -12,6 +12,8 @@ from comic_agent.schemas.narrative import (
     ClaimProposalBatchV1,
     EntityProposalBatchV1,
     EventProposalBatchV1,
+    KnowledgeStateProposalBatchV1,
+    StateChangeProposalBatchV1,
 )
 
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
@@ -85,11 +87,22 @@ class FakeNarrativeProvider:
         assert isinstance(source_chunks, list)
         source_chunk = source_chunks[0]
         assert isinstance(source_chunk, dict)
-        assert set(source_chunk) == {
-            "chunk_id",
-            "chapter_id",
-            "text",
-        }
+        expected_fields = {"chunk_id", "chapter_id", "text"}
+        if output_model is StateChangeProposalBatchV1:
+            expected_fields = {
+                "schema_version",
+                "chunk_id",
+                "document_id",
+                "chapter_id",
+                "project_id",
+                "order",
+                "text",
+                "source_page",
+                "char_start",
+                "char_end",
+                "checksum",
+            }
+        assert set(source_chunk) == expected_fields
         assert len(str(source_chunk["text"])) <= self.max_text_length
         quote = str(source_chunk["text"])[:3]
         chunk_id = str(source_chunk["chunk_id"])
@@ -199,6 +212,93 @@ class FakeNarrativeProvider:
                 }
             )
 
+        if output_model is KnowledgeStateProposalBatchV1:
+            return output_model.model_validate(
+                {
+                    "batch_id": "knowledge-batch-console-1",
+                    "states": [
+                        {
+                            "schema_version": "1.1",
+                            "proposal_id": "knowledge-console-1",
+                            "subject": {
+                                "mention_text": "林夏",
+                                "entity_proposal_id": None,
+                                "resolution_status": "UNRESOLVED",
+                            },
+                            "target": {
+                                "target_kind": "WORLD_FACT",
+                                "target_text": "门后有路",
+                                "proposal_id": None,
+                                "proposal_schema": None,
+                                "resolution_status": "UNRESOLVED",
+                            },
+                            "epistemic_status": "SUSPECTS",
+                            "epistemic_basis": "INFERRED",
+                            "reality_layer": "PRIMARY",
+                            "evidence_refs": [{"chunk_id": chunk_id, "quote_text": quote}],
+                            "confidence": 0.71,
+                        },
+                        {
+                            "schema_version": "1.1",
+                            "proposal_id": "knowledge-console-2",
+                            "subject": {
+                                "mention_text": "陈野",
+                                "entity_proposal_id": None,
+                                "resolution_status": "UNRESOLVED",
+                            },
+                            "target": {
+                                "target_kind": "WORLD_FACT",
+                                "target_text": "钟声来自楼上",
+                                "proposal_id": None,
+                                "proposal_schema": None,
+                                "resolution_status": "UNRESOLVED",
+                            },
+                            "epistemic_status": "HEARD",
+                            "epistemic_basis": "HEARD",
+                            "reality_layer": "PRIMARY",
+                            "evidence_refs": [{"chunk_id": chunk_id, "quote_text": quote[1:]}],
+                            "confidence": 0.72,
+                        },
+                    ],
+                }
+            )
+
+        if output_model is StateChangeProposalBatchV1:
+            return output_model.model_validate(
+                {
+                    "schema_version": "1.2",
+                    "batch_id": "state-change-batch-console-1",
+                    "changes": [
+                        {
+                            "schema_version": "1.2",
+                            "proposal_id": "state-change-console-1",
+                            "event": {
+                                "event_summary": "林夏推开门",
+                                "event_proposal_id": None,
+                                "proposal_schema": None,
+                                "resolution_status": "UNRESOLVED",
+                            },
+                            "target": {
+                                "mention_text": "门",
+                                "target_kind": "OBJECT",
+                                "entity_proposal_id": None,
+                                "proposal_schema": None,
+                                "resolution_status": "UNRESOLVED",
+                            },
+                            "attribute_path": "accessibility",
+                            "old_value": None,
+                            "new_value": "开启",
+                            "persistent": False,
+                            "reality_layer": "PRIMARY",
+                            "evidence_refs": [{"chunk_id": chunk_id, "quote_text": quote}],
+                            "new_value_evidence_indexes": [0],
+                            "persistence_evidence_indexes": [],
+                            "confidence": 0.83,
+                        }
+                    ],
+                }
+            )
+
         raise AssertionError(f"Unexpected output model: {output_model}")
 
 
@@ -266,11 +366,16 @@ def import_text_and_collect_chunks(
 
 
 @pytest.mark.parametrize(
-        ("mode", "schema_name", "checklist_key"),
+    ("mode", "schema_name", "checklist_key"),
     [
         ("event_extraction", "EventProposalBatchV1", "events_cover_major_plot_points"),
         ("entity_extraction", "EntityProposalBatchV1", "entities_cover_major_entities"),
         ("claim_extraction", "ClaimProposalBatchV1", "claims_cover_major_claims"),
+        (
+            "knowledge_state_extraction",
+            "KnowledgeStateProposalBatchV1",
+            "knowledge_states_cover_explicit_epistemic_states",
+        ),
     ],
 )
 def test_narrative_analyst_api_supports_implemented_modes(
@@ -415,10 +520,70 @@ def test_narrative_analyst_api_supports_implemented_modes(
         assert evidence_response.json()["items"][0]["claim_type"] == "FACTUAL_ASSERTION"
         assert evidence_response.json()["items"][0]["source_type"] == "NARRATOR"
         assert evidence_response.json()["items"][0]["temporal_scope"] == "PRESENT"
+    if mode == "knowledge_state_extraction":
+        assert payload["proposal"]["batch_id"] == "knowledge-batch-console-1"
+        assert len(payload["proposal"]["states"]) == 2
+        assert payload["batch_id"] == "knowledge-batch-console-1"
+        assert payload["states_count"] == 2
+        assert payload["state_proposal_ids"] == ["knowledge-console-1", "knowledge-console-2"]
+        assert detail_response.json()["output_proposal_ids"] == [
+            "knowledge-console-1",
+            "knowledge-console-2",
+        ]
+        assert len(evidence_response.json()["items"]) == 2
+        assert evidence_response.json()["items"][0]["epistemic_status"] == "SUSPECTS"
+        assert evidence_response.json()["items"][0]["subject_resolution_status"] == "UNRESOLVED"
+        assert evidence_response.json()["items"][0]["target_resolution_status"] == "UNRESOLVED"
     assert detail_response.status_code == 200
     assert evidence_response.status_code == 200
     assert evidence_response.json()["items"]
     assert provider.calls == 1
+
+
+def test_narrative_analyst_api_treats_an_empty_knowledge_batch_as_success(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class FakeEmptyKnowledgeProvider(FakeNarrativeProvider):
+        def structured_generate(
+            self,
+            request: dict[str, object],
+            output_model: type[OutputModelT],
+        ) -> OutputModelT:
+            self.calls += 1
+            self.requests.append(request)
+            assert output_model is KnowledgeStateProposalBatchV1
+            return output_model.model_validate({"batch_id": "knowledge-batch-empty", "states": []})
+
+    provider = FakeEmptyKnowledgeProvider()
+    try:
+        with create_test_client(
+            tmp_path,
+            monkeypatch,
+            enable_real_llm=True,
+            provider=provider,
+        ) as client:
+            chunks = setup_imported_project(client)
+            response = client.post(
+                "/projects/demo-project/agent-runs/narrative-analyst",
+                json={
+                    "mode": "knowledge_state_extraction",
+                    "chunk_ids": [chunks[0]["chunk_id"]],
+                    "chunk_limit": 1,
+                    "real_llm_requested": True,
+                },
+            )
+            payload = response.json()
+            detail = client.get(f"/agent-runs/{payload['agent_run_id']}")
+    finally:
+        get_settings.cache_clear()
+
+    assert response.status_code == 201
+    assert payload["agent_run_status"] == "SUCCEEDED"
+    assert payload["states_count"] == 0
+    assert payload["state_proposal_ids"] == []
+    assert payload["evidence_validation_passed"] is True
+    assert payload["quote_matched"] is None
+    assert detail.json()["output_proposal_ids"] == []
 
 
 def test_narrative_analyst_api_event_batch_quote_mismatch_is_classified(
@@ -1026,7 +1191,7 @@ def test_narrative_analyst_api_unknown_mode_returns_400_without_provider_call(
     assert provider.calls == 0
 
 
-def test_narrative_analyst_api_planned_mode_returns_400_without_provider_call(
+def test_narrative_analyst_api_runs_state_change_batch_with_fake_provider(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -1042,17 +1207,24 @@ def test_narrative_analyst_api_planned_mode_returns_400_without_provider_call(
             response = client.post(
                 "/projects/demo-project/agent-runs/narrative-analyst",
                 json={
-                    "mode": "knowledge_state_extraction",
+                    "mode": "state_change_extraction",
                     "chunk_limit": 1,
+                    "max_chars_per_chunk": 5,
                     "real_llm_requested": True,
                 },
             )
     finally:
         get_settings.cache_clear()
 
-    assert response.status_code == 400
-    assert "not implemented" in response.json()["detail"]
-    assert provider.calls == 0
+    payload = response.json()
+    assert response.status_code == 201
+    assert payload["output_schema"] == "StateChangeProposalBatchV1"
+    assert payload["error_message"] is None
+    assert payload["agent_run_status"] == "SUCCEEDED"
+    assert payload["changes_count"] == 1
+    assert payload["change_proposal_ids"] == ["state-change-console-1"]
+    assert payload["agent_run_status"] == "SUCCEEDED"
+    assert provider.calls == 1
 
 
 def test_narrative_analyst_api_rejects_chunk_limit_over_three(

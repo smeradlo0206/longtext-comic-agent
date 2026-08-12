@@ -12,6 +12,8 @@ Implemented modes now share a batch-shaped outer contract:
 event_extraction -> EventProposalBatchV1 -> proposal.events[]
 entity_extraction -> EntityProposalBatchV1 -> proposal.entities[]
 claim_extraction -> ClaimProposalBatchV1 -> proposal.claims[]
+knowledge_state_extraction -> KnowledgeStateProposalBatchV1 -> proposal.states[]
+state_change_extraction -> StateChangeProposalBatchV1 -> proposal.changes[]
 ```
 
 The number of items in each batch is based on distinct source-grounded facts,
@@ -23,9 +25,7 @@ claims across chunks should be output once.
 Planned modes remain registered but not implemented:
 
 ```text
-knowledge_state_extraction -> KnowledgeStateProposalV1
-state_change_extraction -> StateChangeProposalV1
-relationship_signal_extraction -> planned_without_schema
+relationship_signal_extraction -> planned_with_schema (mode not implemented)
 ```
 
 Current recommended model for manual Narrative Analyst extraction eval is
@@ -68,6 +68,63 @@ Whole-document work defaults to dry-run. A real provider call requires both the
 explicit request-level checkbox and server-side `ENABLE_REAL_LLM=true`. The
 in-process worker is restart-resumable through persisted pending/failed windows;
 it does not write StoryBible or canonical data.
+
+### Knowledge State v1.1 contract
+
+`knowledge_state_extraction` is implemented. Its batch output is
+`KnowledgeStateProposalBatchV1` containing only v1.1 Proposal candidates; an
+empty `states=[]` batch is a successful extraction outcome.
+Subjects, targets, and temporal anchors use source text plus optional candidate
+Proposal links; unresolved links stay unresolved for a later linker. A Claim is
+not automatically a Knowledge State, and conflicting candidate states retain
+their own evidence and reality layers.
+
+The agent reads only bounded `SourceChunkV1` context and emits Proposal objects;
+it neither writes StoryBible data nor fabricates cross-Proposal ids. Automated
+tests use FakeProvider only. A real LLM evaluation must be explicitly initiated
+by a user. No database migration is needed: new fields exist only in compatible
+Schema/JSON aggregation results and legacy v1.0 payloads remain readable.
+
+Within one `KnowledgeStateProposalBatchV1`, `proposal_id` values and complete
+knowledge-state semantics must both be unique. Across windows, a repeated
+`proposal_id` is allowed, so review surfaces show batch or AgentRun context
+instead of treating the bare id as globally unique. Aggregation merges only an
+exact complete semantic key; it never uses fuzzy text matching or silently
+upgrades unresolved references.
+
+`target_kind` is the semantic type of the cognitive target itself, not the
+speaking source and not `epistemic_status`: `EVENT` is a concrete occurrence,
+discovery, change, or action; `WORLD_FACT` is a proposition about the world,
+person, place, object, relationship, or fact state; and `CLAIM` is only a
+statement, report, rumor, declaration, accusation, or promise as the target.
+`HEARD` does not decide `target_kind`. For example, hearing that a gate is
+closed is `WORLD_FACT + HEARD` when the gate state is the target; it is `CLAIM`
+only when the speaker's assertion is the target.
+
+Knowledge State `target_text` is the smallest complete, auditable core
+proposition. It retains source-supported entities, negation, modality, time,
+place, and causal qualifiers, but not a speech frame for a `WORLD_FACT`.
+For example, normalize a rumor-content target to `山中有鬼`, not `山中有鬼的传言`;
+only a target about the rumor itself retains its source and uses `CLAIM`.
+`BELIEVES`, `SUSPECTS`, and `DISBELIEVES` are attitudes toward truth content, so
+they must use `WORLD_FACT` or `EVENT`, never `CLAIM`: “不相信某个传言” becomes
+`DISBELIEVES + WORLD_FACT + 山中有鬼`.
+Do not emit both a composite target and one of its atomic parts unless they have
+independent source-supported knowledge states or temporal anchors.
+
+The Console may show a deterministic **可能重复** review hint when candidates
+have the same subject, status, basis, reality layer, and temporal anchors, and
+their safely normalized core target text matches while target kind or original
+target expression differs. The hint is review-only: it never rewrites,
+suppresses, links, upgrades, or automatically merges proposals. It exposes only
+proposal, batch/AgentRun, status, basis, target, resolution, and Evidence audit
+context.
+
+`KNOWS + OBSERVED` requires text that explicitly establishes observation,
+recognition, discovery, or confirmation of a concrete fact. Presence, a brief
+glance, seeing an object, hearing a rumor, or narrator knowledge does not prove
+the character knows the hidden fact. For example, seeing an envelope is not
+knowing its letter content.
 
 
 ## 开发格式
@@ -245,6 +302,7 @@ POST /projects/{project_id}/agent-runs/narrative-analyst
 event_extraction -> EventProposalBatchV1
 entity_extraction -> EntityProposalBatchV1
 claim_extraction -> ClaimProposalBatchV1
+knowledge_state_extraction -> KnowledgeStateProposalBatchV1
 ```
 
 `claim_extraction` fresh outputs use Claim schema `1.2`. Current claim types are
@@ -331,9 +389,7 @@ claim_extraction -> ClaimProposalBatchV1
 当前 planned / not implemented modes：
 
 ```text
-knowledge_state_extraction -> KnowledgeStateProposalV1
-state_change_extraction -> StateChangeProposalV1
-relationship_signal_extraction -> planned_without_schema
+relationship_signal_extraction -> planned_with_schema (mode not implemented)
 ```
 
 shell 的意义：
@@ -343,7 +399,7 @@ shell 的意义：
 2. 所有 mode 的状态、output_schema、EvidenceRef 要求和 max_context_chunks 有统一注册表。
 3. event/entity/claim 继续复用各自 Agent，不复制 prompt 逻辑。
 4. planned mode 调用时返回脱敏 not implemented 错误，不调用 provider。
-5. 本次没有新增真实 LLM 调用，没有新增 schema，没有写 StoryBible。
+5. 本次没有新增真实 LLM 调用；Relationship Signal Schema 已新增，但没有写 StoryBible。
 ```
 
 ### 1. event_extraction
@@ -365,7 +421,7 @@ tests/test_event_extraction_agent.py
 从 SourceChunk 中抽取“发生了什么事”。
 ```
 
-输出：
+未来输出：
 
 ```text
 EventProposalBatchV1
@@ -571,7 +627,7 @@ ClaimProposalBatchV1
 
 中文名：知识状态抽取
 
-在 `entity_extraction` 和 `claim_extraction` 完成后开发。
+已实现并接入手动 workflow 与整文 worker。
 
 开发文件：
 
@@ -589,17 +645,14 @@ tests/test_knowledge_state_extraction_agent.py
 输出：
 
 ```text
-KnowledgeStateProposalV1
+KnowledgeStateProposalBatchV1（`states[]` 中为 KnowledgeStateProposalV1）
 ```
 
 输出内容：
 
 ```text
-角色 id
-知识目标 id
-认知状态
-来源 claim id
-生效事件 id
+主体与目标可故意保持 unresolved；没有明确开始或结束依据时，时间锚点必须为空
+认知状态与认知依据
 现实层级
 证据 EvidenceRef
 置信度
@@ -616,23 +669,19 @@ xx怀疑xx隐瞒真相。
 完成步骤：
 
 ```text
-1. 新建 knowledge_state_extraction.py
-2. 参照 event_extraction.py 编写 KnowledgeStateExtractionAgent
-3. prompt 要求 exactly one knowledge state
-4. 不发明角色认知
-5. 输出 KnowledgeStateProposalV1
-6. 编写 FakeProvider 测试
-7. 测试 epistemic_status、character_id、knowledge_target_id
-8. 自动测试阶段不接真实 LLM
-9. 自动测试通过后，再由负责人手动做真实 LLM 小规模评估
-10. 不写 StoryBible
+1. 每个窗口输出一个 KnowledgeStateProposalBatchV1，可为空
+2. 每个非空候选保留独立 EvidenceRefV1
+3. 不从说话、看见、在场或沉默推断 KNOWS / UNAWARE；单纯断言也不推断 BELIEVES
+4. 不伪造 Entity / Event / Claim / StoryBible id
+5. 自动测试阶段仅使用 FakeProvider，不调用真实 LLM
+6. 不写 StoryBible；后续 linker 才能显式关联 unresolved 锚点
 ```
 
 ### 5. state_change_extraction
 
 中文名：状态变化抽取
 
-在 `event_extraction` 和 `entity_extraction` 稳定后开发。
+`StateChangeExtractionAgent` 已注册为 Narrative Analyst 的 implemented mode。
 
 开发文件：
 
@@ -650,20 +699,20 @@ tests/test_state_change_extraction_agent.py
 输出：
 
 ```text
-StateChangeProposalV1
+StateChangeProposalBatchV1（其中每项为 StateChangeProposalV1）
 ```
 
 输出内容：
 
 ```text
-事件 id
-目标实体 id
-属性路径
-旧值
-新值
-是否持续
+事件摘要与可选 EventProposalV1 候选引用
+目标原文名称、可持续对象分类与可选 EntityProposalV1 候选引用
+受控属性路径：health.injury、life_status、location、possession.holder、physical.condition、accessibility、availability、quantity、role.status、appearance.clothing、appearance.hairstyle（后两者仅 CHARACTER）
+旧值（null 仅表示原文未说明旧值）
+新值（非 null 的稳定 JSON 标量）
+持续性与其 Evidence 索引
 现实层级
-证据 EvidenceRef
+独立 EvidenceRef 与 new-value / persistence Evidence 索引
 置信度
 ```
 
@@ -676,27 +725,47 @@ StateChangeProposalV1
 
 ```
 
-完成步骤：
+已完成 v1.3 source-first Schema 合同、`StateChangeExtractionAgent`、implemented mode
+注册、手动 workflow、整文 worker、可恢复窗口链路、精确聚合与 Console 审计表。Agent
+仅消费受限 SourceChunk，通过 Provider interface 输出 `StateChangeProposalBatchV1`，并
+始终要求 unresolved Event/Target 引用；`changes=[]` 是成功结果。整文结果使用
+`NarrativeAnalysisResultV1` v1.3 的 `state_changes` 字段；v1.0/v1.1/v1.2 结果仍可读并默认
+空列表。
 
-```text
-1. 新建 state_change_extraction.py
-2. 参照 event_extraction.py 编写 StateChangeExtractionAgent
-3. prompt 要求 exactly one state change
-4. 输出 StateChangeProposalV1
-5. 编写 FakeProvider 测试
-6. 测试 event_id、target_entity_id、attribute_path、old_value/new_value
-7. 自动测试阶段不接真实 LLM
-8. 自动测试通过后，再由负责人手动做真实 LLM 小规模评估
-9. 不写 StoryBible
-```
+Event 是瞬时原因，State Change 是动作后可供后续叙事使用的状态结果，两者可以同时
+输出。v1.3 的 `appearance.clothing` 与 `appearance.hairstyle` 只接受人物明确完成的
+换装/发型转换；计划、静态外貌、风吹、光照和短暂表情必须为空。连续“裂纹→崩塌”默认
+只保留最终结果，只有有时间或独立反应分隔时才保留两条。`persistent=false` 仅表示
+没有明确持续性证据，并不表示状态立即消失。
+
+Prompt 约束 `persistent=true` 仅用于原文明确的持续、永久、从此、长期、稳定或等效
+语义；崩塌、关闭、恢复、受伤、到达、取得、放入等结果词本身不构成持续性证据。未解析
+target 的 `mention_text` 必须逐字出现在允许的 SourceChunk 中，Agent 不会把“他/她”改写
+为窗口外的人名。`event_summary` 只保留当前变化的最小原因或局部上下文，不拼接其他
+target 的状态结果。
+
+整文窗口的 `chunk_ids` 是完整阅读上下文，`owned_chunk_ids` 是唯一输出责任边界；重叠
+chunk 可以被多个窗口阅读，但只有 owner 的 Proposal 进入聚合。长度截断的 parent 只按
+自身 owned chunks 创建 split child，并保留 parent/child lineage。State Change schema
+恢复只传递安全 rule code（例如 `STATE_CHANGE_QUANTITY_MUST_BE_JSON_NUMBER`）和固定的
+无源文本纠正标记，绝不保存 raw provider output。
+
+状态变化的 `old_value` 只能来自本次选定 SourceChunk context 中明确出现的前值，或同一
+context 内紧邻的、已审计的前一条变化；不得借用窗口外信息或常识。`木箱` 与 `箱盖` 是
+不同的 OBJECT 提及，part-whole target resolution is intentionally out of scope。
+
+仍未实施：StoryBible/CommitService/canonical state 写入、自动 Event/Entity 链接，以及
+真实 LLM 小样本评测。本轮只使用 FakeProvider 测试，未调用真实 LLM。
 
 ### 6. relationship_signal_extraction
 
 中文名：关系信号抽取
 
-当前状态：暂缓。当前还没有专门 schema。
+当前状态：暂缓。`RelationshipSignalProposalV1` 与
+`RelationshipSignalProposalBatchV1` Schema Contract v1.0 已完成，但 mode 仍未注册为
+implemented，Agent、Prompt、workflow、整文 worker、恢复、聚合、API 与 Console 尚未实现。
 
-开发文件：
+未来开发文件：
 
 ```text
 comic_agent/agents/relationship_signal_extraction.py
@@ -709,35 +778,33 @@ tests/test_relationship_signal_extraction_agent.py
 抽取角色之间关系变化的线索。
 ```
 
-可能输出内容：
+Schema 已定义的 Proposal-only 内容：
 
 ```text
-关系双方
-关系类型
-变化方向
-证据 EvidenceRef
-置信度
+关系双方（CHARACTER/ORGANIZATION）与解析状态
+受控 relationship domain/kind/directionality
+signal effect、assertion polarity、evidence basis、support level
+可选 speaker、context event、temporal anchor
+EvidenceRef、reality layer 与置信度
 ```
 
-示例：
+合同边界：
 
 ```text
-信任增加
-产生敌意
-结盟
-背叛
-师徒关系确认
+对称关系按无序参与者对精确去重，有向关系保留反向候选；普通同场、看见、说话或一次
+动作不自动构成关系信号。直接陈述/转述需 speaker，旁白/观察禁止 speaker，INFERRED
+至少两条证据且只能 LIMITED。DENIAL 必须使用 DENIED；变化型 effect 必须有非空时间
+锚点；亲属关系不允许 TERMINATION。未解析引用的 ID/schema 必须为 null，Schema 不查询
+数据库、不自动链接、不写 StoryBible。
 ```
 
-开发前置：
+未来开发前置：
 
 ```text
-1. 先确认是否需要新增 RelationshipSignalProposalV1
-2. 如果新增 schema，必须更新 schema_version 和 migration notes
-3. 先写 schema 测试
-4. 再写 agent 和 FakeProvider 测试
-5. 自动测试阶段不接真实 LLM
-6. 不写 StoryBible
+1. 先实现 Agent Prompt 与 source-only 输入边界
+2. 注册 mode 前补齐 workflow、worker、恢复和聚合测试
+3. 自动测试阶段不接真实 LLM
+4. 不写 StoryBible；无需数据库迁移
 ```
 
 ## 推荐开发顺序
@@ -762,3 +829,30 @@ tests/test_relationship_signal_extraction_agent.py
 不要提交 API key、真实文本、.env、local_eval/、output/、tmp/ 或数据库文件。
 不要写 canonical StoryBible data。
 ```
+
+## Knowledge State offline semantic evaluation
+
+`knowledge_state_extraction` has a separate offline evaluation surface. It consumes
+only bundled synthetic/redacted cases plus an already structured
+`KnowledgeStateProposalBatchV1`; it does not run a provider, inspect a project, or
+write an AgentRun by default. The optional real-LLM route requires both an explicit
+request and server-side `ENABLE_REAL_LLM`.
+
+The strict evaluator preserves the extraction contract: exact auditable evidence,
+stable minimal target text, unresolved references that are not upgraded, and distinct
+target kinds/texts that are not fuzzily merged. Empty output is correct only for a
+fixture that expects no state. Console manual review is browser-local and its export is
+sanitized: fixture ID, evaluation result, and manual review fields only.
+
+The same separate surface can build a transient `KnowledgeStateEvaluationReportV1`
+from the latest browser-local Batch for each case. The report groups deterministic
+case results by category and records status, target-kind, evidence, forbidden-state,
+and unresolved-reference metrics. It is neither a new Agent mode nor a
+whole-document aggregate, and report generation/export remains Provider-free.
+
+Real LLM evaluation status is separate from semantic evaluation status. A provider or
+schema failure is retained as a typed failed run and is not counted as an evaluated
+case. Schema validation alone gets one bounded recovery request using the shared
+provider recovery instruction; transport, timeout, HTTP, and configuration failures
+do not retry. Reports therefore distinguish attempted, evaluated, and run-failed
+cases and expose whether the run is complete and acceptance-eligible.

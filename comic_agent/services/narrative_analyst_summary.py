@@ -15,6 +15,10 @@ from comic_agent.schemas.narrative import (
     EntityProposalV1,
     EventProposalBatchV1,
     EventProposalV1,
+    KnowledgeStateProposalBatchV1,
+    KnowledgeStateProposalV1,
+    StateChangeProposalBatchV1,
+    StateChangeProposalV1,
 )
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.services.context_builder import AgentContext
@@ -70,6 +74,7 @@ SANITIZED_DIAGNOSTIC_KEYS = {
     "http_status_code",
     "schema_error_kind",
     "schema_error_field_paths",
+    "schema_error_rule_codes",
     "expected_output_schema",
 }
 
@@ -77,7 +82,13 @@ SANITIZED_DIAGNOSTIC_KEYS = {
 def implemented_mode_names() -> list[str]:
     """Return modes implemented by NarrativeAnalyst v0.1."""
 
-    return ["event_extraction", "entity_extraction", "claim_extraction"]
+    return [
+        "event_extraction",
+        "entity_extraction",
+        "claim_extraction",
+        "knowledge_state_extraction",
+        "state_change_extraction",
+    ]
 
 
 def base_eval_summary(
@@ -198,20 +209,28 @@ def input_budget_summary(
 def slim_input_context(
     context: AgentContext,
     visible_chunks: list[SourceChunkV1],
+    *,
+    full_source_chunk_records: bool = False,
 ) -> dict[str, object]:
-    """Build a SourceChunk payload containing only extraction-relevant fields."""
+    """Build a bounded SourceChunk payload for one Agent context."""
 
-    return {
-        "project_id": context.project_id,
-        "source_chunk_ids": context.source_chunk_ids,
-        "source_chunks": [
+    source_chunks: list[dict[str, object]]
+    if full_source_chunk_records:
+        source_chunks = [chunk.model_dump(mode="json") for chunk in visible_chunks]
+    else:
+        source_chunks = [
             {
                 "chunk_id": chunk.chunk_id,
                 "chapter_id": chunk.chapter_id,
                 "text": chunk.text,
             }
             for chunk in visible_chunks
-        ],
+        ]
+
+    return {
+        "project_id": context.project_id,
+        "source_chunk_ids": context.source_chunk_ids,
+        "source_chunks": source_chunks,
     }
 
 
@@ -239,7 +258,28 @@ def normalize_proposal_evidence(
             proposal=proposal.model_copy(update={"claims": claims}),
             **counts,
         )
-    if isinstance(proposal, (EventProposalV1, EntityProposalV1, ClaimProposalV1)):
+    if isinstance(proposal, KnowledgeStateProposalBatchV1):
+        states, counts = _normalize_proposal_items(proposal.states, selected_chunks)
+        return EvidenceNormalizationResult(
+            proposal=proposal.model_copy(update={"states": states}),
+            **counts,
+        )
+    if isinstance(proposal, StateChangeProposalBatchV1):
+        changes, counts = _normalize_proposal_items(proposal.changes, selected_chunks)
+        return EvidenceNormalizationResult(
+            proposal=proposal.model_copy(update={"changes": changes}),
+            **counts,
+        )
+    if isinstance(
+        proposal,
+        (
+            EventProposalV1,
+            EntityProposalV1,
+            ClaimProposalV1,
+            KnowledgeStateProposalV1,
+            StateChangeProposalV1,
+        ),
+    ):
         items, counts = _normalize_proposal_items([proposal], selected_chunks)
         return EvidenceNormalizationResult(proposal=items[0], **counts)
     return EvidenceNormalizationResult(
@@ -251,13 +291,31 @@ def normalize_proposal_evidence(
 
 
 def _normalize_proposal_items(
-    items: Sequence[EventProposalV1 | EntityProposalV1 | ClaimProposalV1],
+    items: Sequence[
+        EventProposalV1
+        | EntityProposalV1
+        | ClaimProposalV1
+        | KnowledgeStateProposalV1
+        | StateChangeProposalV1
+    ],
     selected_chunks: list[SourceChunkV1],
 ) -> tuple[
-    list[EventProposalV1 | EntityProposalV1 | ClaimProposalV1],
+    list[
+        EventProposalV1
+        | EntityProposalV1
+        | ClaimProposalV1
+        | KnowledgeStateProposalV1
+        | StateChangeProposalV1
+    ],
     dict[str, int],
 ]:
-    normalized_items: list[EventProposalV1 | EntityProposalV1 | ClaimProposalV1] = []
+    normalized_items: list[
+        EventProposalV1
+        | EntityProposalV1
+        | ClaimProposalV1
+        | KnowledgeStateProposalV1
+        | StateChangeProposalV1
+    ] = []
     counts = {
         "rebound_chunk_ids": 0,
         "rebased_quote_ranges": 0,
@@ -362,6 +420,20 @@ def add_proposal_details(
             selected_chunks=selected_chunks,
         )
         return
+    if isinstance(proposal, KnowledgeStateProposalBatchV1):
+        add_knowledge_state_batch_details(
+            summary=summary,
+            batch=proposal,
+            selected_chunks=selected_chunks,
+        )
+        return
+    if isinstance(proposal, StateChangeProposalBatchV1):
+        add_state_change_batch_details(
+            summary=summary,
+            batch=proposal,
+            selected_chunks=selected_chunks,
+        )
+        return
     if isinstance(proposal, EventProposalV1):
         summary["proposal_id"] = proposal.proposal_id
         summary["event_type"] = proposal.event_type
@@ -381,6 +453,19 @@ def add_proposal_details(
         summary["claim_type"] = str(proposal.claim_type)
         summary["source_type"] = str(proposal.source_type)
         summary["verification_status"] = str(proposal.verification_status)
+        summary["confidence"] = proposal.confidence
+        summary.update(validate_evidence(proposal.evidence_refs, selected_chunks))
+        return
+    if isinstance(proposal, KnowledgeStateProposalV1):
+        summary["proposal_id"] = proposal.proposal_id
+        summary["epistemic_status"] = str(proposal.epistemic_status)
+        summary["epistemic_basis"] = str(proposal.epistemic_basis)
+        summary["confidence"] = proposal.confidence
+        summary.update(validate_evidence(proposal.evidence_refs, selected_chunks))
+        return
+    if isinstance(proposal, StateChangeProposalV1):
+        summary["proposal_id"] = proposal.proposal_id
+        summary["attribute_path"] = str(proposal.attribute_path)
         summary["confidence"] = proposal.confidence
         summary.update(validate_evidence(proposal.evidence_refs, selected_chunks))
 
@@ -492,6 +577,80 @@ def add_claim_batch_details(
     )
 
 
+def add_knowledge_state_batch_details(
+    *,
+    summary: dict[str, Any],
+    batch: KnowledgeStateProposalBatchV1,
+    selected_chunks: list[SourceChunkV1],
+) -> None:
+    """Add sanitized KnowledgeStateProposalBatchV1 metadata to a summary."""
+
+    evidence_results = [
+        _knowledge_state_evidence_summary(state, selected_chunks) for state in batch.states
+    ]
+    summary["batch_id"] = batch.batch_id
+    summary["states_count"] = len(batch.states)
+    summary["state_proposal_ids"] = [state.proposal_id for state in batch.states]
+    summary["knowledge_state_evidence_results"] = [
+        {
+            "proposal_id": result["proposal_id"],
+            "epistemic_status": result["epistemic_status"],
+            "epistemic_basis": result["epistemic_basis"],
+            "subject_resolution_status": result["subject_resolution_status"],
+            "target_resolution_status": result["target_resolution_status"],
+            "evidence_chunk_id": result["evidence_chunk_id"],
+            "quote_matched": result["quote_matched"],
+            "char_range_matched": result["char_range_matched"],
+        }
+        for result in evidence_results
+    ]
+    summary["evidence_validation_passed"] = all(
+        result["evidence_validation_passed"] is True for result in evidence_results
+    )
+    summary["quote_matched"] = _combine_tristate(
+        [result["quote_matched"] for result in evidence_results]
+    )
+    summary["char_range_matched"] = _combine_tristate(
+        [result["char_range_matched"] for result in evidence_results]
+    )
+
+
+def add_state_change_batch_details(
+    *,
+    summary: dict[str, Any],
+    batch: StateChangeProposalBatchV1,
+    selected_chunks: list[SourceChunkV1],
+) -> None:
+    """Add sanitized StateChangeProposalBatchV1 metadata to a summary."""
+
+    evidence_results = [
+        _state_change_evidence_summary(change, selected_chunks) for change in batch.changes
+    ]
+    summary["batch_id"] = batch.batch_id
+    summary["changes_count"] = len(batch.changes)
+    summary["change_proposal_ids"] = [change.proposal_id for change in batch.changes]
+    summary["state_change_evidence_results"] = [
+        {
+            "proposal_id": result["proposal_id"],
+            "attribute_path": result["attribute_path"],
+            "target_resolution_status": result["target_resolution_status"],
+            "evidence_chunk_id": result["evidence_chunk_id"],
+            "quote_matched": result["quote_matched"],
+            "char_range_matched": result["char_range_matched"],
+        }
+        for result in evidence_results
+    ]
+    summary["evidence_validation_passed"] = all(
+        result["evidence_validation_passed"] is True for result in evidence_results
+    )
+    summary["quote_matched"] = _combine_tristate(
+        [result["quote_matched"] for result in evidence_results]
+    )
+    summary["char_range_matched"] = _combine_tristate(
+        [result["char_range_matched"] for result in evidence_results]
+    )
+
+
 def _event_evidence_summary(
     event: EventProposalV1,
     selected_chunks: list[SourceChunkV1],
@@ -527,6 +686,40 @@ def _claim_evidence_summary(
         "claim_type": str(claim.claim_type),
         "source_type": str(claim.source_type),
         "temporal_scope": str(claim.temporal_scope) if claim.temporal_scope is not None else None,
+        **validation,
+    }
+
+
+def _knowledge_state_evidence_summary(
+    state: KnowledgeStateProposalV1,
+    selected_chunks: list[SourceChunkV1],
+) -> dict[str, Any]:
+    validation = validate_evidence_refs(state.evidence_refs, selected_chunks)
+    return {
+        "proposal_id": state.proposal_id,
+        "epistemic_status": str(state.epistemic_status),
+        "epistemic_basis": str(state.epistemic_basis),
+        "subject_resolution_status": (
+            str(state.subject.resolution_status) if state.subject is not None else None
+        ),
+        "target_resolution_status": (
+            str(state.target.resolution_status) if state.target is not None else None
+        ),
+        **validation,
+    }
+
+
+def _state_change_evidence_summary(
+    change: StateChangeProposalV1,
+    selected_chunks: list[SourceChunkV1],
+) -> dict[str, Any]:
+    validation = validate_evidence_refs(change.evidence_refs, selected_chunks)
+    return {
+        "proposal_id": change.proposal_id,
+        "attribute_path": str(change.attribute_path),
+        "target_resolution_status": (
+            str(change.target.resolution_status) if change.target is not None else None
+        ),
         **validation,
     }
 
@@ -801,6 +994,28 @@ def manual_review_checklist(mode: str) -> dict[str, Any]:
             "prediction_commitment_distinguished": None,
             "every_claim_has_supporting_evidence": None,
             "no_duplicate_or_invented_claims": None,
+            "manual_score": None,
+            "manual_issue": None,
+        }
+    if mode == "knowledge_state_extraction":
+        return {
+            "knowledge_states_cover_explicit_epistemic_states": None,
+            "no_state_inferred_from_speech_presence_or_silence": None,
+            "knows_not_inferred_from_reader_or_narrator_knowledge": None,
+            "subject_target_and_anchor_resolution_preserved": None,
+            "every_knowledge_state_has_supporting_evidence": None,
+            "no_status_upgrade_or_contradiction_adjudication": None,
+            "manual_score": None,
+            "manual_issue": None,
+        }
+    if mode == "state_change_extraction":
+        return {
+            "state_changes_cover_explicit_object_state_changes": None,
+            "event_and_target_remain_source_grounded": None,
+            "attribute_path_matches_target_kind": None,
+            "new_value_has_supporting_evidence": None,
+            "persistence_is_not_inferred": None,
+            "unresolved_references_are_not_upgraded": None,
             "manual_score": None,
             "manual_issue": None,
         }

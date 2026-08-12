@@ -5,21 +5,30 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from comic_agent.config import Settings
 from comic_agent.database.base import Base
-from comic_agent.providers.openai_compatible import ProviderResponseError, ProviderTimeoutError
+from comic_agent.providers.openai_compatible import (
+    OpenAICompatibleLLMProvider,
+    ProviderResponseError,
+    ProviderTimeoutError,
+)
 from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
 from comic_agent.schemas.base import EvidenceRefV1, RealityLayer
 from comic_agent.schemas.narrative import (
     ClaimProposalV1,
     EntityProposalV1,
     EventProposalV1,
+    KnowledgeStateProposalV1,
+    KnowledgeTemporalAnchorV1,
+    StateChangeProposalV1,
 )
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.workflow import (
+    AgentRunStatus,
     NarrativeAnalysisProposalSourceV1,
     NarrativeAnalysisRunStatus,
     NarrativeAnalysisRunV1,
@@ -64,6 +73,26 @@ def test_plan_analysis_windows_uses_three_chunk_windows_with_stride_two() -> Non
     assert [window.window_index for window in windows] == [0, 1]
 
 
+def test_plan_analysis_windows_assigns_each_source_chunk_one_deterministic_owner() -> None:
+    windows = plan_analysis_windows([_chunk(index) for index in range(5)])
+
+    assert [window.owned_chunk_ids for window in windows] == [
+        ["chunk-0", "chunk-1", "chunk-2"],
+        ["chunk-3", "chunk-4"],
+    ]
+    owned = [chunk_id for window in windows for chunk_id in window.owned_chunk_ids]
+    assert owned == [f"chunk-{index}" for index in range(5)]
+    assert all(set(window.owned_chunk_ids) <= set(window.chunk_ids) for window in windows)
+
+
+def test_plan_analysis_windows_fills_stride_gaps_before_assigning_ownership() -> None:
+    windows = plan_analysis_windows([_chunk(index) for index in range(5)], window_size=1, stride=3)
+
+    owned = [chunk_id for window in windows for chunk_id in window.owned_chunk_ids]
+    assert owned == [f"chunk-{index}" for index in range(5)]
+    assert all(len(window.owned_chunk_ids) == 1 for window in windows)
+
+
 def test_entity_manual_review_checklist_covers_creature_taxonomy_boundaries() -> None:
     checklist = manual_review_checklist("entity_extraction")
 
@@ -88,9 +117,7 @@ def test_http_failure_recommended_actions_are_status_specific(
     status_code: int, expected_action: str
 ) -> None:
     assert (
-        recommended_action_for_failure(
-            "PROVIDER_HTTP_ERROR", {"http_status_code": status_code}
-        )
+        recommended_action_for_failure("PROVIDER_HTTP_ERROR", {"http_status_code": status_code})
         == expected_action
     )
 
@@ -179,6 +206,28 @@ def test_window_diagnostics_v1_2_keeps_prior_payloads_readable() -> None:
             "failure_category": "PROVIDER_TIMEOUT",
         }
     )
+    v1_2 = NarrativeAnalysisWindowV1.model_validate(
+        {
+            "schema_version": "1.2",
+            "window_index": 2,
+            "chunk_ids": ["chunk-2"],
+            "analysis_window_id": "window-v1-2",
+            "analysis_run_id": "analysis-v1-2",
+            "mode": "event_extraction",
+            "status": "FAILED",
+        }
+    )
+    v1_3 = NarrativeAnalysisWindowV1.model_validate(
+        {
+            "schema_version": "1.3",
+            "window_index": 3,
+            "chunk_ids": ["chunk-3"],
+            "analysis_window_id": "window-v1-3",
+            "analysis_run_id": "analysis-v1-3",
+            "mode": "event_extraction",
+            "status": "SPLIT",
+        }
+    )
     current = NarrativeAnalysisWindowV1(
         analysis_window_id="window-current-0",
         analysis_run_id="analysis-current",
@@ -193,9 +242,13 @@ def test_window_diagnostics_v1_2_keeps_prior_payloads_readable() -> None:
 
     assert legacy.schema_version == "1.0"
     assert legacy.failure_category is None
+    assert legacy.owned_chunk_ids == ["chunk-0"]
     assert v1_1.schema_version == "1.1"
     assert v1_1.attempt_count == 0
-    assert current.schema_version == "1.2"
+    assert v1_2.schema_version == "1.2"
+    assert v1_3.schema_version == "1.3"
+    assert current.schema_version == "1.4"
+    assert current.owned_chunk_ids == ["chunk-0"]
     assert current.provider_error_diagnostics == {"timeout_kind": "read"}
 
 
@@ -385,6 +438,303 @@ class _RetryingWindowProvider(_FakeProvider):
         return super().structured_generate(request, output_model)
 
 
+class _BoundaryLengthProvider(_FakeProvider):
+    """Fail broad windows and accept source-chunk-bounded recovery calls."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.input_chunk_ids: list[list[str]] = []
+        self.input_texts: list[list[str]] = []
+
+    def structured_generate(self, request, output_model):  # type: ignore[no-untyped-def]
+        input_context = request["input_context"]
+        chunk_ids = list(input_context["source_chunk_ids"])
+        chunks = input_context["source_chunks"]
+        self.input_chunk_ids.append(chunk_ids)
+        self.input_texts.append([chunk["text"] for chunk in chunks])
+        if len(chunk_ids) > 1:
+            raise ProviderResponseError(
+                "LLM provider response exceeded max output tokens before final content",
+                {"finish_reason": "length", "content_type": "NoneType"},
+            )
+        return super().structured_generate(request, output_model)
+
+
+class _OwnershipBoundaryProvider:
+    """Return one auditable change per selected chunk and fail the overlap parent."""
+
+    def __init__(self, *, fail_second: bool = True, distinct_overlap: bool = False) -> None:
+        self.calls: list[list[str]] = []
+        self.fail_second = fail_second
+        self.distinct_overlap = distinct_overlap
+
+    def structured_generate(self, request, output_model):  # type: ignore[no-untyped-def]
+        input_context = request["input_context"]
+        chunk_ids = list(input_context["source_chunk_ids"])
+        self.calls.append(chunk_ids)
+        if self.fail_second and len(self.calls) == 2 and len(chunk_ids) > 1:
+            raise ProviderResponseError(
+                "LLM provider response exceeded max output tokens before final content",
+                {"finish_reason": "length", "content_type": "NoneType"},
+            )
+        changes = []
+        for chunk in input_context["source_chunks"]:
+            chunk_id = chunk["chunk_id"]
+            quote = chunk["text"][:4]
+            changes.append(
+                {
+                    "schema_version": "1.3",
+                    "proposal_id": f"ownership-{chunk_id}",
+                    "event": {
+                        "event_summary": (
+                            f"change-{chunk_id}-call-{len(self.calls)}"
+                            if self.distinct_overlap
+                            else f"change-{chunk_id}"
+                        ),
+                        "event_proposal_id": None,
+                        "proposal_schema": None,
+                        "resolution_status": "UNRESOLVED",
+                    },
+                    "target": {
+                        "mention_text": quote,
+                        "target_kind": "OBJECT",
+                        "entity_proposal_id": None,
+                        "proposal_schema": None,
+                        "resolution_status": "UNRESOLVED",
+                    },
+                    "attribute_path": "accessibility",
+                    "old_value": None,
+                    "new_value": "closed",
+                    "persistent": False,
+                    "reality_layer": "PRIMARY",
+                    "evidence_refs": [{"chunk_id": chunk_id, "quote_text": quote}],
+                    "new_value_evidence_indexes": [0],
+                    "persistence_evidence_indexes": [],
+                    "confidence": 0.8,
+                }
+            )
+        return output_model.model_validate(
+            {
+                "schema_version": "1.3",
+                "batch_id": f"ownership-batch-{len(self.calls)}",
+                "changes": changes,
+            }
+        )
+
+
+class _KnowledgeStateWindowProvider:
+    def __init__(self, *, empty: bool = False, multiple: bool = False) -> None:
+        self.calls: list[str] = []
+        self.empty = empty
+        self.multiple = multiple
+
+    def structured_generate(self, request, output_model):  # type: ignore[no-untyped-def]
+        self.calls.append("knowledge_state_extraction")
+        input_context = request["input_context"]
+        chunk_id = input_context["source_chunk_ids"][0]
+        quote = input_context["source_chunks"][0]["text"][:4]
+        states = []
+        if not self.empty:
+            states = [
+                {
+                    "schema_version": "1.1",
+                    "proposal_id": f"knowledge-{chunk_id}",
+                    "subject": {
+                        "mention_text": "Synthetic subject",
+                        "entity_proposal_id": None,
+                        "resolution_status": "UNRESOLVED",
+                    },
+                    "target": {
+                        "target_kind": "WORLD_FACT",
+                        "target_text": "Synthetic fact",
+                        "proposal_id": None,
+                        "proposal_schema": None,
+                        "resolution_status": "UNRESOLVED",
+                    },
+                    "epistemic_status": "SUSPECTS",
+                    "epistemic_basis": "INFERRED",
+                    "reality_layer": "PRIMARY",
+                    "evidence_refs": [{"chunk_id": chunk_id, "quote_text": quote}],
+                    "confidence": 0.8,
+                }
+            ]
+            if self.multiple:
+                states.append(
+                    states[0]
+                    | {
+                        "proposal_id": f"knowledge-belief-{chunk_id}",
+                        "epistemic_status": "BELIEVES",
+                        "epistemic_basis": "OBSERVED",
+                    }
+                )
+        return output_model.model_validate(
+            {"batch_id": f"knowledge-batch-{chunk_id}", "states": states}
+        )
+
+
+class _StateChangeWindowProvider:
+    def __init__(
+        self,
+        *,
+        empty: bool = False,
+        failures: dict[int, Exception] | None = None,
+        invalid_evidence: bool = False,
+    ) -> None:
+        self.calls: list[str] = []
+        self.empty = empty
+        self.failures = failures or {}
+        self.invalid_evidence = invalid_evidence
+
+    def structured_generate(self, request, output_model):  # type: ignore[no-untyped-def]
+        self.calls.append("state_change_extraction")
+        failure = self.failures.get(len(self.calls))
+        if failure is not None:
+            raise failure
+        input_context = request["input_context"]
+        chunk_id = input_context["source_chunk_ids"][0]
+        quote = input_context["source_chunks"][0]["text"][:4]
+        evidence_chunk_id = "unselected-chunk" if self.invalid_evidence else chunk_id
+        changes = []
+        if not self.empty:
+            changes = [
+                {
+                    "schema_version": "1.2",
+                    "proposal_id": f"state-change-{chunk_id}",
+                    "event": {
+                        "event_summary": "Synthetic gate closes",
+                        "event_proposal_id": None,
+                        "proposal_schema": None,
+                        "resolution_status": "UNRESOLVED",
+                    },
+                    "target": {
+                        "mention_text": quote,
+                        "target_kind": "OBJECT",
+                        "entity_proposal_id": None,
+                        "proposal_schema": None,
+                        "resolution_status": "UNRESOLVED",
+                    },
+                    "attribute_path": "accessibility",
+                    "old_value": None,
+                    "new_value": "closed",
+                    "persistent": False,
+                    "reality_layer": "PRIMARY",
+                    "evidence_refs": [{"chunk_id": evidence_chunk_id, "quote_text": quote}],
+                    "new_value_evidence_indexes": [0],
+                    "persistence_evidence_indexes": [],
+                    "confidence": 0.8,
+                }
+            ]
+        return output_model.model_validate(
+            {
+                "schema_version": "1.2",
+                "batch_id": f"state-change-batch-{chunk_id}",
+                "changes": changes,
+            }
+        )
+
+
+class _StateChangeQuantityRecoveryProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.output_recovery_markers: list[str | None] = []
+        self.rule_codes: list[object] = []
+        self.recovery_rule_codes: list[object] = []
+
+    def _change(
+        self,
+        *,
+        proposal_id: str,
+        target: str,
+        old_value: object,
+        new_value: object,
+        quote: str,
+        path: str = "possession.holder",
+    ) -> dict[str, object]:
+        return {
+            "schema_version": "1.3",
+            "proposal_id": proposal_id,
+            "event": {
+                "event_summary": quote,
+                "event_proposal_id": None,
+                "proposal_schema": None,
+                "resolution_status": "UNRESOLVED",
+            },
+            "target": {
+                "mention_text": "卷轴" if path == "possession.holder" else "药瓶",
+                "target_kind": "OBJECT",
+                "entity_proposal_id": None,
+                "proposal_schema": None,
+                "resolution_status": "UNRESOLVED",
+            },
+            "attribute_path": path,
+            "old_value": old_value,
+            "new_value": new_value,
+            "persistent": False,
+            "reality_layer": "PRIMARY",
+            "evidence_refs": [{"chunk_id": "chunk-0", "quote_text": quote}],
+            "new_value_evidence_indexes": [0],
+            "persistence_evidence_indexes": [],
+            "confidence": 0.9,
+        }
+
+    def _payload(self, *, invalid_quantity: bool) -> dict[str, object]:
+        return {
+            "schema_version": "1.3",
+            "batch_id": "state-change-recovery-batch",
+            "changes": [
+                self._change(
+                    proposal_id="scroll-1",
+                    target="周砚",
+                    old_value="阿葵",
+                    new_value="周砚",
+                    quote="阿葵把卷轴交给周砚",
+                ),
+                self._change(
+                    proposal_id="scroll-2",
+                    target="沈策",
+                    old_value="周砚",
+                    new_value="沈策",
+                    quote="周砚又把卷轴交给沈策",
+                ),
+                self._change(
+                    proposal_id="scroll-3",
+                    target="陆衡",
+                    old_value="沈策",
+                    new_value="陆衡",
+                    quote="沈策再交给陆衡",
+                ),
+                self._change(
+                    proposal_id="medicine-quantity",
+                    target="药瓶",
+                    old_value=6 if not invalid_quantity else "6",
+                    new_value=4 if not invalid_quantity else "4",
+                    quote="药瓶数量从六变为四",
+                    path="quantity",
+                ),
+            ],
+        }
+
+    def structured_generate(self, request, output_model):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        input_context = request["input_context"]
+        self.output_recovery_markers.append(input_context.get("output_recovery"))
+        if self.calls > 1:
+            self.recovery_rule_codes = list(input_context.get("schema_error_rule_codes", []))
+        if self.calls == 1:
+            try:
+                output_model.model_validate(self._payload(invalid_quantity=True))
+            except ValidationError as exc:
+                diagnostics = OpenAICompatibleLLMProvider.schema_validation_diagnostics(
+                    exc, output_model
+                )
+                self.rule_codes = list(diagnostics.get("schema_error_rule_codes", []))
+                raise ProviderResponseError(
+                    "LLM provider response failed schema validation",
+                    diagnostics,
+                ) from exc
+        return output_model.model_validate(self._payload(invalid_quantity=False))
+
+
 @pytest.mark.parametrize(
     ("error", "expected_category", "expected_diagnostics"),
     [
@@ -550,7 +900,9 @@ def test_worker_classifies_disabled_real_llm_without_calling_provider(tmp_path: 
     assert window.recommended_action == "restart the API with ENABLE_REAL_LLM=true"
 
 
-def test_worker_retries_length_failure_once_with_reduced_input_budget(tmp_path: Path) -> None:
+def test_worker_splits_length_failure_without_truncating_child_source(
+    tmp_path: Path,
+) -> None:
     source_repository = _FakeSourceRepository([_long_chunk(index) for index in range(5)])
     analysis_repository = _repository(tmp_path)
     run = create_narrative_analysis_run(
@@ -582,15 +934,188 @@ def test_worker_retries_length_failure_once_with_reduced_input_budget(tmp_path: 
     retried_window = next(window for window in windows if window.window_index == 1)
 
     assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
-    assert provider.input_text_lengths == [1200, 1200, 800]
-    assert provider.output_recovery_markers == [None, None, "length_reduction"]
-    assert retried_window.status == NarrativeAnalysisWindowStatus.SUCCEEDED
-    assert retried_window.attempt_count == 2
-    assert retried_window.effective_max_chars_per_chunk == 800
-    assert retried_window.previous_failure_category == "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT"
+    assert provider.input_text_lengths == [1200, 1200, 1410, 1410]
+    assert provider.output_recovery_markers == [
+        None,
+        None,
+        "length_split",
+        "length_split",
+    ]
+    assert retried_window.status == NarrativeAnalysisWindowStatus.SPLIT
+    assert retried_window.attempt_count == 1
+    assert retried_window.effective_max_chars_per_chunk == 1200
+    assert retried_window.previous_failure_category is None
+    assert all(
+        window.effective_max_chars_per_chunk == 1410
+        for window in windows
+        if window.analysis_window_id.startswith(f"{retried_window.analysis_window_id}:split:")
+    )
 
 
-def test_worker_keeps_successful_aggregate_when_length_retry_still_fails(tmp_path: Path) -> None:
+def test_worker_splits_length_failed_window_at_source_chunk_boundaries(
+    tmp_path: Path,
+) -> None:
+    source_chunks = [_long_chunk(index) for index in range(3)]
+    source_repository = _FakeSourceRepository(source_chunks)
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _BoundaryLengthProvider()
+    worker = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    )
+
+    completed = worker.run_pending(run.analysis_run_id)
+    windows = analysis_repository.list_windows(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert provider.input_chunk_ids[0] == ["chunk-0", "chunk-1", "chunk-2"]
+    assert provider.input_chunk_ids[1:] == [["chunk-0"], ["chunk-1"], ["chunk-2"]]
+    expected_lengths = {chunk.chunk_id: len(chunk.text) for chunk in source_chunks}
+    assert [len(texts[0]) for texts in provider.input_texts[1:]] == [
+        expected_lengths[chunk_ids[0]] for chunk_ids in provider.input_chunk_ids[1:]
+    ]
+    split_windows = [
+        window for window in windows if window.status == NarrativeAnalysisWindowStatus.SPLIT
+    ]
+    succeeded_chunks = [
+        window.chunk_ids
+        for window in windows
+        if window.status == NarrativeAnalysisWindowStatus.SUCCEEDED
+    ]
+    assert len(split_windows) == 1
+    assert split_windows[0].owned_chunk_ids == ["chunk-0", "chunk-1", "chunk-2"]
+    assert [
+        window.analysis_window_id
+        for window in windows
+        if window.analysis_window_id.startswith(f"{split_windows[0].analysis_window_id}:split:")
+    ] == [
+        f"{split_windows[0].analysis_window_id}:split:0",
+        f"{split_windows[0].analysis_window_id}:split:1",
+        f"{split_windows[0].analysis_window_id}:split:2",
+    ]
+    assert succeeded_chunks == [
+        ["chunk-0"],
+        ["chunk-1"],
+        ["chunk-2"],
+    ]
+    child_windows = [
+        window
+        for window in windows
+        if window.parent_window_id == split_windows[0].analysis_window_id
+    ]
+    assert [window.owned_chunk_ids for window in child_windows] == [
+        ["chunk-0"],
+        ["chunk-1"],
+        ["chunk-2"],
+    ]
+    assert all(
+        window.split_reason == "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT"
+        for window in child_windows
+    )
+
+    call_count = len(provider.input_chunk_ids)
+    resumed = worker.run_pending(run.analysis_run_id)
+    assert resumed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert len(provider.input_chunk_ids) == call_count
+
+
+def test_split_children_only_process_parent_owned_overlap_chunks(tmp_path: Path) -> None:
+    source_repository = _FakeSourceRepository([_chunk(index) for index in range(5)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["state_change_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _OwnershipBoundaryProvider()
+    worker = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    )
+
+    completed = worker.run_pending(run.analysis_run_id)
+    windows = analysis_repository.list_windows(run.analysis_run_id)
+    split_parent = next(
+        window for window in windows if window.status == NarrativeAnalysisWindowStatus.SPLIT
+    )
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert provider.calls == [
+        ["chunk-0", "chunk-1", "chunk-2"],
+        ["chunk-2", "chunk-3", "chunk-4"],
+        ["chunk-3"],
+        ["chunk-4"],
+    ]
+    children = [
+        window for window in windows if window.parent_window_id == split_parent.analysis_window_id
+    ]
+    assert [child.owned_chunk_ids for child in children] == [["chunk-3"], ["chunk-4"]]
+    result = analysis_repository.get_result(run.analysis_run_id)
+    assert result is not None
+    assert {item.proposal.event.event_summary for item in result.state_changes} == {
+        "change-chunk-0",
+        "change-chunk-1",
+        "change-chunk-2",
+        "change-chunk-3",
+        "change-chunk-4",
+    }
+
+
+def test_state_change_aggregation_filters_non_owned_overlap_proposals(tmp_path: Path) -> None:
+    source_repository = _FakeSourceRepository([_chunk(index) for index in range(5)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["state_change_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _OwnershipBoundaryProvider(fail_second=False, distinct_overlap=True)
+    worker = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    )
+
+    completed = worker.run_pending(run.analysis_run_id)
+    result = analysis_repository.get_result(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert provider.calls == [
+        ["chunk-0", "chunk-1", "chunk-2"],
+        ["chunk-2", "chunk-3", "chunk-4"],
+    ]
+    assert result is not None
+    assert len(result.state_changes) == 5
+    assert "change-chunk-2-call-2" not in {
+        item.proposal.event.event_summary for item in result.state_changes
+    }
+
+
+def test_worker_splits_length_failure_and_preserves_successful_aggregate(
+    tmp_path: Path,
+) -> None:
     source_repository = _FakeSourceRepository([_long_chunk(index) for index in range(5)])
     analysis_repository = _repository(tmp_path)
     run = create_narrative_analysis_run(
@@ -616,22 +1141,28 @@ def test_worker_keeps_successful_aggregate_when_length_retry_still_fails(tmp_pat
 
     completed = worker.run_pending(run.analysis_run_id)
     result = analysis_repository.get_result(run.analysis_run_id)
-    failed_window = next(
+    split_window = next(
         window
         for window in analysis_repository.list_windows(run.analysis_run_id)
         if window.window_index == 1
     )
 
-    assert completed.status == NarrativeAnalysisRunStatus.PARTIAL_FAILED
-    assert provider.input_text_lengths == [1200, 1200, 800]
-    assert failed_window.attempt_count == 2
-    assert failed_window.failure_category == "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT"
-    assert failed_window.provider_error_diagnostics == {
-        "finish_reason": "length",
-        "content_type": "NoneType",
-    }
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert provider.input_text_lengths == [1200, 1200, 1410, 800, 1410]
+    assert split_window.status == NarrativeAnalysisWindowStatus.SPLIT
+    assert split_window.attempt_count == 1
+    assert split_window.failure_category == "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT"
+    child_windows = [
+        window
+        for window in analysis_repository.list_windows(run.analysis_run_id)
+        if window.analysis_window_id.startswith(f"{split_window.analysis_window_id}:split:")
+    ]
+    assert [window.status for window in child_windows] == [
+        NarrativeAnalysisWindowStatus.SUCCEEDED,
+        NarrativeAnalysisWindowStatus.SUCCEEDED,
+    ]
     assert result is not None
-    assert len(result.events) == 1
+    assert len(result.events) == 3
 
 
 def test_worker_retries_schema_failure_once_without_reducing_input_budget(tmp_path: Path) -> None:
@@ -823,6 +1354,586 @@ def test_worker_preserves_successful_windows_and_resume_skips_them(tmp_path: Pat
     assert len(result.entities[0].evidence_refs) == 2
 
 
+@pytest.mark.parametrize("empty", [False, True])
+def test_worker_treats_knowledge_state_batches_as_successful_and_aggregates_states(
+    tmp_path: Path, empty: bool
+) -> None:
+    source_repository = _FakeSourceRepository([_chunk(index) for index in range(3)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["knowledge_state_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _KnowledgeStateWindowProvider(empty=empty)
+    worker = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    )
+
+    completed = worker.run_pending(run.analysis_run_id)
+    result = analysis_repository.get_result(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert provider.calls == ["knowledge_state_extraction"]
+    assert result is not None
+    assert len(result.knowledge_states) == (0 if empty else 1)
+
+
+def test_worker_flattens_multiple_knowledge_states_without_merging_statuses(tmp_path: Path) -> None:
+    source_repository = _FakeSourceRepository([_chunk(index) for index in range(3)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["knowledge_state_extraction"],
+        real_llm_requested=True,
+    )
+    worker = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=_KnowledgeStateWindowProvider(multiple=True),
+    )
+
+    worker.run_pending(run.analysis_run_id)
+    result = analysis_repository.get_result(run.analysis_run_id)
+
+    assert result is not None
+    assert [item.proposal.epistemic_status for item in result.knowledge_states] == [
+        "SUSPECTS",
+        "BELIEVES",
+    ]
+
+
+def test_worker_merges_same_knowledge_state_across_windows_and_skips_success_on_resume(
+    tmp_path: Path,
+) -> None:
+    source_repository = _FakeSourceRepository([_chunk(index) for index in range(5)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["knowledge_state_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _KnowledgeStateWindowProvider()
+    worker = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    )
+
+    first = worker.run_pending(run.analysis_run_id)
+    calls_before_resume = list(provider.calls)
+    second = worker.run_pending(run.analysis_run_id)
+    result = analysis_repository.get_result(run.analysis_run_id)
+
+    assert first.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert second.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert provider.calls == calls_before_resume
+    assert result is not None
+    assert len(result.knowledge_states) == 1
+    assert len(result.knowledge_states[0].agent_run_ids) == 2
+    assert len(result.knowledge_states[0].evidence_refs) == 2
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_worker_treats_state_change_batches_as_successful_and_aggregates_changes(
+    tmp_path: Path, empty: bool
+) -> None:
+    source_repository = _FakeSourceRepository([_chunk(index) for index in range(3)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["state_change_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _StateChangeWindowProvider(empty=empty)
+    worker = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    )
+
+    completed = worker.run_pending(run.analysis_run_id)
+    result = analysis_repository.get_result(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert provider.calls == ["state_change_extraction"]
+    assert result is not None
+    assert len(result.state_changes) == (0 if empty else 1)
+
+
+def test_worker_merges_state_changes_across_windows_and_skips_success_on_resume(
+    tmp_path: Path,
+) -> None:
+    source_repository = _FakeSourceRepository([_chunk(index) for index in range(5)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["state_change_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _StateChangeWindowProvider()
+    worker = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    )
+
+    first = worker.run_pending(run.analysis_run_id)
+    calls_before_resume = list(provider.calls)
+    second = worker.run_pending(run.analysis_run_id)
+    result = analysis_repository.get_result(run.analysis_run_id)
+
+    assert first.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert second.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert provider.calls == calls_before_resume
+    assert result is not None
+    assert len(result.state_changes) == 1
+    assert len(result.state_changes[0].agent_run_ids) == 1
+    assert len(result.state_changes[0].evidence_refs) == 1
+
+
+def test_worker_recovers_a_state_change_schema_failure_once(tmp_path: Path) -> None:
+    source_repository = _FakeSourceRepository([_long_chunk(index) for index in range(5)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["state_change_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _StateChangeWindowProvider(
+        failures={
+            2: ProviderResponseError(
+                "LLM provider response failed schema validation",
+                {
+                    "schema_error_kind": "missing",
+                    "schema_error_field_paths": ["changes.0.target"],
+                    "expected_output_schema": "StateChangeProposalBatchV1",
+                },
+            )
+        }
+    )
+    worker = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    )
+
+    completed = worker.run_pending(run.analysis_run_id)
+    retried_window = next(
+        window
+        for window in analysis_repository.list_windows(run.analysis_run_id)
+        if window.window_index == 1
+    )
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert provider.calls == ["state_change_extraction"] * 3
+    assert retried_window.status == NarrativeAnalysisWindowStatus.SUCCEEDED
+    assert retried_window.attempt_count == 2
+    assert retried_window.previous_failure_category == "SCHEMA_VALIDATION_FAILED"
+
+
+def test_worker_state_change_quantity_schema_recovery_preserves_all_changes(
+    tmp_path: Path,
+) -> None:
+    source = _chunk(0).model_copy(
+        update={
+            "text": "阿葵把卷轴交给周砚，周砚又把卷轴交给沈策，沈策再交给陆衡；药瓶数量从六变为四。"
+        }
+    )
+    source_repository = _FakeSourceRepository([source])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["state_change_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _StateChangeQuantityRecoveryProvider()
+    agent_run_repository = _FakeAgentRunRepository()
+    worker = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=agent_run_repository,
+        analysis_repository=analysis_repository,
+        provider=provider,
+    )
+
+    completed = worker.run_pending(run.analysis_run_id)
+    result = analysis_repository.get_result(run.analysis_run_id)
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert provider.calls == 2
+    assert provider.output_recovery_markers == [None, "state_change_schema_recovery"]
+    assert "STATE_CHANGE_QUANTITY_MUST_BE_JSON_NUMBER" in provider.rule_codes
+    assert "STATE_CHANGE_QUANTITY_MUST_BE_JSON_NUMBER" in provider.recovery_rule_codes
+    failed_agent_runs = [
+        agent_run
+        for agent_run in agent_run_repository.runs.values()
+        if agent_run.status == AgentRunStatus.FAILED
+    ]
+    assert failed_agent_runs
+    diagnostics = failed_agent_runs[0].payload.get("provider_error_diagnostics")
+    assert diagnostics is not None
+    assert "schema_error_rule_codes" in diagnostics
+    assert result is not None
+    assert len(result.state_changes) == 4
+    quantity = next(
+        item.proposal for item in result.state_changes if item.proposal.attribute_path == "quantity"
+    )
+    assert quantity.old_value == 6
+    assert quantity.new_value == 4
+    assert all("raw" not in str(item) for item in diagnostics.values())
+
+
+def test_worker_does_not_convert_source_only_state_change_rejection_to_success(
+    tmp_path: Path,
+) -> None:
+    source_repository = _FakeSourceRepository([_chunk(index) for index in range(3)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["state_change_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _StateChangeWindowProvider(invalid_evidence=True)
+    worker = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    )
+
+    completed = worker.run_pending(run.analysis_run_id)
+    result = analysis_repository.get_result(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.FAILED
+    assert provider.calls == ["state_change_extraction"]
+    assert result is not None
+    assert result.state_changes == []
+
+
+def test_rockery_cross_window_event_wording_stays_separate_for_manual_review() -> None:
+    quote = "假山直接崩塌下来。"
+
+    def proposal(proposal_id: str, event_summary: str, chunk_id: str) -> StateChangeProposalV1:
+        return StateChangeProposalV1.model_validate(
+            {
+                "schema_version": "1.2",
+                "proposal_id": proposal_id,
+                "event": {
+                    "event_summary": event_summary,
+                    "event_proposal_id": None,
+                    "proposal_schema": None,
+                    "resolution_status": "UNRESOLVED",
+                },
+                "target": {
+                    "mention_text": "假山",
+                    "target_kind": "OBJECT",
+                    "entity_proposal_id": None,
+                    "proposal_schema": None,
+                    "resolution_status": "UNRESOLVED",
+                },
+                "attribute_path": "physical.condition",
+                "old_value": None,
+                "new_value": "崩塌",
+                "persistent": False,
+                "reality_layer": "PRIMARY",
+                "evidence_refs": [{"chunk_id": chunk_id, "quote_text": quote}],
+                "new_value_evidence_indexes": [0],
+                "persistence_evidence_indexes": [],
+                "confidence": 0.9,
+            }
+        )
+
+    result = aggregate_narrative_analysis(
+        [
+            NarrativeAnalysisProposalSourceV1(
+                mode="state_change_extraction",
+                agent_run_id="rockery-run-1",
+                proposal=proposal("rockery-proposal-1", "周元重拍假山", "rockery-chunk-1"),
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="state_change_extraction",
+                agent_run_id="rockery-run-2",
+                proposal=proposal("rockery-proposal-2", "拳头重拍在假山上", "rockery-chunk-2"),
+            ),
+        ]
+    )
+
+    assert len(result.state_changes) == 2
+    assert [item.proposal.event.event_summary for item in result.state_changes] == [
+        "周元重拍假山",
+        "拳头重拍在假山上",
+    ]
+    assert [item.agent_run_ids for item in result.state_changes] == [
+        ["rockery-run-1"],
+        ["rockery-run-2"],
+    ]
+
+
+def test_aggregate_state_changes_merges_only_exact_v12_semantics() -> None:
+    base = StateChangeProposalV1.model_validate(
+        {
+            "schema_version": "1.2",
+            "proposal_id": "state-change-1",
+            "event": {
+                "event_summary": "门关闭",
+                "event_proposal_id": None,
+                "proposal_schema": None,
+                "resolution_status": "UNRESOLVED",
+            },
+            "target": {
+                "mention_text": "青铜门",
+                "target_kind": "OBJECT",
+                "entity_proposal_id": None,
+                "proposal_schema": None,
+                "resolution_status": "UNRESOLVED",
+            },
+            "attribute_path": "accessibility",
+            "old_value": None,
+            "new_value": "关闭",
+            "persistent": False,
+            "reality_layer": "PRIMARY",
+            "evidence_refs": [{"chunk_id": "chunk-1", "quote_text": "青铜门关闭"}],
+            "new_value_evidence_indexes": [0],
+            "persistence_evidence_indexes": [],
+            "confidence": 0.8,
+        }
+    )
+    same = base.model_copy(
+        update={
+            "proposal_id": "state-change-2",
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-2", quote_text="青铜门关闭")],
+        }
+    )
+    changed_value = base.model_copy(
+        update={
+            "proposal_id": "state-change-3",
+            "new_value": "开启",
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-3", quote_text="青铜门开启")],
+        }
+    )
+    changed_path = base.model_copy(
+        update={
+            "proposal_id": "state-change-4",
+            "attribute_path": "physical.condition",
+            "new_value": "损坏",
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-4", quote_text="门损坏")],
+        }
+    )
+    changed_persistence = base.model_copy(
+        update={
+            "proposal_id": "state-change-5",
+            "persistent": True,
+            "persistence_evidence_indexes": [0],
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-5", quote_text="门永久关闭")],
+        }
+    )
+    resolved = StateChangeProposalV1.model_validate(
+        {
+            **base.model_dump(mode="json"),
+            "proposal_id": "state-change-6",
+            "event": {
+                "event_summary": "门关闭",
+                "event_proposal_id": "event-proposal-1",
+                "proposal_schema": "EventProposalV1",
+                "resolution_status": "RESOLVED",
+            },
+            "target": {
+                "mention_text": "青铜门",
+                "target_kind": "OBJECT",
+                "entity_proposal_id": "entity-proposal-1",
+                "proposal_schema": "EntityProposalV1",
+                "resolution_status": "RESOLVED",
+            },
+            "evidence_refs": [{"chunk_id": "chunk-6", "quote_text": "青铜门关闭"}],
+        }
+    )
+    numeric_legacy_value = StateChangeProposalV1.model_validate(
+        {
+            "schema_version": "1.1",
+            "proposal_id": "state-change-7",
+            "event": {
+                "event_summary": "库存更新",
+                "event_proposal_id": None,
+                "proposal_schema": None,
+                "resolution_status": "UNRESOLVED",
+            },
+            "target": {
+                "mention_text": "仓库",
+                "entity_proposal_id": None,
+                "proposal_schema": None,
+                "resolution_status": "UNRESOLVED",
+            },
+            "attribute_path": "legacy_status",
+            "old_value": None,
+            "new_value": 1,
+            "persistent": False,
+            "reality_layer": "PRIMARY",
+            "evidence_refs": [{"chunk_id": "chunk-7", "quote_text": "库存更新"}],
+            "confidence": 0.8,
+        }
+    )
+    string_legacy_value = StateChangeProposalV1.model_validate(
+        {
+            **numeric_legacy_value.model_dump(mode="json"),
+            "proposal_id": "state-change-8",
+            "new_value": "1",
+            "evidence_refs": [{"chunk_id": "chunk-8", "quote_text": "库存更新"}],
+        }
+    )
+    same_id_different_semantics = base.model_copy(
+        update={
+            "proposal_id": "state-change-1",
+            "new_value": "半开",
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-9", quote_text="青铜门半开")],
+        }
+    )
+
+    result = aggregate_narrative_analysis(
+        [
+            NarrativeAnalysisProposalSourceV1(
+                mode="state_change_extraction", agent_run_id="run-1", proposal=base
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="state_change_extraction", agent_run_id="run-2", proposal=same
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="state_change_extraction", agent_run_id="run-3", proposal=changed_value
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="state_change_extraction", agent_run_id="run-4", proposal=changed_path
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="state_change_extraction",
+                agent_run_id="run-5",
+                proposal=changed_persistence,
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="state_change_extraction", agent_run_id="run-6", proposal=resolved
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="state_change_extraction",
+                agent_run_id="run-7",
+                proposal=numeric_legacy_value,
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="state_change_extraction",
+                agent_run_id="run-8",
+                proposal=string_legacy_value,
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="state_change_extraction",
+                agent_run_id="run-9",
+                proposal=same_id_different_semantics,
+            ),
+        ]
+    )
+
+    assert len(result.state_changes) == 8
+    assert result.state_changes[0].agent_run_ids == ["run-1", "run-2"]
+    assert len(result.state_changes[0].evidence_refs) == 2
+    assert [item.proposal.new_value for item in result.state_changes] == [
+        "关闭",
+        "开启",
+        "损坏",
+        "关闭",
+        "关闭",
+        1,
+        "1",
+        "半开",
+    ]
+
+
+def test_aggregate_state_changes_merges_exact_v13_appearance_candidates() -> None:
+    base = StateChangeProposalV1.model_validate(
+        {
+            "schema_version": "1.3",
+            "proposal_id": "state-change-v13-1",
+            "event": {
+                "event_summary": "换上灰衣",
+                "event_proposal_id": None,
+                "proposal_schema": None,
+                "resolution_status": "UNRESOLVED",
+            },
+            "target": {
+                "mention_text": "周砚",
+                "target_kind": "CHARACTER",
+                "entity_proposal_id": None,
+                "proposal_schema": None,
+                "resolution_status": "UNRESOLVED",
+            },
+            "attribute_path": "appearance.clothing",
+            "old_value": "湿外袍",
+            "new_value": "灰衣",
+            "persistent": False,
+            "reality_layer": "PRIMARY",
+            "evidence_refs": [{"chunk_id": "chunk-v13-1", "quote_text": "换上灰衣"}],
+            "new_value_evidence_indexes": [0],
+            "persistence_evidence_indexes": [],
+            "confidence": 0.9,
+        }
+    )
+    same = base.model_copy(
+        update={
+            "proposal_id": "state-change-v13-2",
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-v13-2", quote_text="换上灰衣")],
+        }
+    )
+
+    result = aggregate_narrative_analysis(
+        [
+            NarrativeAnalysisProposalSourceV1(
+                mode="state_change_extraction", agent_run_id="run-v13-1", proposal=base
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="state_change_extraction", agent_run_id="run-v13-2", proposal=same
+            ),
+        ]
+    )
+
+    assert len(result.state_changes) == 1
+    assert result.state_changes[0].proposal.attribute_path == "appearance.clothing"
+    assert result.state_changes[0].agent_run_ids == ["run-v13-1", "run-v13-2"]
+
+
 def test_aggregate_narrative_analysis_merges_only_the_documented_exact_keys() -> None:
     event_a = EventProposalV1(
         proposal_id="event-a",
@@ -924,3 +2035,283 @@ def test_aggregate_narrative_analysis_merges_only_the_documented_exact_keys() ->
     assert len(result.entities[0].evidence_refs) == 2
     assert len(result.claims) == 3
     assert result.claims[0].agent_run_ids == ["run-claim-1", "run-claim-2"]
+
+
+def test_aggregate_knowledge_states_merges_only_identical_resolution_aware_keys() -> None:
+    base = KnowledgeStateProposalV1.model_validate(
+        {
+            "proposal_id": "knowledge-1",
+            "subject": {
+                "mention_text": "沈策",
+                "entity_proposal_id": "entity-shence",
+                "resolution_status": "RESOLVED",
+            },
+            "target": {
+                "target_kind": "WORLD_FACT",
+                "target_text": "出口存在",
+                "proposal_id": None,
+                "proposal_schema": None,
+                "resolution_status": "UNRESOLVED",
+            },
+            "epistemic_status": "BELIEVES",
+            "epistemic_basis": "HEARD",
+            "reality_layer": "PRIMARY",
+            "evidence_refs": [{"chunk_id": "chunk-1"}],
+            "confidence": 0.8,
+        }
+    )
+    same = base.model_copy(
+        update={"proposal_id": "knowledge-2", "evidence_refs": [EvidenceRefV1(chunk_id="chunk-2")]}
+    )
+    unresolved = KnowledgeStateProposalV1.model_validate(
+        base.model_dump(mode="json")
+        | {
+            "proposal_id": "knowledge-3",
+            "subject": {
+                "mention_text": "沈策",
+                "entity_proposal_id": None,
+                "resolution_status": "UNRESOLVED",
+            },
+        }
+    )
+    result = aggregate_narrative_analysis(
+        [
+            NarrativeAnalysisProposalSourceV1(
+                mode="knowledge_state_extraction", agent_run_id="run-1", proposal=base
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="knowledge_state_extraction", agent_run_id="run-2", proposal=same
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="knowledge_state_extraction", agent_run_id="run-3", proposal=unresolved
+            ),
+        ]
+    )
+
+    assert len(result.knowledge_states) == 2
+    assert result.knowledge_states[0].agent_run_ids == ["run-1", "run-2"]
+    assert len(result.knowledge_states[0].evidence_refs) == 2
+
+
+def test_aggregate_knowledge_states_never_merges_same_id_when_target_text_or_basis_differs() -> (
+    None
+):
+    base = KnowledgeStateProposalV1.model_validate(
+        {
+            "proposal_id": "ksp-shared",
+            "subject": {
+                "mention_text": "甲",
+                "entity_proposal_id": "entity-a",
+                "resolution_status": "RESOLVED",
+            },
+            "target": {
+                "target_kind": "WORLD_FACT",
+                "target_text": "出口存在",
+                "proposal_id": None,
+                "proposal_schema": None,
+                "resolution_status": "UNRESOLVED",
+            },
+            "epistemic_status": "BELIEVES",
+            "epistemic_basis": "HEARD",
+            "reality_layer": "PRIMARY",
+            "evidence_refs": [{"chunk_id": "chunk-1"}],
+            "confidence": 0.8,
+        }
+    )
+    changed_target = base.model_copy(
+        update={
+            "target": base.target.model_copy(update={"target_text": "出口不存在"}),
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-2")],
+        }
+    )
+    changed_basis = base.model_copy(
+        update={
+            "epistemic_basis": "OBSERVED",
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-3")],
+        }
+    )
+    changed_anchor = base.model_copy(
+        update={
+            "valid_from": KnowledgeTemporalAnchorV1(
+                anchor_text="门关闭之后",
+                event_proposal_id=None,
+                resolution_status="UNRESOLVED",
+            ),
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-4")],
+        }
+    )
+
+    result = aggregate_narrative_analysis(
+        [
+            NarrativeAnalysisProposalSourceV1(
+                mode="knowledge_state_extraction", agent_run_id="run-a", proposal=base
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="knowledge_state_extraction", agent_run_id="run-b", proposal=changed_target
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="knowledge_state_extraction", agent_run_id="run-c", proposal=changed_basis
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="knowledge_state_extraction", agent_run_id="run-d", proposal=changed_anchor
+            ),
+        ]
+    )
+
+    assert len(result.knowledge_states) == 4
+    assert [item.agent_run_ids for item in result.knowledge_states] == [
+        ["run-a"],
+        ["run-b"],
+        ["run-c"],
+        ["run-d"],
+    ]
+
+
+def test_aggregate_knowledge_states_preserves_cross_window_target_kind_and_text_variants() -> None:
+    base = KnowledgeStateProposalV1.model_validate(
+        {
+            "proposal_id": "knowledge-world-1",
+            "subject": {
+                "mention_text": "林舟",
+                "entity_proposal_id": None,
+                "resolution_status": "UNRESOLVED",
+            },
+            "target": {
+                "target_kind": "WORLD_FACT",
+                "target_text": "守卫故意隐瞒了山路的位置",
+                "proposal_id": None,
+                "proposal_schema": None,
+                "resolution_status": "UNRESOLVED",
+            },
+            "epistemic_status": "SUSPECTS",
+            "epistemic_basis": "INFERRED",
+            "reality_layer": "PRIMARY",
+            "evidence_refs": [{"chunk_id": "chunk-1"}],
+            "confidence": 0.8,
+        }
+    )
+    exact_repeat = base.model_copy(
+        update={
+            "proposal_id": "knowledge-world-2",
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-2")],
+        }
+    )
+    target_kind_variant = KnowledgeStateProposalV1.model_validate(
+        base.model_dump(mode="json")
+        | {
+            "proposal_id": "knowledge-claim-1",
+            "target": base.target.model_dump(mode="json") | {"target_kind": "CLAIM"},
+            "epistemic_status": "HEARD",
+            "epistemic_basis": "HEARD",
+            "evidence_refs": [{"chunk_id": "chunk-3"}],
+        }
+    )
+    core_target = base.model_copy(
+        update={
+            "proposal_id": "knowledge-core-1",
+            "target": base.target.model_copy(update={"target_text": "山中有鬼"}),
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-4")],
+        }
+    )
+    target_text_variant = base.model_copy(
+        update={
+            "proposal_id": "knowledge-rumor-1",
+            "target": base.target.model_copy(
+                update={"target_text": "山中有鬼的传言"}
+            ),
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-5")],
+        }
+    )
+    changed_status = base.model_copy(
+        update={
+            "proposal_id": "knowledge-status-1",
+            "epistemic_status": "DISBELIEVES",
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-6")],
+        }
+    )
+    changed_basis = base.model_copy(
+        update={
+            "proposal_id": "knowledge-basis-1",
+            "epistemic_basis": "HEARD",
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-7")],
+        }
+    )
+    changed_subject = base.model_copy(
+        update={
+            "proposal_id": "knowledge-subject-1",
+            "subject": base.subject.model_copy(update={"mention_text": "苏岚"}),
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-8")],
+        }
+    )
+    changed_reality = base.model_copy(
+        update={
+            "proposal_id": "knowledge-reality-1",
+            "reality_layer": "DREAM",
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-9")],
+        }
+    )
+    changed_anchor = base.model_copy(
+        update={
+            "proposal_id": "knowledge-anchor-1",
+            "valid_until": KnowledgeTemporalAnchorV1(
+                anchor_text="离开小镇之后",
+                event_proposal_id=None,
+                resolution_status="UNRESOLVED",
+            ),
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-10")],
+        }
+    )
+
+    result = aggregate_narrative_analysis(
+        [
+            NarrativeAnalysisProposalSourceV1(
+                mode="knowledge_state_extraction", agent_run_id="run-1", proposal=base
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="knowledge_state_extraction", agent_run_id="run-2", proposal=exact_repeat
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="knowledge_state_extraction",
+                agent_run_id="run-3",
+                proposal=target_kind_variant,
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="knowledge_state_extraction",
+                agent_run_id="run-4",
+                proposal=core_target,
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="knowledge_state_extraction",
+                agent_run_id="run-5",
+                proposal=target_text_variant,
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="knowledge_state_extraction", agent_run_id="run-6", proposal=changed_status
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="knowledge_state_extraction", agent_run_id="run-7", proposal=changed_basis
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="knowledge_state_extraction", agent_run_id="run-8", proposal=changed_subject
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="knowledge_state_extraction", agent_run_id="run-9", proposal=changed_reality
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="knowledge_state_extraction", agent_run_id="run-10", proposal=changed_anchor
+            ),
+        ]
+    )
+
+    assert len(result.knowledge_states) == 9
+    assert result.knowledge_states[0].agent_run_ids == ["run-1", "run-2"]
+    assert len(result.knowledge_states[0].evidence_refs) == 2
+    assert {item.proposal.target.target_kind for item in result.knowledge_states} == {
+        "CLAIM",
+        "WORLD_FACT",
+    }
+    assert {item.proposal.target.target_text for item in result.knowledge_states} >= {
+        "守卫故意隐瞒了山路的位置",
+        "山中有鬼",
+        "山中有鬼的传言",
+    }

@@ -90,6 +90,13 @@ class NarrativeAnalysisRepository:
         self._session.commit()
         return window
 
+    def create_windows(self, windows: list[NarrativeAnalysisWindowV1]) -> None:
+        """Create deterministic recovery windows idempotently."""
+
+        for window in windows:
+            self._create_window(window)
+        self._session.commit()
+
     def save_result(self, result: NarrativeAnalysisResultV1) -> NarrativeAnalysisResultV1:
         """Persist the typed, sanitized aggregate result for one task."""
 

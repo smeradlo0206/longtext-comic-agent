@@ -8,7 +8,10 @@ from comic_agent.schemas.narrative import (
     ClaimProposalBatchV1,
     EntityProposalBatchV1,
     EventProposalBatchV1,
+    KnowledgeStateProposalBatchV1,
+    StateChangeProposalBatchV1,
 )
+from comic_agent.schemas.source import SourceChunkV1
 
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
 
@@ -37,9 +40,7 @@ class FakeProvider:
                             "participant_ids": [],
                             "actor_resolution_status": "UNKNOWN",
                             "location_id": None,
-                            "evidence_refs": [
-                                {"chunk_id": "chunk-1", "quote_text": "door opened"}
-                            ],
+                            "evidence_refs": [{"chunk_id": "chunk-1", "quote_text": "door opened"}],
                             "confidence": 0.86,
                             "reality_layer": "PRIMARY",
                         }
@@ -56,9 +57,7 @@ class FakeProvider:
                             "entity_type": "CHARACTER",
                             "canonical_name": "Demo Entity",
                             "aliases": [],
-                            "evidence_refs": [
-                                {"chunk_id": "chunk-1", "quote_text": "Demo Entity"}
-                            ],
+                            "evidence_refs": [{"chunk_id": "chunk-1", "quote_text": "Demo Entity"}],
                             "confidence": 0.88,
                         }
                     ],
@@ -85,6 +84,14 @@ class FakeProvider:
                     ],
                 }
             )
+        if output_model is StateChangeProposalBatchV1:
+            return output_model.model_validate(
+                {
+                    "schema_version": "1.2",
+                    "batch_id": "state-change-batch-1",
+                    "changes": [],
+                }
+            )
         raise AssertionError(f"Unexpected output model: {output_model}")
 
 
@@ -94,6 +101,21 @@ def _input_context() -> dict[str, object]:
         "source_chunk_ids": ["chunk-1"],
         "source_chunks": [{"chunk_id": "chunk-1", "text": "secret-test-source text"}],
         "api_key_hint": "secret-test-key",
+    }
+
+
+def _state_change_input_context() -> dict[str, object]:
+    source_chunk = SourceChunkV1(
+        chunk_id="chunk-1",
+        document_id="document-1",
+        chapter_id="chapter-1",
+        project_id="project-1",
+        order=0,
+        text="secret-test-source text",
+        checksum="fixture-only",
+    )
+    return _input_context() | {
+        "source_chunks": [source_chunk.model_dump(mode="json")],
     }
 
 
@@ -150,6 +172,16 @@ def test_narrative_analyst_routes_claim_extraction_to_existing_agent() -> None:
         ("event_extraction", "EventProposalBatchV1", EventProposalBatchV1),
         ("entity_extraction", "EntityProposalBatchV1", EntityProposalBatchV1),
         ("claim_extraction", "ClaimProposalBatchV1", ClaimProposalBatchV1),
+        (
+            "knowledge_state_extraction",
+            "KnowledgeStateProposalBatchV1",
+            KnowledgeStateProposalBatchV1,
+        ),
+        (
+            "state_change_extraction",
+            "StateChangeProposalBatchV1",
+            StateChangeProposalBatchV1,
+        ),
     ],
 )
 def test_implemented_mode_specs_are_bounded_evidence_required_and_proposal_only(
@@ -170,34 +202,18 @@ def test_implemented_mode_specs_are_bounded_evidence_required_and_proposal_only(
     assert spec.proposal_only is True
 
 
-@pytest.mark.parametrize(
-    ("mode", "output_schema"),
-    [
-        ("knowledge_state_extraction", "KnowledgeStateProposalV1"),
-        ("state_change_extraction", "StateChangeProposalV1"),
-    ],
-)
-def test_planned_mode_is_registered_but_not_implemented_and_does_not_call_provider(
-    mode: str,
-    output_schema: str,
-) -> None:
+def test_state_change_extraction_routes_to_agent_and_accepts_empty_batch() -> None:
     provider = FakeProvider()
     analyst = NarrativeAnalyst(provider)
 
-    spec = analyst.get_mode_spec(mode)
-    with pytest.raises(NotImplementedError) as exc_info:
-        analyst.run(mode, _input_context())
+    input_context = _state_change_input_context()
+    batch = analyst.run("state_change_extraction", input_context)
 
-    message = str(exc_info.value)
-    assert spec.status == "planned"
-    assert spec.output_schema == output_schema
-    assert provider.requests == []
-    assert mode in message
-    assert "planned" in message
-    assert "secret-test-source" not in message
-    assert "secret-test-key" not in message
-    assert "raw provider" not in message
-    assert "message.content" not in message
+    assert isinstance(batch, StateChangeProposalBatchV1)
+    assert batch.schema_version == "1.2"
+    assert batch.changes == []
+    assert provider.output_models == [StateChangeProposalBatchV1]
+    assert provider.requests[0]["input_context"] == input_context
 
 
 def test_unknown_mode_is_rejected_and_does_not_call_provider() -> None:

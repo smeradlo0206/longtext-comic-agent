@@ -49,13 +49,31 @@ def plan_analysis_windows(
     tail_start = max(len(ordered_chunks) - window_size, 0)
     if tail_start not in starts:
         starts.append(tail_start)
-    return [
-        NarrativeAnalysisWindowPlanV1(
-            window_index=index,
-            chunk_ids=[chunk.chunk_id for chunk in ordered_chunks[start : start + window_size]],
+    covered_positions = {
+        position
+        for start in starts
+        for position in range(start, min(start + window_size, len(ordered_chunks)))
+    }
+    for position in range(len(ordered_chunks)):
+        if position not in covered_positions:
+            starts.append(min(position, len(ordered_chunks) - window_size))
+    starts = sorted(set(starts))
+    planned_windows: list[NarrativeAnalysisWindowPlanV1] = []
+    owned_chunk_ids: set[str] = set()
+    for index, start in enumerate(starts):
+        chunk_ids = [
+            chunk.chunk_id for chunk in ordered_chunks[start : start + window_size]
+        ]
+        owned = [chunk_id for chunk_id in chunk_ids if chunk_id not in owned_chunk_ids]
+        owned_chunk_ids.update(owned)
+        planned_windows.append(
+            NarrativeAnalysisWindowPlanV1(
+                window_index=index,
+                chunk_ids=chunk_ids,
+                owned_chunk_ids=owned,
+            )
         )
-        for index, start in enumerate(starts)
-    ]
+    return planned_windows
 
 
 def create_narrative_analysis_run(
@@ -106,6 +124,7 @@ def create_narrative_analysis_run(
             mode=mode,
             window_index=plan.window_index,
             chunk_ids=plan.chunk_ids,
+            owned_chunk_ids=plan.owned_chunk_ids,
             status=NarrativeAnalysisWindowStatus.PENDING,
         )
         for mode in modes

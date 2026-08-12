@@ -12,6 +12,9 @@ from comic_agent.schemas.narrative import (
     ClaimProposalBatchV1,
     EntityProposalBatchV1,
     EventProposalBatchV1,
+    KnowledgeStateProposalBatchV1,
+    StateChangeProposalBatchV1,
+    StateChangeProposalV1,
 )
 from comic_agent.schemas.workflow import (
     AgentRunStatus,
@@ -113,7 +116,6 @@ class NarrativeAnalysisWorker:
                     "error_message": None,
                     "failure_category": None,
                     "recommended_action": None,
-                    "provider_error_diagnostics": None,
                     "attempt_count": current.attempt_count + 1,
                 }
             )
@@ -125,14 +127,15 @@ class NarrativeAnalysisWorker:
                 real_llm_requested,
             )
             self._analysis_repository.save_window(completed)
+            if self._should_split(completed):
+                self._split_length_failed_window(workflow, run, completed, real_llm_requested)
+                return
             if not self._should_retry(completed):
                 return
             current = completed.model_copy(
                 update={
                     "previous_failure_category": completed.failure_category,
-                    "effective_max_chars_per_chunk": self._retry_max_chars_per_chunk(
-                        completed
-                    ),
+                    "effective_max_chars_per_chunk": self._retry_max_chars_per_chunk(completed),
                 }
             )
 
@@ -153,6 +156,7 @@ class NarrativeAnalysisWorker:
                 chunk_limit=len(running.chunk_ids),
                 max_chars_per_chunk=running.effective_max_chars_per_chunk,
                 output_recovery=self._output_recovery(running),
+                output_recovery_rule_codes=self._output_recovery_rule_codes(running),
                 real_llm_requested=real_llm_requested,
             )
             agent_run_id = result.agent_run.agent_run_id if result.agent_run is not None else None
@@ -206,6 +210,81 @@ class NarrativeAnalysisWorker:
             and window.failure_category in RETRYABLE_FAILURE_CATEGORIES
         )
 
+    def _should_split(self, window: NarrativeAnalysisWindowV1) -> bool:
+        """Split only a multi-SourceChunk length failure at auditable boundaries."""
+
+        return (
+            window.status == NarrativeAnalysisWindowStatus.FAILED
+            and window.failure_category == "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT"
+            and len(window.chunk_ids) > 1
+        )
+
+    def _split_length_failed_window(
+        self,
+        workflow: NarrativeAnalystWorkflow,
+        run: NarrativeAnalysisRunV1,
+        failed_window: NarrativeAnalysisWindowV1,
+        real_llm_requested: bool,
+    ) -> None:
+        """Create and execute one deterministic child window per source chunk."""
+
+        owned_ids = [
+            chunk_id
+            for chunk_id in failed_window.chunk_ids
+            if chunk_id in set(failed_window.owned_chunk_ids)
+        ]
+        chunks = [
+            chunk
+            for chunk_id in owned_ids
+            if (chunk := self._source_repository.get_chunk(chunk_id)) is not None
+        ]
+        if len(chunks) != len(owned_ids):
+            return
+        child_windows = [
+            NarrativeAnalysisWindowV1(
+                analysis_window_id=f"{failed_window.analysis_window_id}:split:{index}",
+                analysis_run_id=failed_window.analysis_run_id,
+                mode=failed_window.mode,
+                window_index=(failed_window.window_index + 1) * 100_000 + index,
+                chunk_ids=[chunk.chunk_id],
+                owned_chunk_ids=[chunk.chunk_id],
+                status=NarrativeAnalysisWindowStatus.PENDING,
+                effective_max_chars_per_chunk=max(
+                    failed_window.effective_max_chars_per_chunk,
+                    len(chunk.text),
+                ),
+                previous_failure_category=failed_window.failure_category,
+                parent_window_id=failed_window.analysis_window_id,
+                split_reason=failed_window.failure_category,
+            )
+            for index, chunk in enumerate(chunks)
+        ]
+        create_windows = getattr(self._analysis_repository, "create_windows", None)
+        if not callable(create_windows):
+            return
+        create_windows(child_windows)
+        split_window = failed_window.model_copy(
+            update={
+                "status": NarrativeAnalysisWindowStatus.SPLIT,
+                "split_reason": failed_window.failure_category,
+            }
+        )
+        self._analysis_repository.save_window(split_window)
+        updated_window_ids = list(run.window_ids)
+        for child in child_windows:
+            if child.analysis_window_id not in updated_window_ids:
+                updated_window_ids.append(child.analysis_window_id)
+        self._analysis_repository.save_run(
+            run.model_copy(
+                update={
+                    "window_ids": updated_window_ids,
+                    "updated_at": datetime.now(UTC),
+                }
+            )
+        )
+        for child in child_windows:
+            self._run_window(workflow, run, child, real_llm_requested)
+
     def _retry_max_chars_per_chunk(self, window: NarrativeAnalysisWindowV1) -> int:
         """Reduce only a length-truncated window; schema retries retain the same context."""
 
@@ -217,10 +296,25 @@ class NarrativeAnalysisWorker:
         """Pass a fixed, content-free correction marker only on the retry attempt."""
 
         if window.previous_failure_category == "SCHEMA_VALIDATION_FAILED":
+            if window.mode == "state_change_extraction":
+                return "state_change_schema_recovery"
             return "schema_validation"
         if window.previous_failure_category == "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT":
+            if window.effective_max_chars_per_chunk > LENGTH_RETRY_MAX_CHARS_PER_CHUNK:
+                return "length_split"
             return "length_reduction"
         return None
+
+    @staticmethod
+    def _output_recovery_rule_codes(window: NarrativeAnalysisWindowV1) -> list[str] | None:
+        diagnostics = window.provider_error_diagnostics
+        if not isinstance(diagnostics, dict):
+            return None
+        rule_codes = diagnostics.get("schema_error_rule_codes")
+        if not isinstance(rule_codes, list):
+            return None
+        safe_codes = sorted({code for code in rule_codes if isinstance(code, str)})
+        return safe_codes or None
 
     def _failure_details_from_summary(self, summary: dict[str, Any]) -> dict[str, object]:
         """Map an already-sanitized failed workflow summary to a window audit record."""
@@ -305,6 +399,25 @@ class NarrativeAnalysisWorker:
                     }
                     for proposal in ClaimProposalBatchV1.model_validate(payload).claims
                 )
+            elif agent_run.output_schema == "KnowledgeStateProposalBatchV1":
+                sources.extend(
+                    {
+                        "mode": window.mode,
+                        "agent_run_id": agent_run.agent_run_id,
+                        "proposal": proposal.model_dump(mode="json"),
+                    }
+                    for proposal in KnowledgeStateProposalBatchV1.model_validate(payload).states
+                )
+            elif agent_run.output_schema == "StateChangeProposalBatchV1":
+                sources.extend(
+                    {
+                        "mode": window.mode,
+                        "agent_run_id": agent_run.agent_run_id,
+                        "proposal": proposal.model_dump(mode="json"),
+                    }
+                    for proposal in StateChangeProposalBatchV1.model_validate(payload).changes
+                    if self._state_change_proposal_is_owned(window, proposal)
+                )
         from comic_agent.schemas.workflow import NarrativeAnalysisProposalSourceV1
 
         typed_sources = [
@@ -313,3 +426,17 @@ class NarrativeAnalysisWorker:
         self._analysis_repository.save_result(
             aggregate_narrative_analysis(typed_sources, analysis_run_id=run.analysis_run_id)
         )
+
+    @staticmethod
+    def _state_change_proposal_is_owned(
+        window: NarrativeAnalysisWindowV1,
+        proposal: StateChangeProposalV1,
+    ) -> bool:
+        """Use the first new-value EvidenceRef as the deterministic output owner."""
+
+        if not proposal.new_value_evidence_indexes:
+            return False
+        evidence_index = proposal.new_value_evidence_indexes[0]
+        if evidence_index >= len(proposal.evidence_refs):
+            return False
+        return proposal.evidence_refs[evidence_index].chunk_id in set(window.owned_chunk_ids)

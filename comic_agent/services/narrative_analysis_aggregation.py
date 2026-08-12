@@ -1,11 +1,20 @@
 """Typed, conservative aggregation for whole-document proposal candidates."""
 
 from comic_agent.schemas.base import EvidenceRefV1
-from comic_agent.schemas.narrative import ClaimProposalV1, EntityProposalV1, EventProposalV1
+from comic_agent.schemas.narrative import (
+    ClaimProposalV1,
+    EntityProposalV1,
+    EventProposalV1,
+    KnowledgeStateProposalV1,
+    KnowledgeTemporalAnchorV1,
+    StateChangeProposalV1,
+)
 from comic_agent.schemas.workflow import (
     AggregatedClaimProposalV1,
     AggregatedEntityProposalV1,
     AggregatedEventProposalV1,
+    AggregatedKnowledgeStateProposalV1,
+    AggregatedStateChangeProposalV1,
     NarrativeAnalysisProposalSourceV1,
     NarrativeAnalysisResultV1,
 )
@@ -21,6 +30,8 @@ def aggregate_narrative_analysis(
     events: dict[tuple[object, ...], AggregatedEventProposalV1] = {}
     entities: dict[tuple[object, ...], AggregatedEntityProposalV1] = {}
     claims: dict[tuple[object, ...], AggregatedClaimProposalV1] = {}
+    knowledge_states: dict[tuple[object, ...], AggregatedKnowledgeStateProposalV1] = {}
+    state_changes: dict[tuple[object, ...], AggregatedStateChangeProposalV1] = {}
     for source in sources:
         proposal = source.proposal
         if isinstance(proposal, EventProposalV1):
@@ -89,11 +100,53 @@ def aggregate_narrative_analysis(
                         )
                     }
                 )
+        elif isinstance(proposal, KnowledgeStateProposalV1):
+            knowledge_key = _knowledge_state_key(proposal)
+            existing_state = knowledge_states.get(knowledge_key)
+            if existing_state is None:
+                knowledge_states[knowledge_key] = AggregatedKnowledgeStateProposalV1(
+                    proposal=proposal,
+                    agent_run_ids=[source.agent_run_id],
+                    evidence_refs=proposal.evidence_refs,
+                )
+            else:
+                knowledge_states[knowledge_key] = existing_state.model_copy(
+                    update={
+                        "agent_run_ids": _append_unique(
+                            existing_state.agent_run_ids, source.agent_run_id
+                        ),
+                        "evidence_refs": _merge_evidence(
+                            existing_state.evidence_refs, proposal.evidence_refs
+                        ),
+                    }
+                )
+        elif isinstance(proposal, StateChangeProposalV1):
+            state_change_key = _state_change_key(proposal)
+            existing_change = state_changes.get(state_change_key)
+            if existing_change is None:
+                state_changes[state_change_key] = AggregatedStateChangeProposalV1(
+                    proposal=proposal,
+                    agent_run_ids=[source.agent_run_id],
+                    evidence_refs=proposal.evidence_refs,
+                )
+            else:
+                state_changes[state_change_key] = existing_change.model_copy(
+                    update={
+                        "agent_run_ids": _append_unique(
+                            existing_change.agent_run_ids, source.agent_run_id
+                        ),
+                        "evidence_refs": _merge_evidence(
+                            existing_change.evidence_refs, proposal.evidence_refs
+                        ),
+                    }
+                )
     return NarrativeAnalysisResultV1(
         analysis_run_id=analysis_run_id,
         events=list(events.values()),
         entities=list(entities.values()),
         claims=list(claims.values()),
+        knowledge_states=list(knowledge_states.values()),
+        state_changes=list(state_changes.values()),
     )
 
 
@@ -123,3 +176,85 @@ def _merge_evidence(
             merged.append(evidence)
             existing_keys.add(key)
     return merged
+
+
+def _knowledge_state_key(proposal: KnowledgeStateProposalV1) -> tuple[object, ...]:
+    """Preserve resolution state; aggregation never links or upgrades references."""
+
+    if proposal.schema_version != "1.1" or proposal.subject is None or proposal.target is None:
+        return ("legacy", proposal.proposal_id)
+    subject = proposal.subject
+    target = proposal.target
+    return (
+        subject.resolution_status,
+        subject.entity_proposal_id,
+        _normalized(subject.mention_text),
+        target.resolution_status,
+        target.target_kind,
+        target.proposal_id,
+        target.proposal_schema,
+        _normalized(target.target_text),
+        proposal.epistemic_status,
+        proposal.epistemic_basis,
+        proposal.reality_layer,
+        _temporal_anchor_key(proposal.valid_from),
+        _temporal_anchor_key(proposal.valid_until),
+    )
+
+
+def _temporal_anchor_key(anchor: KnowledgeTemporalAnchorV1 | None) -> tuple[object, ...] | None:
+    if anchor is None:
+        return None
+    resolution_status = anchor.resolution_status
+    event_proposal_id = anchor.event_proposal_id
+    anchor_text = anchor.anchor_text
+    return (
+        resolution_status,
+        event_proposal_id,
+        _normalized(anchor_text or ""),
+    )
+
+
+def _state_change_key(proposal: StateChangeProposalV1) -> tuple[object, ...]:
+    """Return the v1.2/v1.3 exact semantic key without linking or normalizing candidates."""
+
+    if (
+        proposal.schema_version not in {"1.2", "1.3"}
+        or proposal.event is None
+        or proposal.target is None
+    ):
+        return ("legacy", proposal.proposal_id)
+    event = proposal.event
+    target = proposal.target
+    return (
+        event.event_summary,
+        event.resolution_status,
+        event.event_proposal_id,
+        event.proposal_schema,
+        target.mention_text,
+        target.target_kind,
+        target.resolution_status,
+        target.entity_proposal_id,
+        target.proposal_schema,
+        proposal.attribute_path,
+        _typed_scalar_key(proposal.old_value),
+        _typed_scalar_key(proposal.new_value),
+        proposal.persistent,
+        proposal.reality_layer,
+    )
+
+
+def _typed_scalar_key(value: object) -> tuple[str, object | None]:
+    """Keep JSON scalar values exact and type-sensitive for State Change aggregation."""
+
+    if value is None:
+        return ("null", None)
+    if isinstance(value, bool):
+        return ("bool", value)
+    if isinstance(value, int):
+        return ("int", value)
+    if isinstance(value, float):
+        return ("float", value)
+    if isinstance(value, str):
+        return ("str", value)
+    return (type(value).__name__, repr(value))

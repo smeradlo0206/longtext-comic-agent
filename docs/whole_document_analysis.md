@@ -1,11 +1,36 @@
 # Whole-Document Narrative Analysis
 
+## Knowledge State aggregation compatibility
+
+Whole-document result payloads may include `knowledge_states`. Older v1.0 result
+payloads that omit the field deserialize with `knowledge_states=[]`. Aggregation
+does not resolve text references: different resolved/unresolved states, status,
+basis, reality layer, target, subject, or temporal anchors remain separate.
+It also keeps candidates separate when their target text differs, even if their
+proposal ids happen to match across windows. Review UI must pair a Proposal id
+with AgentRun context; a proposal id is batch-scoped rather than a global
+canonical identifier. Empty batches remain successful windows.
+
+`KNOWS + OBSERVED` is limited to an explicitly observed, recognized, discovered,
+or confirmed concrete fact. Presence, an uninspected object, a rumor, or narrator
+knowledge does not establish a character's knowledge of hidden content.
+
+Knowledge State `target_kind` means the semantic type of the cognitive target,
+not the speaking source or the subject's epistemic status. Use `EVENT` only for
+a concrete occurrence/discovery/change/action, `WORLD_FACT` for a proposition
+or fact state, and `CLAIM` only for a statement/report/rumor/declaration/
+accusation/promise as the target. `HEARD` therefore does not imply `CLAIM`.
+`target_text` uses the smallest complete, auditable core proposition: for a
+world-fact target, `山中有鬼的传言` is normalized to `山中有鬼`; the statement or
+rumor frame is retained only when it is itself the `CLAIM` target.
+
 ## Normal Flow
 
 1. Import a TXT document.
 2. Select the imported document in the Narrative Analyst Console.
 3. Choose one or more implemented modes: `event_extraction`,
-   `entity_extraction`, or `claim_extraction`.
+   `entity_extraction`, `claim_extraction`, `knowledge_state_extraction`, or
+   `state_change_extraction`.
 4. Start whole-document analysis and inspect progress, grouped proposal results,
    Evidence audit links, and linked AgentRuns.
 
@@ -17,8 +42,12 @@ Manual chunk selection is retained under Advanced debug mode for diagnosis.
 
 The v0.1 task is persisted before execution. It uses deterministic overlapping
 windows with `window_size=3`, `stride=2`, and fixed concurrency one. For five
-chunks, the windows are `[0,1,2]` and `[2,3,4]`; a tail window is added whenever
-needed to cover the final chunk.
+chunks, the context windows are `[0,1,2]` and `[2,3,4]`; a tail window is added whenever
+needed to cover the final chunk. Ownership is assigned deterministically in source
+order: the first leaf owns `[0,1,2]`, while the second reads `[2,3,4]` but owns only
+`[3,4]`. `chunk_ids` are context; `owned_chunk_ids` are the only source chunks whose
+proposals may enter whole-document aggregation. Every chunk has exactly one initial
+owner, and overlap is never an additional output owner.
 
 Each mode/window is independently auditable with its selected chunk ids, status,
 linked AgentRun id when present, and sanitized failure message. A failed window
@@ -27,7 +56,8 @@ does not block remaining windows. The final task state is `SUCCEEDED`,
 
 Use `GET /narrative-analysis-runs/{analysis_run_id}/windows` or the console's
 **Window execution details** table to inspect every execution. Each record
-contains only the mode, window index, chunk ids, status, AgentRun id, sanitized
+contains only the mode, context chunk ids, owned chunk ids, parent/child lineage,
+split reason, status, AgentRun id, sanitized
 error category and message, recommended action, attempt count, effective input
 budget, prior failure category, and a fixed allowlist of provider diagnostics
 such as `finish_reason`, content type, reasoning flag, and usage token counts.
@@ -41,10 +71,21 @@ left/right controls. Use the scrollbar, a horizontal swipe, or the controls to
 inspect every audit column without compressing or hiding a failure field.
 
 The worker makes at most one automatic retry for a recoverable failed attempt.
-For `PROVIDER_LENGTH_BEFORE_FINAL_CONTENT`, it lowers only that window's input
-budget from 1200 to 800 characters per chunk. For
+For `PROVIDER_LENGTH_BEFORE_FINAL_CONTENT` on a multi-SourceChunk window, it
+first records the failed parent and deterministically splits it into one child
+window per parent-owned SourceChunk. Each child may read the parent context but
+owns only its one source chunk; it receives complete text (no character slicing
+across a chunk boundary) and is processed independently. The parent is marked
+`SPLIT` with lineage and reason; deterministic child IDs make this recovery
+idempotent, and a resume never reruns successful children. A
+single-SourceChunk length failure retains the existing one retry, lowering only
+that window's input budget from 1200 to 800 characters per chunk. For
 `SCHEMA_VALIDATION_FAILED`, it retries once at the same budget after the Batch
-JSON-only boundary has been enforced. Retry history remains on the window. A
+JSON-only boundary has been enforced. State Change retries may include only safe
+rule codes such as `STATE_CHANGE_QUANTITY_MUST_BE_JSON_NUMBER`; quantity old/new
+values must be JSON numbers and the provider receives a fixed source-free marker.
+The worker never coerces values, drops valid siblings, or persists raw output.
+Retry history remains on the window. A
 failed retry remains failed; validation is never bypassed. Explicit resume still
 selects only `PENDING` or `FAILED` windows and never reruns a successful window.
 
@@ -71,9 +112,50 @@ EvidenceRef values. Aggregation is intentionally conservative:
   match; their evidence references are retained.
 - Claim proposals merge only when type, text, source type, and evidence all
   match.
+- Knowledge-state proposals merge only when their complete resolution-aware
+  subject, target, status, basis, reality-layer, and temporal-anchor semantics
+  match. An empty batch is a successful window and contributes no candidates.
+- State-change proposals merge only when event and target text, kinds, resolutions,
+  candidate links, attribute path, type-sensitive old/new values, persistence, and
+  reality layer all match. `changes=[]` is a successful window and contributes no
+  candidates. No fuzzy merge, automatic entity/event resolution, or fact adjudication
+  is performed.
+
+The Console can flag a deterministic, narrow **可能重复** review hint for two
+otherwise comparable Knowledge State candidates whose safely normalized core
+target matches but whose target kind or original expression differs. It only
+normalizes Unicode, outer quotes, whitespace, terminal punctuation, and the
+outer wrappers `传言`/`传闻`/`说法`/`消息`. The hint preserves every candidate and
+its Proposal id, AgentRun/evidence audit context, resolution state, and review
+decision. It never performs fuzzy matching, embedding/LLM comparison,
+canonicalization, automatic linking, resolution upgrade, deletion, rewriting,
+or merge.
 
 No similarity-based merge creates a canonical fact. The task does not call
 CommitService, write StoryBible, or write other canonical data.
+
+`NarrativeAnalysisResultV1` fresh output is v1.3 and includes `state_changes` alongside
+`knowledge_states`. Historical v1.0/v1.1/v1.2 JSON result payloads remain readable; missing
+new lists default to `[]`. 无需数据库迁移：新增字段只存在于兼容的 JSON 聚合结果中。
+The State Change Console audit table is separate from the Knowledge State table and shows
+event/target resolution, attribute path, old/new values, persistence evidence indexes,
+AgentRun context, and Evidence audit access.
+
+State Change v1.3 adds the CHARACTER-only `appearance.clothing` and
+`appearance.hairstyle` paths. Event remains the instantaneous cause while State Change is
+the resulting reusable state; `persistent=false` means no explicit continuing/permanent
+support, not that the state immediately ends. No canonical write, automatic resolution,
+fuzzy merge, or semantic repair is performed.
+
+Relationship Signal Schema Contract v1.0 is available as a new proposal-only schema for
+the future `relationship_signal_extraction` mode. It supports binary CHARACTER /
+ORGANIZATION participants, controlled relationship kind/domain/directionality, source
+basis, polarity, support level, optional speaker/context event, temporal anchors and
+EvidenceRef. It is not yet an Agent or implemented mode: no workflow, worker, recovery,
+aggregation, API, Console, canonical relationship or StoryBible path exists. Unresolved
+references remain null-linked and the schema performs no database lookup or fuzzy linking.
+This additive schema requires no database migration and does not change
+`NarrativeAnalysisResultV1`.
 
 ## Dry-Run and Manual Real Evaluation
 
@@ -177,3 +259,27 @@ the provider is ready. Successful windows keep their existing AgentRun ids;
 only pending or failed windows are retried. A service restart is equivalent to
 an interruption: restart the API, refresh progress, and use the same resume
 action.
+
+## Offline Knowledge State evaluation is separate from whole-document analysis
+
+The Console's **Knowledge State 评测** section is not a whole-document workflow and
+does not read imported chapters, aggregate results, AgentRuns, or provider payloads.
+It lists only bundled synthetic/redacted fixtures, accepts a manually supplied typed
+batch, and runs deterministic comparison locally on the API service. Loading the
+section never calls a Provider. A real-LLM fixture execution remains an explicitly
+checked, server-gated option and is not part of regression tests.
+
+This separation keeps whole-document aggregation conservative: semantic candidates
+are only merged by the existing complete key. Offline evaluation adds no canonical
+state, no database tables, and no migration requirement.
+
+The separate evaluation section can collect the newest structured Batch for each
+case in browser memory and submit those batches to the read-only batch-report
+endpoint. `KnowledgeStateEvaluationReportV1` is a cross-case quality summary, not
+a whole-document result and not an AgentRun. Generating or exporting it never
+calls a Provider and does not persist the report.
+
+When a real fixture run cannot produce a valid Knowledge State Batch, whole-document
+analysis is unaffected: the evaluation Console records a sanitized run failure,
+keeps its `case_id`, and includes it in the report. It does not fabricate an empty
+Batch, write a canonical fact, or silently remove the case from totals.

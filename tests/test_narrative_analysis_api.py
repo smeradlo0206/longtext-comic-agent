@@ -70,6 +70,7 @@ def test_whole_document_analysis_api_is_dry_run_by_default_and_sanitized(
     assert progress.json()["windows_failed"] == 0
     assert result.status_code == 200
     assert result.json()["events"] == []
+    assert result.json()["knowledge_states"] == []
     assert "Synthetic sentence." not in result.text
     assert resumed.status_code == 202
 
@@ -176,5 +177,8 @@ def test_whole_document_worker_uses_the_same_injected_provider_as_manual_mode(
     assert window["attempt_count"] == 1
     assert window["effective_max_chars_per_chunk"] == 1200
     assert window["previous_failure_category"] is None
+    assert window["owned_chunk_ids"] == window["chunk_ids"]
+    assert window["parent_window_id"] is None
+    assert window["split_reason"] is None
     assert "Synthetic sentence." not in windows.text
     assert "raw_output" not in windows.text

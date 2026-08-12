@@ -62,10 +62,28 @@
       line-height: 1.45;
     }
 
+    .sidebar-nav-shell {
+      min-width: 0;
+      margin-bottom: 22px;
+    }
+
+    .sidebar-nav-toolbar {
+      display: none;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      padding: 0 0 8px;
+      color: #a7b0bf;
+      font-size: 12px;
+    }
+
+    .sidebar-nav-controls { display: inline-flex; gap: 6px; }
+
+    .sidebar-nav-viewport { min-width: 0; }
+
     nav {
       display: grid;
       gap: 6px;
-      margin-bottom: 22px;
     }
 
     nav a {
@@ -318,7 +336,14 @@
 
     .table-scroll > table { min-width: 880px; }
 
+    .table-scroll-shell {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+    }
+
     .table-scroll-toolbar {
+      width: 100%;
       display: flex;
       justify-content: space-between;
       gap: 10px;
@@ -328,12 +353,75 @@
       font-size: 12px;
     }
 
-    .table-scroll-controls { display: inline-flex; gap: 6px; }
+    .table-scroll-controls {
+      position: sticky;
+      right: 0;
+      display: inline-flex;
+      flex: 0 0 auto;
+      gap: 6px;
+      padding-left: 8px;
+      background: var(--panel);
+    }
 
     .table-scroll-button {
       min-height: 30px;
       min-width: 34px;
       padding: 4px 8px;
+    }
+
+    .target-summary {
+      min-width: 220px;
+      max-width: 360px;
+      overflow-wrap: anywhere;
+    }
+
+    .target-summary summary {
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--accent-strong);
+      font-weight: 700;
+    }
+
+    .target-summary div {
+      margin-top: 8px;
+      color: var(--ink);
+      line-height: 1.5;
+      white-space: normal;
+    }
+
+    .possible-duplicate {
+      margin-top: 8px;
+      border: 1px solid #f1d28a;
+      border-radius: 8px;
+      background: #fffbeb;
+      color: #7a4e00;
+    }
+
+    .possible-duplicate summary {
+      padding: 8px;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      font-size: 12px;
+    }
+
+    .possible-duplicate-body {
+      display: grid;
+      gap: 8px;
+      padding: 0 8px 8px;
+      color: var(--ink);
+      font-size: 12px;
+    }
+
+    .possible-duplicate-candidate {
+      display: grid;
+      gap: 3px;
+      padding: 8px;
+      border: 1px solid #f1d28a;
+      border-radius: 6px;
+      background: #fff;
+      overflow-wrap: anywhere;
     }
 
     #narrative { overflow: visible; }
@@ -471,7 +559,19 @@
         position: static;
         height: auto;
       }
-      nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .sidebar-nav-toolbar { display: flex; }
+      .sidebar-nav-viewport {
+        overflow-x: auto;
+        overscroll-behavior-inline: contain;
+        scrollbar-gutter: stable;
+        touch-action: pan-x;
+      }
+      .sidebar-nav-viewport nav {
+        display: flex;
+        width: max-content;
+        min-width: 100%;
+      }
+      .sidebar-nav-viewport nav a { white-space: nowrap; }
       .topbar, .grid { grid-template-columns: 1fr; }
       .form-grid { grid-template-columns: 1fr; }
       .matrix { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -492,15 +592,27 @@
         <h1>Comic Agent Demo</h1>
         <p>内部 Hosted Demo Runtime。支持 Event、Entity、Claim 的 Narrative Analyst 评估。</p>
       </div>
-      <nav>
-        <a href="#status">Demo Status</a>
-        <a href="#import">TXT Import</a>
-        <a href="#chapters">Chunks</a>
-        <a href="#agents">Agents</a>
-        <a href="#narrative">Narrative Analyst</a>
-        <a href="#runs">Agent Runs</a>
-        <a href="#evidence">Evidence</a>
-      </nav>
+      <div class="sidebar-nav-shell">
+        <div class="sidebar-nav-toolbar">
+          <span>功能导航</span>
+          <span class="sidebar-nav-controls">
+            <button type="button" class="table-scroll-button" data-sidebar-scroll="left" aria-label="Scroll navigation left">←</button>
+            <button type="button" class="table-scroll-button" data-sidebar-scroll="right" aria-label="Scroll navigation right">→</button>
+          </span>
+        </div>
+        <div class="sidebar-nav-viewport" tabindex="0">
+          <nav>
+            <a href="#status">Demo Status</a>
+            <a href="#import">TXT Import</a>
+            <a href="#chapters">Chunks</a>
+            <a href="#agents">Agents</a>
+            <a href="#narrative">Narrative Analyst</a>
+            <a href="#knowledgeEvaluation">Knowledge State 评测</a>
+            <a href="#runs">Agent Runs</a>
+            <a href="#evidence">Evidence</a>
+          </nav>
+        </div>
+      </div>
       <div class="notice">
         Real LLM 使用服务端托管配置。页面不接收或展示 API Key，访问码只用于授权 demo 操作。
       </div>
@@ -620,6 +732,14 @@
                   claim_extraction
                 </label>
                 <label class="checkline">
+                  <input id="analysisModeKnowledge" data-analysis-mode="knowledge_state_extraction" type="checkbox" checked />
+                  knowledge_state_extraction
+                </label>
+                <label class="checkline">
+                  <input id="analysisModeStateChange" data-analysis-mode="state_change_extraction" type="checkbox" checked />
+                  state_change_extraction
+                </label>
+                <label class="checkline">
                   <input id="analysisRealLlmRequested" type="checkbox" />
                   real LLM requested
                 </label>
@@ -654,8 +774,8 @@
                 <h3>Selected whole-document proposal</h3>
                 <pre id="wholeDocumentProposalDetail">Select a proposal detail button from the list.</pre>
               </div>
-              <details id="advancedNarrativeDebug">
-                <summary>Advanced debug: manual chunk selection</summary>
+              <details id="advancedNarrativeDebug" open>
+                <summary>Manual Narrative Analyst：选择 1–3 个 chunks 后运行</summary>
                 <div class="body">
               <div class="form-grid">
                 <label>Mode
@@ -663,6 +783,8 @@
                     <option value="event_extraction">event_extraction · EventProposalBatchV1</option>
                     <option value="entity_extraction">entity_extraction · EntityProposalBatchV1</option>
                     <option value="claim_extraction">claim_extraction · ClaimProposalBatchV1</option>
+                    <option value="knowledge_state_extraction">knowledge_state_extraction · KnowledgeStateProposalBatchV1</option>
+                    <option value="state_change_extraction">state_change_extraction · StateChangeProposalBatchV1</option>
                   </select>
                 </label>
                 <label>chunk_limit
@@ -719,6 +841,67 @@
               </div>
                 </div>
               </details>
+            </div>
+          </section>
+
+          <section id="knowledgeEvaluation" class="full-span">
+            <div class="section-head">
+              <div>
+                <h2>Knowledge State 评测</h2>
+                <p>独立的离线语义评测：只比较合成或脱敏 fixture 与手工粘贴的结构化 Batch，不读取项目文本，也不会在加载时调用 Provider。</p>
+              </div>
+              <span class="pill warn" id="knowledgeEvaluationBadge">未加载</span>
+            </div>
+            <div class="body stack">
+              <div class="row">
+                <button id="loadKnowledgeEvaluationCases" class="primary">加载评测用例</button>
+                <label>评测用例
+                  <select id="knowledgeEvaluationCase"><option value="">先加载用例</option></select>
+                </label>
+              </div>
+              <p id="knowledgeEvaluationActionHint" class="muted">请先加载并选择一个评测用例，才能进行离线或真实 LLM 评测。</p>
+              <div id="knowledgeEvaluationCaseList"><span class="muted">尚未加载评测用例。</span></div>
+              <div>
+                <h3>Fixture 详情（仅合成/脱敏文本）</h3>
+                <pre id="knowledgeEvaluationCaseDetail">尚未加载。</pre>
+              </div>
+              <label>KnowledgeStateProposalBatchV1 JSON
+                <textarea id="knowledgeEvaluationBatch" rows="12" placeholder='粘贴结构化 Proposal Batch；不会发送到 Provider。'></textarea>
+              </label>
+              <div class="row">
+                <button id="evaluateKnowledgeStateBatch" class="primary" disabled>离线评测</button>
+                <label class="checkline"><input id="knowledgeEvaluationRealLlm" type="checkbox" /> 我明确请求真实 LLM（服务端必须启用）</label>
+                <button id="runKnowledgeStateCase" disabled>运行真实 LLM 评测</button>
+              </div>
+              <p id="knowledgeEvaluationRunStatus" class="pill" role="status" aria-live="polite">等待选择评测用例。</p>
+              <div>
+                <h3>评测结果</h3>
+                <pre id="knowledgeEvaluationResult">{}</pre>
+              </div>
+              <div>
+                <h3>批量评测报告</h3>
+                <p class="muted">每个 case 只保留当前浏览器内最新一次离线或显式真实 LLM 的结构化 Batch；生成报告不会调用 Provider。</p>
+                <div class="row">
+                  <button id="buildKnowledgeEvaluationReport" class="primary">生成已收集评测结果的报告</button>
+                  <button id="clearKnowledgeEvaluationReport">清空已收集结果</button>
+                  <span class="muted" id="knowledgeEvaluationCollectedCount">已收集评测结果：0</span>
+                  <button id="exportKnowledgeEvaluationReport">导出批量报告 JSON</button>
+                </div>
+                <p id="knowledgeEvaluationReportStatus" class="pill" role="status" aria-live="polite">尚未生成报告。</p>
+                <pre id="knowledgeEvaluationReport">{}</pre>
+              </div>
+              <div>
+                <h3>浏览器本地人工复核</h3>
+                <p class="muted">人工复核不写入后端，不会传给 Provider；导出仅包含 fixture ID、结果和以下本地字段。</p>
+                <div class="form-grid">
+                  <label>结论
+                    <select id="knowledgeEvaluationReviewDecision"><option value="">未选择</option><option>通过</option><option>误判状态</option><option>target_kind 错误</option><option>证据不足</option><option>多余输出</option><option>需新增规则</option></select>
+                  </label>
+                  <label>评审人<input id="knowledgeEvaluationReviewer" /></label>
+                  <label class="wide">备注<textarea id="knowledgeEvaluationReviewNotes" rows="3"></textarea></label>
+                </div>
+                <div class="row"><button id="saveKnowledgeEvaluationReview">保存本地复核</button><button id="exportKnowledgeEvaluation">导出脱敏评测 JSON</button></div>
+              </div>
             </div>
           </section>
 
@@ -779,7 +962,15 @@
       wholeDocumentPollTimer: null,
       accessGranted: true,
       requireAccessCode: false,
-      lastNarrativeResponse: null
+      lastNarrativeResponse: null,
+      knowledgeEvaluationCases: [],
+      knowledgeEvaluationCase: null,
+      knowledgeEvaluationResult: null,
+      knowledgeEvaluationReview: null,
+      knowledgeEvaluationBatches: new Map(),
+      knowledgeEvaluationRunFailures: new Map(),
+      knowledgeEvaluationReport: null,
+      knowledgeEvaluationRunInProgress: false
     };
 
     const $ = (id) => document.getElementById(id);
@@ -822,7 +1013,10 @@
       let data = null;
       try { data = text ? JSON.parse(text) : null; } catch { data = text; }
       if (!response.ok) {
-        throw new Error(typeof data === "object" && data?.detail ? data.detail : response.statusText);
+        const error = new Error(typeof data === "object" && data?.detail ? data.detail : response.statusText);
+        error.payload = data;
+        error.status = response.status;
+        throw error;
       }
       return data;
     }
@@ -887,7 +1081,7 @@
         $("verifyAccess").disabled = false;
       }
       $("runRealEvent").disabled = !state.accessGranted || state.selectedChunks.size < 1;
-      $("runNarrativeAnalyst").disabled = !state.accessGranted;
+      $("runNarrativeAnalyst").disabled = !state.accessGranted || state.selectedChunks.size < 1;
       $("startWholeDocumentAnalysis").disabled = !state.accessGranted;
     }
 
@@ -993,6 +1187,9 @@
         escapeHtml(windowItem.mode ?? "-"),
         escapeHtml(windowItem.window_index ?? "-"),
         escapeHtml((windowItem.chunk_ids || []).join(", ")),
+        escapeHtml((windowItem.owned_chunk_ids || []).join(", ")),
+        escapeHtml(windowItem.parent_window_id ?? "-"),
+        escapeHtml(windowItem.split_reason ?? "-"),
         statusPill("status", windowItem.status ?? "-"),
         escapeHtml(windowItem.agent_run_id ?? "-"),
         escapeHtml(windowItem.attempt_count ?? 0),
@@ -1004,7 +1201,7 @@
         escapeHtml(shortPreview(pretty(windowItem.provider_error_diagnostics ?? {}), 240))
       ]);
       $("wholeDocumentWindows").innerHTML = windowExecutionTable(
-        ["mode", "window", "chunk ids", "status", "AgentRun", "attempts", "input budget", "previous failure", "failure", "sanitized error", "recommended action", "safe diagnostics"],
+        ["mode", "window", "context chunk ids", "owned chunk ids", "parent window", "split reason", "status", "AgentRun", "attempts", "input budget", "previous failure", "failure", "sanitized error", "recommended action", "safe diagnostics"],
         rows
       );
     }
@@ -1044,7 +1241,9 @@
         event_proposals_count: result.events.length,
         entity_proposals_count: result.entities.length,
         claim_proposals_count: result.claims.length,
-        total_proposals: result.events.length + result.entities.length + result.claims.length,
+        knowledge_state_proposals_count: (result.knowledge_states || []).length,
+        state_change_proposals_count: (result.state_changes || []).length,
+        total_proposals: result.events.length + result.entities.length + result.claims.length + (result.knowledge_states || []).length + (result.state_changes || []).length,
         windows_total: progress.windows_total ?? null,
         windows_succeeded: progress.windows_succeeded ?? null,
         windows_failed: progress.windows_failed ?? null
@@ -1057,6 +1256,8 @@
       if (mode === "event_extraction") return result.events || [];
       if (mode === "entity_extraction") return result.entities || [];
       if (mode === "claim_extraction") return result.claims || [];
+      if (mode === "knowledge_state_extraction") return result.knowledge_states || [];
+      if (mode === "state_change_extraction") return result.state_changes || [];
       return [];
     }
 
@@ -1079,28 +1280,60 @@
       renderWholeDocumentSummary(result);
       $("wholeDocumentFullProposal").textContent = pretty(result);
       $("wholeDocumentProposalDetail").textContent = "Select a proposal detail button from the list.";
+      const knowledgeDuplicateReviews = buildKnowledgePossibleDuplicateReview(
+        (result.knowledge_states || []).map((item, index) => knowledgeReviewCandidate(
+          item.proposal || {},
+          `whole-${index}`,
+          `Aggregate / ${(item.agent_run_ids || []).join(", ") || "—"}`,
+          item.agent_run_ids || [],
+          item.evidence_refs || []
+        ))
+      );
       const rows = [
         ...(result.events || []).map((item, index) => ["event_extraction", item, index]),
         ...(result.entities || []).map((item, index) => ["entity_extraction", item, index]),
-        ...(result.claims || []).map((item, index) => ["claim_extraction", item, index])
+        ...(result.claims || []).map((item, index) => ["claim_extraction", item, index]),
+        ...(result.knowledge_states || []).map((item, index) => ["knowledge_state_extraction", item, index])
       ].map(([mode, item, index]) => {
         const proposal = item.proposal || {};
         const evidence = Array.isArray(item.evidence_refs) ? item.evidence_refs[0] : null;
+        const subjectOrSubtype = proposal.subject?.mention_text ?? proposal.creature_subtype ?? "-";
+        const subjectResolution = proposal.subject?.resolution_status ?? "—";
+        const targetSummary = proposal.target?.target_text ?? proposal.summary ?? proposal.canonical_name ?? proposal.claim_text ?? "—";
+        const targetKind = proposal.target?.target_kind ?? "—";
+        const targetResolution = proposal.target?.resolution_status ?? "—";
+        const temporalScope = proposal.temporal_scope ?? "—";
+        const validFrom = knowledgeTemporalAnchorSummary(proposal.valid_from);
+        const validUntil = knowledgeTemporalAnchorSummary(proposal.valid_until);
+        const agentRunIds = item.agent_run_ids || [];
+        const auditContext = mode === "knowledge_state_extraction"
+          ? `Aggregate / ${agentRunIds[0] ?? "—"}${agentRunIds.length > 1 ? ` (+${agentRunIds.length - 1})` : ""}`
+          : agentRunIds.join(", ");
+        const duplicateReview = mode === "knowledge_state_extraction"
+          ? knowledgeDuplicateReviews.get(`whole-${index}`)
+          : null;
         return [
           escapeHtml(mode),
           escapeHtml(proposal.proposal_id ?? "-"),
-          escapeHtml(proposal.event_type ?? proposal.entity_type ?? proposal.claim_type ?? "-"),
-          escapeHtml(proposal.creature_subtype ?? "-"),
-          escapeHtml(proposal.temporal_scope ?? "-"),
-          escapeHtml(shortPreview(proposal.summary ?? proposal.canonical_name ?? proposal.claim_text ?? "", 48)),
-          escapeHtml((item.agent_run_ids || []).join(", ")),
+           escapeHtml(auditContext || "—"),
+           escapeHtml(proposal.event_type ?? proposal.entity_type ?? proposal.claim_type ?? proposal.epistemic_status ?? "-"),
+           escapeHtml(proposal.epistemic_basis ?? "—"),
+           escapeHtml(subjectOrSubtype),
+          escapeHtml(subjectResolution),
+          expandableTargetSummary(targetSummary),
+          escapeHtml(targetKind),
+          escapeHtml(targetResolution),
+          escapeHtml(temporalScope),
+          escapeHtml(validFrom),
+          escapeHtml(validUntil),
+          escapeHtml(proposal.reality_layer ?? "-"),
           escapeHtml((item.evidence_refs || []).map((ref) => ref.chunk_id).join(", ")),
           escapeHtml(shortPreview(evidence?.quote_text ?? "", 40)),
-          `<button data-whole-proposal-mode="${mode}" data-whole-proposal-index="${index}">View details</button>`
+          `${knowledgePossibleDuplicateMarkup(duplicateReview)}<button data-whole-proposal-mode="${mode}" data-whole-proposal-index="${index}">View details</button>`
         ];
       });
       $("wholeDocumentProposalList").innerHTML = table(
-        ["mode", "proposal_id", "type", "creature_subtype", "temporal_scope", "summary/name", "AgentRuns", "Evidence chunks", "quote preview", "review"],
+        ["mode", "proposal_id", "batch / agent run", "type", "basis", "subject / subtype", "subject resolution", "target summary", "target kind", "target resolution", "temporal scope", "valid from", "valid until", "reality layer", "evidence chunks", "quote preview", "review"],
         rows
       );
       document.querySelectorAll("[data-whole-proposal-mode]").forEach((button) => {
@@ -1111,6 +1344,8 @@
           );
         });
       });
+      bindKnowledgeEvidenceAuditButtons();
+      renderWholeDocumentStateChanges(result.state_changes || []);
     }
 
     function stopWholeDocumentProgressPoll() {
@@ -1252,6 +1487,14 @@
       if (compact.length > limit) return compact.slice(0, limit).trimEnd();
       if (compact.length === 1) return "...";
       return `${compact.slice(0, Math.min(20, compact.length - 1)).trimEnd()}...`;
+    }
+
+    function expandableTargetSummary(text) {
+      const fullText = String(text || "").trim();
+      if (!fullText) return "—";
+      const preview = shortPreview(fullText, 48);
+      if (preview === fullText) return escapeHtml(fullText);
+      return `<details class="target-summary"><summary>${escapeHtml(preview)}… 查看完整</summary><div>${escapeHtml(fullText)}</div></details>`;
     }
 
     function clearSelectedChunks() {
@@ -1397,6 +1640,8 @@
       if (mode === "event_extraction") return "EventProposalBatchV1";
       if (mode === "entity_extraction") return "EntityProposalBatchV1";
       if (mode === "claim_extraction") return "ClaimProposalBatchV1";
+      if (mode === "knowledge_state_extraction") return "KnowledgeStateProposalBatchV1";
+      if (mode === "state_change_extraction") return "StateChangeProposalBatchV1";
       return null;
     }
 
@@ -1408,7 +1653,13 @@
       delete summary.manual_review_checklist;
       $("narrativeSummary").textContent = pretty(summary);
       $("narrativeProposal").textContent = pretty(sanitized.proposal ?? null);
-      renderProposalList(sanitized.proposal);
+      renderProposalList(
+        sanitized.proposal,
+        sanitized.agent_run_id,
+        sanitized.batch_id,
+        sanitized.knowledge_state_evidence_results || [],
+        sanitized.state_change_evidence_results || []
+      );
       $("narrativeEvidenceStatus").textContent = pretty({
         batch_id: sanitized.batch_id,
         events_count: sanitized.events_count,
@@ -1417,13 +1668,19 @@
         entity_proposal_ids: sanitized.entity_proposal_ids,
         claims_count: sanitized.claims_count,
         claim_proposal_ids: sanitized.claim_proposal_ids,
+        states_count: sanitized.states_count,
+        state_proposal_ids: sanitized.state_proposal_ids,
+        changes_count: sanitized.changes_count,
+        change_proposal_ids: sanitized.change_proposal_ids,
         evidence_validation_passed: sanitized.evidence_validation_passed,
         evidence_chunk_id: sanitized.evidence_chunk_id,
         quote_matched: sanitized.quote_matched,
         char_range_matched: sanitized.char_range_matched,
         event_evidence_results: sanitized.event_evidence_results,
         entity_evidence_results: sanitized.entity_evidence_results,
-        claim_evidence_results: sanitized.claim_evidence_results
+        claim_evidence_results: sanitized.claim_evidence_results,
+        knowledge_state_evidence_results: sanitized.knowledge_state_evidence_results,
+        state_change_evidence_results: sanitized.state_change_evidence_results
       });
       $("narrativeProviderDiagnostics").textContent = pretty(sanitized.provider_error_diagnostics ?? null);
       renderManualReviewChecklist(sanitized.manual_review_checklist || {});
@@ -1442,9 +1699,33 @@
       return copy;
     }
 
-    function renderProposalList(proposal) {
+    function renderProposalList(
+      proposal,
+      agentRunId = null,
+      batchId = null,
+      knowledgeEvidenceResults = [],
+      stateChangeEvidenceResults = []
+    ) {
       if (!proposal) {
         $("narrativeProposalList").innerHTML = `<span class="muted">暂无 proposal。</span>`;
+        return;
+      }
+      if (Array.isArray(proposal.states)) {
+        renderKnowledgeStateProposalList(
+          proposal.states,
+          agentRunId,
+          batchId,
+          knowledgeEvidenceResults
+        );
+        return;
+      }
+      if (Array.isArray(proposal.changes)) {
+        renderStateChangeProposalList(
+          proposal.changes,
+          agentRunId,
+          batchId,
+          stateChangeEvidenceResults
+        );
         return;
       }
       const rows = proposalItems(proposal).map((item) => proposalRow(item));
@@ -1454,17 +1735,357 @@
       );
     }
 
+    function knowledgeTemporalAnchorSummary(anchor) {
+      if (!anchor) return "未声明";
+      if (anchor.resolution_status === "UNRESOLVED" && anchor.anchor_text) {
+        return `未解析：${shortPreview(anchor.anchor_text, 48)}`;
+      }
+      if (anchor.resolution_status === "RESOLVED") {
+        return `已解析：${anchor.event_proposal_id ?? "—"}`;
+      }
+      return anchor.resolution_status ?? "未声明";
+    }
+
+    function knowledgeEvidenceStatus(proposalId, evidenceResults) {
+      const result = evidenceResults.find((item) => item.proposal_id === proposalId);
+      if (!result) return "待审计";
+      if (result.quote_matched === true) return "quote 已匹配";
+      if (result.quote_matched === false) return "quote 未匹配";
+      return "证据已记录";
+    }
+
+    function normalizeKnowledgeDuplicateDisplayText(value) {
+      let text = String(value ?? "").normalize("NFC").trim().replace(/\s+/gu, " ");
+      while (/^["'“”‘’「」『』].*["'“”‘’「」『』]$/u.test(text)) {
+        text = text.slice(1, -1).trim();
+      }
+      return text.replace(/[。！？!?；;，,、.]+$/u, "").trim();
+    }
+
+    function normalizeKnowledgeDuplicateTarget(value) {
+      let text = normalizeKnowledgeDuplicateDisplayText(value);
+      let previous = null;
+      while (text && text !== previous) {
+        previous = text;
+        text = text
+          .replace(/^(?:传言|传闻|说法|消息)\s*[:：]\s*/u, "")
+          .replace(/\s*(?:的\s*)?(?:传言|传闻|说法|消息)$/u, "");
+        text = normalizeKnowledgeDuplicateDisplayText(text);
+      }
+      return text;
+    }
+
+    function knowledgeDuplicateAnchorKey(anchor) {
+      if (!anchor) return "未声明";
+      return [
+        anchor.resolution_status ?? "",
+        anchor.event_proposal_id ?? "",
+        normalizeKnowledgeDuplicateDisplayText(anchor.anchor_text)
+      ].join("\u001f");
+    }
+
+    function knowledgeReviewCandidate(state, id, auditContext, agentRunIds, evidenceRefs) {
+      return {state, id, auditContext, agentRunIds, evidenceRefs};
+    }
+
+    function knowledgeDuplicateBaseKey(candidate) {
+      const state = candidate.state || {};
+      const subject = state.subject || {};
+      return [
+        subject.resolution_status ?? "",
+        subject.entity_proposal_id ?? "",
+        normalizeKnowledgeDuplicateDisplayText(subject.mention_text),
+        state.epistemic_status ?? "",
+        state.epistemic_basis ?? "",
+        state.reality_layer ?? "",
+        knowledgeDuplicateAnchorKey(state.valid_from),
+        knowledgeDuplicateAnchorKey(state.valid_until)
+      ].join("\u001f");
+    }
+
+    function buildKnowledgePossibleDuplicateReview(candidates) {
+      const reviews = new Map(candidates.map((candidate) => [candidate.id, []]));
+      for (let leftIndex = 0; leftIndex < candidates.length; leftIndex += 1) {
+        for (let rightIndex = leftIndex + 1; rightIndex < candidates.length; rightIndex += 1) {
+          const left = candidates[leftIndex];
+          const right = candidates[rightIndex];
+          if (knowledgeDuplicateBaseKey(left) !== knowledgeDuplicateBaseKey(right)) continue;
+          const leftTarget = left.state?.target || {};
+          const rightTarget = right.state?.target || {};
+          const leftCore = normalizeKnowledgeDuplicateTarget(leftTarget.target_text);
+          const rightCore = normalizeKnowledgeDuplicateTarget(rightTarget.target_text);
+          if (!leftCore || leftCore !== rightCore) continue;
+          const reason = leftTarget.target_kind !== rightTarget.target_kind
+            ? "可能重复：目标类型不一致"
+            : normalizeKnowledgeDuplicateDisplayText(leftTarget.target_text)
+                !== normalizeKnowledgeDuplicateDisplayText(rightTarget.target_text)
+              ? "可能重复：目标表达不同"
+              : null;
+          if (!reason) continue;
+          reviews.get(left.id).push({reason, candidate: right});
+          reviews.get(right.id).push({reason, candidate: left});
+        }
+      }
+      return reviews;
+    }
+
+    function knowledgeAuditMarkup(candidate) {
+      if (candidate.agentRunIds?.length) {
+        return candidate.agentRunIds
+          .map((agentRunId) => `<button data-evidence-run="${escapeHtml(agentRunId)}">Evidence audit</button>`)
+          .join(" ");
+      }
+      return escapeHtml(candidate.evidenceRefs?.[0]?.chunk_id ?? "Evidence audit unavailable");
+    }
+
+    function knowledgePossibleDuplicateMarkup(matches) {
+      if (!matches?.length) return "";
+      const reasons = [...new Set(matches.map((match) => match.reason))];
+      const candidates = [...new Map(matches.map((match) => [match.candidate.id, match.candidate])).values()];
+      return `<details class="possible-duplicate"><summary>${escapeHtml(reasons.join("；"))}</summary><div class="possible-duplicate-body">${candidates.map((candidate) => {
+        const state = candidate.state || {};
+        const target = state.target || {};
+        return `<div class="possible-duplicate-candidate"><strong>${escapeHtml(state.proposal_id ?? "—")}</strong><span>Batch / AgentRun: ${escapeHtml(candidate.auditContext ?? "—")}</span><span>Status / Basis: ${escapeHtml(state.epistemic_status ?? "—")} / ${escapeHtml(state.epistemic_basis ?? "—")}</span><span>Target: ${escapeHtml(target.target_text ?? "—")}</span><span>Kind / Resolution: ${escapeHtml(target.target_kind ?? "—")} / ${escapeHtml(target.resolution_status ?? "—")}</span>${knowledgeAuditMarkup(candidate)}</div>`;
+      }).join("")}</div></details>`;
+    }
+
+    function bindKnowledgeEvidenceAuditButtons() {
+      document.querySelectorAll("[data-evidence-run]").forEach((button) => {
+        if (button.dataset.evidenceBound === "true") return;
+        button.dataset.evidenceBound = "true";
+        button.addEventListener("click", () => loadEvidence(button.dataset.evidenceRun));
+      });
+    }
+
+    function renderKnowledgeStateProposalList(states, agentRunId, batchId, evidenceResults) {
+      const candidates = states.map((state, index) => knowledgeReviewCandidate(
+        state,
+        `manual-${index}`,
+        `${batchId ?? "—"} / ${agentRunId ?? "—"}`,
+        agentRunId ? [agentRunId] : [],
+        state.evidence_refs || []
+      ));
+      const knowledgeDuplicateReviews = buildKnowledgePossibleDuplicateReview(candidates);
+      const rows = candidates.map((candidate) => {
+        const state = candidate.state;
+        const evidence = Array.isArray(state.evidence_refs) ? state.evidence_refs[0] : null;
+        const auditEntry = knowledgeAuditMarkup(candidate);
+        return [
+          escapeHtml(state.proposal_id ?? "-"),
+          escapeHtml(`${batchId ?? "—"} / ${agentRunId ?? "—"}`),
+          escapeHtml(state.epistemic_status ?? "-"),
+          escapeHtml(state.epistemic_basis ?? "-"),
+          escapeHtml(state.subject?.mention_text ?? "-"),
+          escapeHtml(state.subject?.resolution_status ?? "-"),
+          expandableTargetSummary(state.target?.target_text ?? ""),
+          escapeHtml(state.target?.target_kind ?? "-"),
+          escapeHtml(state.target?.resolution_status ?? "-"),
+          escapeHtml(knowledgeTemporalAnchorSummary(state.valid_from)),
+          escapeHtml(knowledgeTemporalAnchorSummary(state.valid_until)),
+          escapeHtml(state.reality_layer ?? "-"),
+          `${escapeHtml(knowledgeEvidenceStatus(state.proposal_id, evidenceResults))} · ${auditEntry}`,
+          knowledgePossibleDuplicateMarkup(knowledgeDuplicateReviews.get(candidate.id))
+        ];
+      });
+      $("narrativeProposalList").innerHTML = table(
+        [
+          "Proposal ID",
+          "Batch / Agent Run",
+          "Status",
+          "Basis",
+          "Subject",
+          "Subject resolution",
+          "Target summary",
+          "Target kind",
+          "Target resolution",
+          "Valid from",
+          "Valid until",
+          "Reality layer",
+          "Evidence status",
+          "Possible duplicate"
+        ],
+        rows
+      );
+      bindKnowledgeEvidenceAuditButtons();
+    }
+
+    function stateChangeScalar(value) {
+      if (value === null || value === undefined) return "原文未声明";
+      return typeof value === "string" ? value : JSON.stringify(value);
+    }
+
+    function stateChangeResolution(reference) {
+      return reference?.resolution_status === "UNRESOLVED" ? "UNRESOLVED" : (reference?.resolution_status ?? "未声明");
+    }
+
+    function stateChangeScalarKey(value) {
+      if (value === null || value === undefined) return "null";
+      return `${typeof value}:${JSON.stringify(value)}`;
+    }
+
+    function stateChangeDuplicateBaseKey(change) {
+      const event = change?.event || {};
+      const target = change?.target || {};
+      return [
+        target.mention_text ?? "",
+        target.target_kind ?? "",
+        target.resolution_status ?? "",
+        target.entity_proposal_id ?? "",
+        target.proposal_schema ?? "",
+        change?.attribute_path ?? "",
+        stateChangeScalarKey(change?.old_value),
+        stateChangeScalarKey(change?.new_value),
+        Boolean(change?.persistent),
+        change?.reality_layer ?? "",
+        event.resolution_status ?? "",
+        event.event_proposal_id ?? "",
+        event.proposal_schema ?? ""
+      ].join("\u001f");
+    }
+
+    function stateChangeReviewCandidate(change, id, auditContext, agentRunIds, evidenceRefs) {
+      return {change, id, auditContext, agentRunIds, evidenceRefs};
+    }
+
+    function buildStateChangePossibleDuplicateReview(candidates) {
+      const reviews = new Map(candidates.map((candidate) => [candidate.id, []]));
+      for (let leftIndex = 0; leftIndex < candidates.length; leftIndex += 1) {
+        for (let rightIndex = leftIndex + 1; rightIndex < candidates.length; rightIndex += 1) {
+          const left = candidates[leftIndex];
+          const right = candidates[rightIndex];
+          if (stateChangeDuplicateBaseKey(left.change) !== stateChangeDuplicateBaseKey(right.change)) continue;
+          if ((left.change?.event?.event_summary ?? "") === (right.change?.event?.event_summary ?? "")) continue;
+          const match = {reason: "可能重复：事件表达不同", candidate: right};
+          reviews.get(left.id).push(match);
+          reviews.get(right.id).push({reason: match.reason, candidate: left});
+        }
+      }
+      return reviews;
+    }
+
+    function stateChangePossibleDuplicateMarkup(matches) {
+      if (!matches?.length) return "";
+      const reasons = [...new Set(matches.map((match) => match.reason))];
+      const candidates = [...new Map(matches.map((match) => [match.candidate.id, match.candidate])).values()];
+      return `<details class="possible-duplicate"><summary>${escapeHtml(reasons.join("；"))}（仅供人工审核；未自动合并）</summary><div class="possible-duplicate-body">${candidates.map((candidate) => {
+        const change = candidate.change || {};
+        const target = change.target || {};
+        const event = change.event || {};
+        const audit = candidate.agentRunIds?.length
+          ? candidate.agentRunIds.map((runId) => `<button data-state-change-evidence-run="${escapeHtml(runId)}">Evidence audit</button>`).join(" ")
+          : "Evidence audit unavailable";
+        return `<div class="possible-duplicate-candidate"><strong>${escapeHtml(change.proposal_id ?? "—")}</strong><span>Batch / AgentRun: ${escapeHtml(candidate.auditContext ?? "—")}</span><span>Event: ${escapeHtml(event.event_summary ?? "—")}</span><span>Target / Kind / Resolution: ${escapeHtml(target.mention_text ?? "—")} / ${escapeHtml(target.target_kind ?? "—")} / ${escapeHtml(target.resolution_status ?? "—")}</span><span>Attribute / Old / New: ${escapeHtml(change.attribute_path ?? "—")} / ${escapeHtml(stateChangeScalar(change.old_value))} / ${escapeHtml(stateChangeScalar(change.new_value))}</span>${audit}</div>`;
+      }).join("")}</div></details>`;
+    }
+
+    function stateChangeRows(changes, auditContext, evidenceRefsFor, evidenceRunIdFor, duplicateReviews = new Map()) {
+      return changes.map((change, index) => {
+        const evidenceRefs = evidenceRefsFor(change, index);
+        const evidence = evidenceRefs[0] || null;
+        const evidenceRunId = evidenceRunIdFor(change, index);
+        const candidateId = `state-change-${index}`;
+        return [
+          escapeHtml(change.proposal_id ?? "-"),
+          escapeHtml(auditContext(change, index)),
+          escapeHtml(change.event?.event_summary ?? "-"),
+          escapeHtml(stateChangeResolution(change.event)),
+          expandableTargetSummary(change.target?.mention_text ?? ""),
+          escapeHtml(change.target?.target_kind ?? "-"),
+          escapeHtml(stateChangeResolution(change.target)),
+          escapeHtml(change.attribute_path ?? "-"),
+          escapeHtml(stateChangeScalar(change.old_value)),
+          escapeHtml(stateChangeScalar(change.new_value)),
+          escapeHtml(change.persistent ? "明确持续性支持" : "未获持续性支持"),
+          escapeHtml(change.reality_layer ?? "-"),
+          escapeHtml(evidenceRefs.map((ref) => ref.chunk_id).join(", ")),
+          escapeHtml((change.new_value_evidence_indexes || []).join(", ") || "未声明"),
+          escapeHtml((change.persistence_evidence_indexes || []).join(", ") || "未声明"),
+          escapeHtml(shortPreview(evidence?.quote_text ?? "", 40)),
+          `${stateChangePossibleDuplicateMarkup(duplicateReviews.get(candidateId))}${evidenceRunId ? `<button data-state-change-evidence-run="${escapeHtml(evidenceRunId)}">View details / Evidence audit</button>` : "—"}`
+        ];
+      });
+    }
+
+    const stateChangeAuditHeaders = [
+      "Proposal ID", "Batch / Agent Run", "Event summary", "Event resolution",
+      "Target summary", "Target kind", "Target resolution", "Attribute path",
+      "Old value", "New value", "Persistent", "Reality layer", "Evidence chunks",
+      "New value evidence", "Persistence evidence", "Quote preview", "Review / View details"
+    ];
+
+    function renderStateChangeProposalList(changes, agentRunId, batchId, evidenceResults = []) {
+      if (!changes.length) {
+        $("narrativeProposalList").innerHTML = `<span class="muted">未发现可审计状态变化</span>`;
+        return;
+      }
+      const candidates = changes.map((change, index) => stateChangeReviewCandidate(
+        change,
+        `state-change-${index}`,
+        `${batchId ?? "—"} / ${agentRunId ?? "—"}`,
+        agentRunId ? [agentRunId] : [],
+        change.evidence_refs || []
+      ));
+      const duplicateReviews = buildStateChangePossibleDuplicateReview(candidates);
+      $("narrativeProposalList").innerHTML = table(
+        stateChangeAuditHeaders,
+        stateChangeRows(
+          changes,
+          () => `${batchId ?? "—"} / ${agentRunId ?? "—"}`,
+          (change) => change.evidence_refs || [],
+          () => agentRunId,
+          duplicateReviews
+        )
+      );
+      bindStateChangeEvidenceAuditButtons();
+    }
+
+    function renderWholeDocumentStateChanges(items) {
+      if (!items.length) return;
+      const changes = items.map((item) => item.proposal || {});
+      const candidates = changes.map((change, index) => {
+        const runIds = items[index].agent_run_ids || [];
+        return stateChangeReviewCandidate(
+          change,
+          `state-change-${index}`,
+          `Aggregate / ${runIds[0] ?? "—"}${runIds.length > 1 ? ` (+${runIds.length - 1})` : ""}`,
+          runIds,
+          items[index].evidence_refs || []
+        );
+      });
+      const duplicateReviews = buildStateChangePossibleDuplicateReview(candidates);
+      const rows = stateChangeRows(
+        changes,
+        (_change, index) => {
+          const runIds = items[index].agent_run_ids || [];
+          return `Aggregate / ${runIds[0] ?? "—"}${runIds.length > 1 ? ` (+${runIds.length - 1})` : ""}`;
+        },
+        (_change, index) => items[index].evidence_refs || [],
+        (_change, index) => (items[index].agent_run_ids || [])[0] || null,
+        duplicateReviews
+      );
+      $("wholeDocumentProposalList").innerHTML += `<h4>State Change audit</h4>${table(stateChangeAuditHeaders, rows)}`;
+      bindStateChangeEvidenceAuditButtons();
+    }
+
+    function bindStateChangeEvidenceAuditButtons() {
+      document.querySelectorAll("[data-state-change-evidence-run]").forEach((button) => {
+        button.addEventListener("click", () => loadEvidence(button.dataset.stateChangeEvidenceRun));
+      });
+    }
+
     function proposalItems(proposal) {
       if (Array.isArray(proposal?.events)) return proposal.events;
       if (Array.isArray(proposal?.entities)) return proposal.entities;
       if (Array.isArray(proposal?.claims)) return proposal.claims;
+      if (Array.isArray(proposal?.states)) return proposal.states;
+      if (Array.isArray(proposal?.changes)) return proposal.changes;
       return [proposal];
     }
 
     function proposalRow(proposal) {
       const evidence = Array.isArray(proposal.evidence_refs) ? proposal.evidence_refs[0] : null;
-      const title = proposal.summary ?? proposal.canonical_name ?? proposal.claim_text ?? "-";
-      const type = proposal.event_type ?? proposal.entity_type ?? proposal.claim_type ?? "-";
+      const title = proposal.summary ?? proposal.canonical_name ?? proposal.claim_text ?? proposal.target?.target_text ?? "-";
+      const type = proposal.event_type ?? proposal.entity_type ?? proposal.claim_type ?? proposal.epistemic_status ?? "-";
       return [
         escapeHtml(proposal.proposal_id ?? "-"),
         escapeHtml(type),
@@ -1539,6 +2160,7 @@
       const events = Array.isArray(proposal?.events) ? proposal.events : [];
       const entities = Array.isArray(proposal?.entities) ? proposal.entities : [];
       const claims = Array.isArray(proposal?.claims) ? proposal.claims : [];
+      const states = Array.isArray(proposal?.states) ? proposal.states : [];
       renderNarrativeResult({
         mode,
         dry_run: false,
@@ -1558,6 +2180,8 @@
         entity_proposal_ids: entities.map((entity) => entity.proposal_id),
         claims_count: claims.length || null,
         claim_proposal_ids: claims.map((claim) => claim.proposal_id),
+        states_count: states.length,
+        state_proposal_ids: states.map((state) => state.proposal_id),
         primary_event_type: events[0]?.event_type ?? null,
         primary_event_summary: events[0]?.summary ?? null,
         quote_matched: null,
@@ -1614,6 +2238,30 @@
           prediction_commitment_distinguished: null,
           every_claim_has_supporting_evidence: null,
           no_duplicate_or_invented_claims: null,
+          manual_score: null,
+          manual_issue: null
+        };
+      }
+      if (mode === "knowledge_state_extraction") {
+        return {
+          knowledge_states_cover_explicit_epistemic_states: null,
+          no_state_inferred_from_speech_presence_or_silence: null,
+          knows_not_inferred_from_reader_or_narrator_knowledge: null,
+          subject_target_and_anchor_resolution_preserved: null,
+          every_knowledge_state_has_supporting_evidence: null,
+          no_status_upgrade_or_contradiction_adjudication: null,
+          manual_score: null,
+          manual_issue: null
+        };
+      }
+      if (mode === "state_change_extraction") {
+        return {
+          state_changes_cover_explicit_object_state_changes: null,
+          event_and_target_remain_source_grounded: null,
+          attribute_path_matches_target_kind: null,
+          new_value_has_supporting_evidence: null,
+          persistence_is_not_inferred: null,
+          unresolved_references_are_not_upgraded: null,
           manual_score: null,
           manual_issue: null
         };
@@ -1714,6 +2362,245 @@
         .replaceAll("'", "&#039;");
     }
 
+    async function loadKnowledgeEvaluationCases() {
+      const cases = await request("/knowledge-state-evaluation/cases");
+      state.knowledgeEvaluationCases = cases;
+      $("knowledgeEvaluationCase").innerHTML = [
+        `<option value="">选择一个评测用例</option>`,
+        ...cases.map((item) => `<option value="${escapeHtml(item.case_id)}">${escapeHtml(item.title)} · ${escapeHtml(item.category)}</option>`)
+      ].join("");
+      $("knowledgeEvaluationCaseList").innerHTML = table(
+        ["case_id", "title", "category", "risk_tags", "origin", "零输出"],
+        cases.map((item) => [
+          escapeHtml(item.case_id),
+          escapeHtml(item.title),
+          escapeHtml(item.category),
+          escapeHtml((item.risk_tags || []).join(", ")),
+          escapeHtml(item.fixture_origin),
+          item.zero_output_expected ? "是" : "否"
+        ])
+      );
+      $("knowledgeEvaluationBadge").textContent = `已加载 ${cases.length} 个`;
+      $("knowledgeEvaluationBadge").className = "pill";
+      setKnowledgeEvaluationRunStatus("请选择一个评测用例后再开始评测。");
+      updateKnowledgeEvaluationActionUi();
+    }
+
+    async function loadKnowledgeEvaluationCase() {
+      const caseId = $("knowledgeEvaluationCase").value;
+      updateKnowledgeEvaluationActionUi();
+      if (!caseId) return;
+      const detail = await request(`/knowledge-state-evaluation/cases/${encodeURIComponent(caseId)}`);
+      state.knowledgeEvaluationCase = detail;
+      $("knowledgeEvaluationCaseDetail").textContent = pretty(detail);
+      $("knowledgeEvaluationResult").textContent = "{}";
+      state.knowledgeEvaluationResult = null;
+      setKnowledgeEvaluationRunStatus(
+        "评测用例已就绪。离线评测不会调用 Provider；真实 LLM 评测须勾选明确授权。"
+      );
+    }
+
+    function updateKnowledgeEvaluationActionUi() {
+      const caseId = $("knowledgeEvaluationCase").value;
+      const hasSelectedCase = Boolean(caseId);
+      const canRun = hasSelectedCase && !state.knowledgeEvaluationRunInProgress;
+      $("evaluateKnowledgeStateBatch").disabled = !canRun;
+      $("runKnowledgeStateCase").disabled = !canRun;
+      $("knowledgeEvaluationRealLlm").disabled = state.knowledgeEvaluationRunInProgress;
+      $("knowledgeEvaluationActionHint").textContent = hasSelectedCase
+        ? "已选择评测用例。离线评测不会调用 Provider；真实 LLM 评测仍须勾选明确授权。"
+        : "请先加载并选择一个评测用例，才能进行离线或真实 LLM 评测。";
+    }
+
+    function setKnowledgeEvaluationRunStatus(message, tone = "normal") {
+      const status = $("knowledgeEvaluationRunStatus");
+      status.textContent = message;
+      status.className = tone === "error" ? "pill bad" : tone === "running" ? "pill warn" : "pill";
+    }
+
+    function selectedKnowledgeEvaluationCaseId() {
+      const caseId = $("knowledgeEvaluationCase").value;
+      if (!caseId) throw new Error("请先加载并选择一个 Knowledge State 评测用例。");
+      return caseId;
+    }
+
+    function renderKnowledgeEvaluationResult(result) {
+      state.knowledgeEvaluationResult = result;
+      $("knowledgeEvaluationResult").textContent = pretty(result);
+      $("knowledgeEvaluationBadge").textContent = result.passed ? "通过" : "需复核";
+      $("knowledgeEvaluationBadge").className = result.passed ? "pill" : "pill bad";
+    }
+
+    function updateKnowledgeEvaluationCollectedCount() {
+      $("knowledgeEvaluationCollectedCount").textContent = `已收集评测结果：${state.knowledgeEvaluationBatches.size}，运行失败：${state.knowledgeEvaluationRunFailures.size}`;
+    }
+
+    function collectKnowledgeEvaluationBatch(caseId, batch) {
+      state.knowledgeEvaluationBatches.set(caseId, batch);
+      state.knowledgeEvaluationRunFailures.delete(caseId);
+      updateKnowledgeEvaluationCollectedCount();
+    }
+
+    function collectKnowledgeEvaluationRunFailure(failure) {
+      if (!failure?.case_id) return;
+      state.knowledgeEvaluationRunFailures.set(failure.case_id, failure);
+      state.knowledgeEvaluationBatches.delete(failure.case_id);
+      updateKnowledgeEvaluationCollectedCount();
+    }
+
+    async function evaluateKnowledgeStateBatch() {
+      const batchText = $("knowledgeEvaluationBatch").value.trim();
+      if (!batchText) throw new Error("请粘贴 KnowledgeStateProposalBatchV1 JSON。");
+      let batch;
+      try { batch = JSON.parse(batchText); } catch { throw new Error("Batch JSON 无法解析。"); }
+      const result = await request(
+        `/knowledge-state-evaluation/cases/${encodeURIComponent(selectedKnowledgeEvaluationCaseId())}/evaluate`,
+        {method: "POST", headers: demoHeaders(), body: JSON.stringify({batch})}
+      );
+      renderKnowledgeEvaluationResult(result);
+      collectKnowledgeEvaluationBatch(selectedKnowledgeEvaluationCaseId(), batch);
+      showLog("已完成离线 Knowledge State 评测；未调用 Provider。");
+    }
+
+    async function runKnowledgeStateCase() {
+      if (!$("knowledgeEvaluationRealLlm").checked) {
+        throw new Error("请先明确勾选真实 LLM 请求；默认仅允许离线评测。");
+      }
+      const caseId = selectedKnowledgeEvaluationCaseId();
+      state.knowledgeEvaluationRunInProgress = true;
+      updateKnowledgeEvaluationActionUi();
+      $("knowledgeEvaluationBadge").textContent = "运行中";
+      $("knowledgeEvaluationBadge").className = "pill warn";
+      setKnowledgeEvaluationRunStatus("真实 LLM 评测正在运行。请勿重复点击或关闭页面。", "running");
+      $("knowledgeEvaluationResult").textContent = pretty({
+        status: "RUNNING",
+        case_id: caseId,
+        message: "真实 LLM 评测正在运行。"
+      });
+      try {
+        const data = await request(
+          `/knowledge-state-evaluation/cases/${encodeURIComponent(caseId)}/run`,
+          {method: "POST", headers: demoHeaders(), body: JSON.stringify({real_llm_requested: true})}
+        );
+        if (data.status === "FAILED") {
+          collectKnowledgeEvaluationRunFailure(data);
+          $("knowledgeEvaluationBadge").textContent = "运行失败，未评测";
+          $("knowledgeEvaluationBadge").className = "pill bad";
+          setKnowledgeEvaluationRunStatus(
+            `真实 LLM 运行失败（${data.failure_category}），该 case 已记录为未评测。`,
+            "error"
+          );
+          $("knowledgeEvaluationResult").textContent = pretty(data);
+          return;
+        }
+        $("knowledgeEvaluationBatch").value = pretty(data.batch);
+        renderKnowledgeEvaluationResult(data.evaluation);
+        collectKnowledgeEvaluationBatch(caseId, data.batch);
+        setKnowledgeEvaluationRunStatus(
+          data.evaluation.passed
+            ? "真实 LLM 评测已完成，结果通过。"
+            : "真实 LLM 评测已完成，结果需人工复核。",
+          data.evaluation.passed ? "normal" : "running"
+        );
+        showLog("已完成明确请求的真实 LLM 评测。");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "真实 LLM 评测请求失败。";
+        const failure = error?.payload?.status === "FAILED"
+          ? error.payload
+          : {status: "FAILED", case_id: caseId, failure_category: "PROVIDER_CONFIGURATION", message};
+        collectKnowledgeEvaluationRunFailure(failure);
+        $("knowledgeEvaluationBadge").textContent = "失败";
+        $("knowledgeEvaluationBadge").className = "pill bad";
+        setKnowledgeEvaluationRunStatus(`真实 LLM 评测失败：${message}`, "error");
+        $("knowledgeEvaluationResult").textContent = pretty({
+          ...failure,
+          message: failure.message || message
+        });
+        showLog(`真实 LLM 评测失败：${message}`);
+      } finally {
+        state.knowledgeEvaluationRunInProgress = false;
+        updateKnowledgeEvaluationActionUi();
+      }
+    }
+
+    async function buildKnowledgeEvaluationReport() {
+      if (!state.knowledgeEvaluationBatches.size && !state.knowledgeEvaluationRunFailures.size) {
+        throw new Error("请先完成至少一个离线或显式真实 LLM 的 case 评测。");
+      }
+      const evaluations = [...state.knowledgeEvaluationBatches.entries()].map(([case_id, batch]) => ({case_id, batch}));
+      const report = await request(
+        "/knowledge-state-evaluation/report",
+        {method: "POST", headers: demoHeaders(), body: JSON.stringify({
+          evaluations,
+          run_failures: [...state.knowledgeEvaluationRunFailures.values()]
+        })}
+      );
+      state.knowledgeEvaluationReport = report;
+      $("knowledgeEvaluationReport").textContent = pretty(report);
+      $("knowledgeEvaluationReportStatus").textContent = report.acceptance_eligible
+        ? `报告完整：${report.attempted_case_count} 个 case，具备验收资格。`
+        : `报告未完整或不具备验收资格：已尝试 ${report.attempted_case_count}，已评测 ${report.evaluated_case_count}，运行失败 ${report.run_failed_case_count}。`;
+      $("knowledgeEvaluationReportStatus").className = report.acceptance_eligible ? "pill" : "pill bad";
+      showLog(`已生成 ${report.attempted_case_count} 个 case 的批量评测报告；未调用 Provider。`);
+    }
+
+    function clearKnowledgeEvaluationReport() {
+      state.knowledgeEvaluationBatches.clear();
+      state.knowledgeEvaluationRunFailures.clear();
+      state.knowledgeEvaluationReport = null;
+      $("knowledgeEvaluationReport").textContent = "{}";
+      $("knowledgeEvaluationReportStatus").textContent = "尚未生成报告。";
+      $("knowledgeEvaluationReportStatus").className = "pill";
+      updateKnowledgeEvaluationCollectedCount();
+      showLog("已清空当前浏览器内收集的评测结果。");
+    }
+
+    function exportKnowledgeEvaluationReport() {
+      if (!state.knowledgeEvaluationReport) {
+        throw new Error("请先生成批量评测报告。");
+      }
+      const payload = {
+        report: state.knowledgeEvaluationReport,
+        evaluated_case_batches: [...state.knowledgeEvaluationBatches.entries()].map(([case_id, batch]) => ({case_id, batch})),
+        run_failures: [...state.knowledgeEvaluationRunFailures.values()],
+        exported_at: new Date().toISOString()
+      };
+      const blob = new Blob([pretty(payload)], {type: "application/json;charset=utf-8"});
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "knowledge-state-evaluation-report.json";
+      link.click();
+      URL.revokeObjectURL(link.href);
+    }
+
+    function saveKnowledgeEvaluationReview() {
+      state.knowledgeEvaluationReview = {
+        decision: $("knowledgeEvaluationReviewDecision").value,
+        reviewer: $("knowledgeEvaluationReviewer").value.trim(),
+        notes: $("knowledgeEvaluationReviewNotes").value.trim(),
+        reviewed_at: new Date().toISOString()
+      };
+      showLog("人工复核已保存在当前浏览器内存中。");
+    }
+
+    function exportKnowledgeEvaluation() {
+      let actualBatch = null;
+      try { actualBatch = JSON.parse($("knowledgeEvaluationBatch").value); } catch { /* export result only */ }
+      const payload = {
+        evaluation_case_id: $("knowledgeEvaluationCase").value || null,
+        actual_structured_batch: actualBatch,
+        evaluation_result: state.knowledgeEvaluationResult,
+        manual_review: state.knowledgeEvaluationReview,
+        exported_at: new Date().toISOString()
+      };
+      const blob = new Blob([pretty(payload)], {type: "application/json;charset=utf-8"});
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "knowledge-state-evaluation-review.json";
+      link.click();
+      URL.revokeObjectURL(link.href);
+    }
+
     $("refreshStatus").addEventListener("click", () => refreshStatus().catch((error) => showLog(error.message)));
     $("verifyAccess").addEventListener("click", () => verifyAccess().catch((error) => showLog(error.message)));
     $("createProject").addEventListener("click", () => createProject().catch((error) => showLog(error.message)));
@@ -1728,7 +2615,20 @@
     $("resumeWholeDocumentAnalysis").addEventListener("click", () => resumeWholeDocumentAnalysis().catch((error) => showLog(error.message)));
     $("refreshNarrativeRuns").addEventListener("click", () => loadRuns().catch((error) => showLog(error.message)));
     $("loadRuns").addEventListener("click", () => loadRuns().catch((error) => showLog(error.message)));
+    $("loadKnowledgeEvaluationCases").addEventListener("click", () => loadKnowledgeEvaluationCases().catch((error) => showLog(error.message)));
+    $("knowledgeEvaluationCase").addEventListener("change", () => loadKnowledgeEvaluationCase().catch((error) => showLog(error.message)));
+    $("evaluateKnowledgeStateBatch").addEventListener("click", () => evaluateKnowledgeStateBatch().catch((error) => showLog(error.message)));
+    $("runKnowledgeStateCase").addEventListener("click", () => runKnowledgeStateCase().catch((error) => showLog(error.message)));
+    $("buildKnowledgeEvaluationReport").addEventListener("click", () => buildKnowledgeEvaluationReport().catch((error) => showLog(error.message)));
+    $("clearKnowledgeEvaluationReport").addEventListener("click", clearKnowledgeEvaluationReport);
+    $("exportKnowledgeEvaluationReport").addEventListener("click", () => exportKnowledgeEvaluationReport().catch((error) => showLog(error.message)));
+    $("saveKnowledgeEvaluationReview").addEventListener("click", saveKnowledgeEvaluationReview);
+    $("exportKnowledgeEvaluation").addEventListener("click", exportKnowledgeEvaluation);
     $("narrativeChunkIds").addEventListener("input", () => renderNarrativeSelectedChunks());
+    $("narrativeMode").addEventListener("change", () => {
+      renderNarrativeSelectedChunks();
+      updateAccessUi();
+    });
     $("projectId").addEventListener("input", () => {
       rememberProjectId();
       clearSelectedChunks();
@@ -1741,6 +2641,14 @@
     });
     $("analysisDocumentId").addEventListener("change", rememberAnalysisDocumentId);
     document.addEventListener("click", (event) => {
+      const sidebarControl = event.target.closest("[data-sidebar-scroll]");
+      if (sidebarControl) {
+        const sidebarViewport = sidebarControl.closest(".sidebar-nav-shell")?.querySelector(".sidebar-nav-viewport");
+        if (!sidebarViewport) return;
+        const direction = sidebarControl.dataset.sidebarScroll === "left" ? -1 : 1;
+        sidebarViewport.scrollBy({ left: direction * 240, behavior: "smooth" });
+        return;
+      }
       const windowControl = event.target.closest("[data-window-scroll]");
       if (windowControl) {
         const windowExecutionViewport = windowControl.closest(".window-execution-shell")?.querySelector(".window-execution-viewport");
@@ -1760,6 +2668,7 @@
     initializeProjectId();
     renderCapabilities();
     renderSelected();
+    updateKnowledgeEvaluationActionUi();
     refreshStatus().catch(() => showLog("后端未启动。请先运行 uv run uvicorn comic_agent.main:app --reload"));
   </script>
 </body>

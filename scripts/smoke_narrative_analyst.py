@@ -104,13 +104,13 @@ def run_smoke(
                 "chunks_count": len(chunks),
                 "selected_chunk_ids": [chunk.chunk_id for chunk in selected_chunks],
                 "selected_chunk_ranges": [
-                {
-                    "chunk_id": chunk.chunk_id,
-                    "char_start": chunk.char_start,
-                    "char_end": chunk.char_end,
-                    "chunk_hash": chunk.checksum,
-                }
-                for chunk in selected_chunks
+                    {
+                        "chunk_id": chunk.chunk_id,
+                        "char_start": chunk.char_start,
+                        "char_end": chunk.char_end,
+                        "chunk_hash": chunk.checksum,
+                    }
+                    for chunk in selected_chunks
                 ],
             }
         )
