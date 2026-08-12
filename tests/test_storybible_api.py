@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -89,6 +90,13 @@ class RecordingMockLLMProvider(MockLLMProvider):
     ) -> Any:
         self.requests.append(request)
         return super().structured_generate(request, output_model)
+
+
+class FailingLLMProvider:
+    """Provider failure used to verify the API error boundary."""
+
+    def structured_generate(self, request: dict[str, object], output_model: type[Any]) -> Any:
+        raise httpx.ConnectError("simulated provider outage")
 
 
 def seed_chunk(
@@ -236,7 +244,9 @@ def test_curation_rebuilds_canonical_context_from_project_scoped_storage(
     )
 
     assert response.status_code == 200
-    context = json.loads(str(provider.requests[0]["messages"][1]["content"]))
+    raw_content = str(provider.requests[0]["messages"][1]["content"])
+    context = json.loads(raw_content.split("\n--- SOURCE CHUNK")[0])
+    assert "Lin Xia waits at the market." in raw_content
     assert [profile["profile_id"] for profile in context["profiles"]] == ["profile-a"]
     assert context["profiles"][0]["canonical_name"] == "Lin Xia"
     assert [state["state_id"] for state in context["states"]] == ["state-a"]
@@ -264,6 +274,23 @@ def test_curation_rejects_different_proposals_that_reuse_a_content_hash(
 
     assert response.status_code == 422
     assert "content_hash" in response.json()["detail"]
+
+
+def test_curation_returns_bad_gateway_for_provider_failure(
+    storybible_client: TestClient,
+) -> None:
+    """Upstream model failures are reported as actionable 502 responses."""
+
+    app = cast(FastAPI, storybible_client.app)
+    app.state.storybible_curator = StoryBibleCurator(FailingLLMProvider())
+
+    response = storybible_client.post(
+        "/projects/project-a/storybible/curate",
+        json={"project_id": "project-a", "source_chunk_ids": ["chunk-a"]},
+    )
+
+    assert response.status_code == 502
+    assert "provider request failed" in response.json()["detail"]
 
 
 def test_curation_rejects_context_for_another_project(

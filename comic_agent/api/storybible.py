@@ -3,7 +3,9 @@
 from collections.abc import Iterator
 from typing import Annotated, cast
 
+import httpx
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from comic_agent.agents.storybible_curator import StoryBibleCurator
@@ -97,8 +99,11 @@ def _build_project_context(
     project_id: str,
     repository: StoryBibleRepository,
     source_repository: SourceRepository,
-) -> StoryBibleContextV1:
-    """Rebuild a bounded agent input from project-scoped canonical queries."""
+) -> tuple[StoryBibleContextV1, dict[str, str]]:
+    """Rebuild a bounded agent input from project-scoped canonical queries.
+
+    Returns the StoryBible context and a dict mapping chunk IDs to their text.
+    """
 
     _require_project_context(requested_context, project_id, source_repository)
     source_chunks = [
@@ -107,17 +112,22 @@ def _build_project_context(
     ]
     if any(chunk is None for chunk in source_chunks):  # pragma: no cover - checked above
         raise HTTPException(status_code=409, detail="StoryBible context project mismatch")
+    resolved_chunks = [chunk for chunk in source_chunks if chunk is not None]
+    chunk_texts = {chunk.chunk_id: chunk.text for chunk in resolved_chunks}
     try:
-        return ContextBuilder().storybible_context(
-            project_id=project_id,
-            profile_ids=(profile.profile_id for profile in requested_context.profiles),
-            source_chunks=[chunk for chunk in source_chunks if chunk is not None],
-            repository=repository,
-            entity_proposals=requested_context.entity_proposals,
-            event_proposals=requested_context.event_proposals,
-            state_change_proposals=requested_context.state_change_proposals,
-            temporal_relation_proposals=requested_context.temporal_relation_proposals,
-            world_rules=repository.list_world_rules(project_id),
+        return (
+            ContextBuilder().storybible_context(
+                project_id=project_id,
+                profile_ids=(profile.profile_id for profile in requested_context.profiles),
+                source_chunks=resolved_chunks,
+                repository=repository,
+                entity_proposals=requested_context.entity_proposals,
+                event_proposals=requested_context.event_proposals,
+                state_change_proposals=requested_context.state_change_proposals,
+                temporal_relation_proposals=requested_context.temporal_relation_proposals,
+                world_rules=repository.list_world_rules(project_id),
+            ),
+            chunk_texts,
         )
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
@@ -149,10 +159,21 @@ def curate_storybible(
 ) -> StoryBibleCuratorProposalV1:
     """Create and persist a candidate plan without writing canonical facts."""
 
-    bounded_context = _build_project_context(
+    bounded_context, chunk_texts = _build_project_context(
         context, project_id, repository, source_repository
     )
-    proposal = curator.run(bounded_context)
+    try:
+        proposal = curator.run(bounded_context, chunk_texts)
+    except httpx.HTTPError as error:
+        raise HTTPException(
+            status_code=502,
+            detail="StoryBible provider request failed; check network and API settings",
+        ) from error
+    except (ValidationError, ValueError) as error:
+        raise HTTPException(
+            status_code=502,
+            detail="StoryBible provider returned invalid structured output",
+        ) from error
     if proposal.project_id != project_id or proposal.commit_plan.project_id != project_id:
         raise HTTPException(status_code=409, detail="Curator proposal project mismatch")
     try:
