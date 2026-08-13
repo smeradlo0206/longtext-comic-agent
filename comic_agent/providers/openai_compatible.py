@@ -243,12 +243,15 @@ class OpenAICompatibleLLMProvider:
             if rule_code is not None:
                 rule_codes.append(rule_code)
         unique_kinds = sorted(set(error_kinds))
+        output_schema_name = (
+            output_model if isinstance(output_model, str) else output_model.__name__
+        )
+        if output_schema_name == "RelationshipSignalProposalBatchV1" and field_paths:
+            rule_codes.append("RELATIONSHIP_SIGNAL_SCHEMA_INVALID")
         diagnostics: ProviderDiagnostics = {
             "schema_error_kind": unique_kinds[0] if len(unique_kinds) == 1 else "multiple",
             "schema_error_field_paths": sorted(set(field_paths)),
-            "expected_output_schema": (
-                output_model if isinstance(output_model, str) else output_model.__name__
-            ),
+            "expected_output_schema": output_schema_name,
         }
         if rule_codes:
             diagnostics["schema_error_rule_codes"] = sorted(set(rule_codes))
@@ -310,6 +313,24 @@ class OpenAICompatibleLLMProvider:
             "supporting_claim_proposal_id requires CLAIM target or STATED/HEARD basis": (
                 "SUPPORTING_CLAIM_REQUIRES_SUPPORTED_LINK"
             ),
+            "relationship_domain does not match relationship_kind": (
+                "RELATIONSHIP_SIGNAL_DOMAIN_KIND_MISMATCH"
+            ),
+            "directionality does not match relationship_kind": (
+                "RELATIONSHIP_SIGNAL_DIRECTIONALITY_MISMATCH"
+            ),
+            "statement evidence_basis requires source_speaker": (
+                "RELATIONSHIP_SIGNAL_STATEMENT_REQUIRES_SPEAKER"
+            ),
+            "statement evidence_basis cannot use EXPLICIT support_level": (
+                "RELATIONSHIP_SIGNAL_STATEMENT_SUPPORT_LEVEL_INVALID"
+            ),
+            "OBSERVED_ACTION cannot use EXPLICIT support_level": (
+                "RELATIONSHIP_SIGNAL_OBSERVED_ACTION_SUPPORT_LEVEL_INVALID"
+            ),
+            "relationship change signal requires non-empty temporal anchor_text": (
+                "RELATIONSHIP_SIGNAL_CHANGE_REQUIRES_TEMPORAL_ANCHOR"
+            ),
         }
         for message_prefix, code in known_rules.items():
             if message_prefix in message:
@@ -317,7 +338,7 @@ class OpenAICompatibleLLMProvider:
         return None
 
     def _post_with_one_timeout_retry(self, payload: dict[str, Any]) -> tuple[httpx.Response, int]:
-        """Retry one timeout or transient HTTP response without exposing its body."""
+        """Retry one timeout, connection failure, or transient HTTP response safely."""
 
         headers = {
             "Content-Type": "application/json",
@@ -345,6 +366,12 @@ class OpenAICompatibleLLMProvider:
                             "timeout_seconds": self._timeout_seconds,
                             "request_attempts": request_attempt,
                         },
+                    ) from exc
+            except httpx.ConnectError as exc:
+                if request_attempt == MAX_TIMEOUT_ATTEMPTS:
+                    raise ProviderNetworkError(
+                        self._classify_connect_error(exc),
+                        diagnostics={"request_attempts": request_attempt},
                     ) from exc
         raise AssertionError("timeout retry loop exited unexpectedly")
 
@@ -419,6 +446,7 @@ class OpenAICompatibleLLMProvider:
             "ClaimProposalBatchV1": ("claims", True),
             "KnowledgeStateProposalBatchV1": ("states", False),
             "StateChangeProposalBatchV1": ("changes", False),
+            "RelationshipSignalProposalBatchV1": ("signals", False),
         }.get(schema_name)
         if batch_contract is None:
             return ""
@@ -429,14 +457,18 @@ class OpenAICompatibleLLMProvider:
             if isinstance(rule_codes, list)
             else []
         )
-        batch_instruction = (
-            f"Include a non-empty {batch_field} array and every required field."
-            if requires_non_empty_items
-            else (
+        if requires_non_empty_items:
+            batch_instruction = f"Include a non-empty {batch_field} array and every required field."
+        elif schema_name == "KnowledgeStateProposalBatchV1":
+            batch_instruction = (
                 "Include a states array and every required field for each item. "
                 "states may be empty only when no explicit, auditable knowledge state is supported."
             )
-        )
+        else:
+            batch_instruction = (
+                f"Include a {batch_field} array and every required field for each item. "
+                f"{batch_field} may be empty only when no reliable, auditable output is supported."
+            )
         knowledge_state_shape = ""
         if schema_name == "KnowledgeStateProposalBatchV1":
             knowledge_state_shape = (
@@ -457,6 +489,31 @@ class OpenAICompatibleLLMProvider:
                 'wrong "4", "四", "四瓶", or {"count":4}. Do not coerce values, '
                 "drop other valid changes, or return a partial batch."
             )
+        relationship_signal_shape = ""
+        if schema_name == "RelationshipSignalProposalBatchV1":
+            statement_support_recovery = ""
+            if "RELATIONSHIP_SIGNAL_STATEMENT_SUPPORT_LEVEL_INVALID" in safe_rule_codes:
+                statement_support_recovery = (
+                    ' For DIRECT_STATEMENT or REPORTED_STATEMENT, include source_speaker and use '
+                    'support_level=LIMITED or support_level=STRONG, never EXPLICIT. '
+                )
+            relationship_signal_shape = (
+                ' For every signal, return a complete v1.0 RelationshipSignalProposalV1. '
+                'Use UNRESOLVED participant, speaker, context-event, and temporal-event references '
+                'with null candidate IDs and schemas, for example '
+                '"resolution_status":"UNRESOLVED","entity_proposal_id":null,'
+                '"proposal_schema":null. NARRATED may use EXPLICIT and forbids a speaker; '
+                'DIRECT_STATEMENT or REPORTED_STATEMENT require a speaker and cannot use EXPLICIT; '
+                'OBSERVED_ACTION forbids a speaker and EXPLICIT. '
+                'Use PRESENT unless an explicit temporal anchor supports a change effect. '
+                'A denial requires signal_effect="DENIAL" and assertion_polarity="DENIED". '
+                'A traitor label is Claim-only: never output BETRAYS unless the evidence quote '
+                'explicitly describes a betrayal action between the two participants. '
+                'no longer trusts means DISTRUSTS plus FORMATION with an explicit anchor. '
+                'Do not output INFERRED, resolved links, legacy fields, '
+                'or a non-batch object.'
+                f'{statement_support_recovery}'
+            )
         rule_hint = (
             f" The previous output violated these safe schema rules: {', '.join(safe_rule_codes)}."
             if safe_rule_codes
@@ -466,7 +523,7 @@ class OpenAICompatibleLLMProvider:
             "Format recovery instruction: Return exactly one "
             f"{schema_name} JSON object. Return no markdown, explanation, reasoning, or alternate "
             f"schema. {batch_instruction}{rule_hint}{knowledge_state_shape}"
-            f"{state_change_shape}\n\n"
+            f"{state_change_shape}{relationship_signal_shape}\n\n"
         )
 
     def _compact_output_contract(self, output_model: type[BaseModel]) -> dict[str, object]:

@@ -121,8 +121,15 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     ]
     assert "appearance.clothing" in json.dumps(state_change_schema)
     assert "appearance.hairstyle" in json.dumps(state_change_schema)
-    assert result_schema["properties"]["schema_version"]["enum"] == ["1.0", "1.1", "1.2", "1.3"]
+    assert result_schema["properties"]["schema_version"]["enum"] == [
+        "1.0",
+        "1.1",
+        "1.2",
+        "1.3",
+        "1.4",
+    ]
     assert "state_changes" in result_schema["properties"]
+    assert "relationship_signals" in result_schema["properties"]
     assert StateChangeEventRefV1.__name__ == "StateChangeEventRefV1"
     assert StateChangeTargetRefV1.__name__ == "StateChangeTargetRefV1"
     assert StateChangeProposalBatchV1.__name__ == "StateChangeProposalBatchV1"
@@ -156,7 +163,7 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
         "EventProposalV1",
     ):
         assert enum_value in relationship_text
-    assert "relationship_signals" not in result_schema["properties"]
+    assert "relationship_signals" in result_schema["properties"]
     assert RelationshipAssertionPolarity.DENIED == "DENIED"
     assert RelationshipDirectionality.SYMMETRIC == "SYMMETRIC"
     assert RelationshipDomain.TRUST == "TRUST"

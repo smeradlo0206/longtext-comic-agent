@@ -11,6 +11,7 @@ from comic_agent.agents.claim_extraction import ClaimExtractionAgent
 from comic_agent.agents.entity_extraction import EntityExtractionAgent
 from comic_agent.agents.event_extraction import EventExtractionAgent
 from comic_agent.agents.knowledge_state_extraction import KnowledgeStateExtractionAgent
+from comic_agent.agents.relationship_signal_extraction import RelationshipSignalExtractionAgent
 from comic_agent.agents.state_change_extraction import StateChangeExtractionAgent
 from comic_agent.providers.llm import LLMProvider
 from comic_agent.schemas.narrative import (
@@ -18,6 +19,7 @@ from comic_agent.schemas.narrative import (
     EntityProposalBatchV1,
     EventProposalBatchV1,
     KnowledgeStateProposalBatchV1,
+    RelationshipSignalProposalBatchV1,
     StateChangeProposalBatchV1,
 )
 
@@ -94,6 +96,10 @@ def _create_state_change_agent(provider: LLMProvider) -> BaseAgent[Proposal]:
     return StateChangeExtractionAgent(provider)
 
 
+def _create_relationship_signal_agent(provider: LLMProvider) -> BaseAgent[Proposal]:
+    return RelationshipSignalExtractionAgent(provider)
+
+
 NARRATIVE_ANALYST_MODE_REGISTRY: dict[str, NarrativeAnalystModeSpec] = {
     "event_extraction": NarrativeAnalystModeSpec(
         mode="event_extraction",
@@ -153,11 +159,12 @@ NARRATIVE_ANALYST_MODE_REGISTRY: dict[str, NarrativeAnalystModeSpec] = {
     "relationship_signal_extraction": NarrativeAnalystModeSpec(
         mode="relationship_signal_extraction",
         description_zh="关系信号抽取",
-        status="planned_without_schema",
-        output_schema=None,
-        schema_class=None,
-        max_context_chunks=3,
-        requires_evidence=True,
-        proposal_only=True,
+        status="implemented",
+        output_schema=RelationshipSignalExtractionAgent.spec.output_schema,
+        schema_class=RelationshipSignalProposalBatchV1,
+        max_context_chunks=RelationshipSignalExtractionAgent.spec.max_context_chunks,
+        requires_evidence=RelationshipSignalExtractionAgent.spec.requires_evidence,
+        proposal_only=not RelationshipSignalExtractionAgent.spec.can_write_canonical_data,
+        agent_factory=_create_relationship_signal_agent,
     ),
 }

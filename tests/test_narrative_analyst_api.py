@@ -13,6 +13,7 @@ from comic_agent.schemas.narrative import (
     EntityProposalBatchV1,
     EventProposalBatchV1,
     KnowledgeStateProposalBatchV1,
+    RelationshipSignalProposalBatchV1,
     StateChangeProposalBatchV1,
 )
 
@@ -88,7 +89,7 @@ class FakeNarrativeProvider:
         source_chunk = source_chunks[0]
         assert isinstance(source_chunk, dict)
         expected_fields = {"chunk_id", "chapter_id", "text"}
-        if output_model is StateChangeProposalBatchV1:
+        if output_model in {StateChangeProposalBatchV1, RelationshipSignalProposalBatchV1}:
             expected_fields = {
                 "schema_version",
                 "chunk_id",
@@ -296,6 +297,15 @@ class FakeNarrativeProvider:
                             "confidence": 0.83,
                         }
                     ],
+                }
+            )
+
+        if output_model is RelationshipSignalProposalBatchV1:
+            return output_model.model_validate(
+                {
+                    "schema_version": "1.0",
+                    "batch_id": "relationship-signal-batch-console-1",
+                    "signals": [],
                 }
             )
 
@@ -1224,6 +1234,40 @@ def test_narrative_analyst_api_runs_state_change_batch_with_fake_provider(
     assert payload["changes_count"] == 1
     assert payload["change_proposal_ids"] == ["state-change-console-1"]
     assert payload["agent_run_status"] == "SUCCEEDED"
+    assert provider.calls == 1
+
+
+def test_narrative_analyst_api_runs_relationship_signal_empty_batch_with_fake_provider(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    provider = FakeNarrativeProvider()
+    try:
+        with create_test_client(
+            tmp_path,
+            monkeypatch,
+            enable_real_llm=True,
+            provider=provider,
+        ) as client:
+            setup_imported_project(client)
+            response = client.post(
+                "/projects/demo-project/agent-runs/narrative-analyst",
+                json={
+                    "mode": "relationship_signal_extraction",
+                    "chunk_limit": 1,
+                    "max_chars_per_chunk": 5,
+                    "real_llm_requested": True,
+                },
+            )
+    finally:
+        get_settings.cache_clear()
+
+    payload = response.json()
+    assert response.status_code == 201
+    assert payload["output_schema"] == "RelationshipSignalProposalBatchV1"
+    assert payload["agent_run_status"] == "SUCCEEDED"
+    assert payload["relationship_signals_count"] == 0
+    assert payload["relationship_signal_proposal_ids"] == []
     assert provider.calls == 1
 
 

@@ -199,6 +199,7 @@ import pytest
 from comic_agent.providers.openai_compatible import (
     OpenAICompatibleLLMProvider,
     ProviderHttpError,
+    ProviderNetworkError,
     ProviderResponseError,
     ProviderTimeoutError,
 )
@@ -209,6 +210,7 @@ from comic_agent.schemas.narrative import (
     EventProposalBatchV1,
     EventProposalV1,
     KnowledgeStateProposalBatchV1,
+    RelationshipSignalProposalBatchV1,
     StateChangeProposalBatchV1,
 )
 
@@ -456,6 +458,36 @@ def test_openai_compatible_provider_requires_api_key() -> None:
         OpenAICompatibleLLMProvider(api_key=None)
 
 
+def test_openai_compatible_provider_retries_one_tls_connect_error() -> None:
+    """A transient TLS handshake failure gets one bounded retry before surfacing."""
+
+    response = _chat_response(json.dumps(_event_json(), ensure_ascii=False))
+    client = SequenceHttpClient(
+        [httpx.ConnectError("TLS handshake failed"), response]
+    )
+    provider = OpenAICompatibleLLMProvider(api_key="secret-test-key", http_client=client)
+
+    proposal = provider.structured_generate({}, EventProposalV1)
+
+    assert proposal.proposal_id == "proposal-1"
+    assert len(client.requests) == 2
+
+
+def test_openai_compatible_provider_reports_tls_failure_after_bounded_retry() -> None:
+    """Persistent TLS failure stays transparent and contains no endpoint details."""
+
+    client = SequenceHttpClient(
+        [httpx.ConnectError("TLS handshake failed"), httpx.ConnectError("TLS handshake failed")]
+    )
+    provider = OpenAICompatibleLLMProvider(api_key="secret-test-key", http_client=client)
+
+    with pytest.raises(ProviderNetworkError, match="TLS handshake") as captured:
+        provider.structured_generate({}, EventProposalV1)
+
+    assert captured.value.diagnostics == {"request_attempts": 2}
+    assert len(client.requests) == 2
+
+
 def test_openai_compatible_provider_returns_event_proposal() -> None:
     client = FakeHttpClient(response=_chat_response(json.dumps(_event_json(), ensure_ascii=False)))
     provider = OpenAICompatibleLLMProvider(api_key="secret-test-key", http_client=client)
@@ -675,6 +707,72 @@ def test_knowledge_state_schema_recovery_includes_safe_rule_codes_and_v11_shape(
     assert '"schema_version":"1.1"' in user_message
     assert '"resolution_status":"UNRESOLVED"' in user_message
     assert '"proposal_id":null' in user_message
+
+
+def test_relationship_signal_schema_recovery_includes_source_first_batch_shape() -> None:
+    """A retry for the sixth Narrative Analyst mode must receive its own guidance."""
+
+    client = FakeHttpClient(
+        response=_chat_response(
+            json.dumps(
+                {"schema_version": "1.0", "batch_id": "relationship-batch-1", "signals": []},
+                ensure_ascii=False,
+            )
+        )
+    )
+    provider = OpenAICompatibleLLMProvider(api_key="secret-test-key", http_client=client)
+
+    recovered = provider.structured_generate(
+        {
+            "input_context": {
+                "output_recovery": "schema_validation",
+                "schema_error_rule_codes": [
+                    "RELATIONSHIP_SIGNAL_SCHEMA_INVALID",
+                    "RELATIONSHIP_SIGNAL_STATEMENT_SUPPORT_LEVEL_INVALID",
+                ],
+                "source_chunks": [{"chunk_id": "chunk-1", "text": "Synthetic source."}],
+            }
+        },
+        RelationshipSignalProposalBatchV1,
+    )
+
+    user_message = client.requests[0]["json"]["messages"][1]["content"]
+    assert recovered.signals == []
+    assert "exactly one RelationshipSignalProposalBatchV1 JSON object" in user_message
+    assert "signals array" in user_message
+    assert "signals may be empty" in user_message
+    assert '"resolution_status":"UNRESOLVED"' in user_message
+    assert "RELATIONSHIP_SIGNAL_SCHEMA_INVALID" in user_message
+    assert "traitor label is Claim-only" in user_message
+    assert "DISTRUSTS plus FORMATION" in user_message
+    assert "support_level=LIMITED" in user_message
+    assert "never EXPLICIT" in user_message
+
+
+@pytest.mark.parametrize(
+    ("message", "expected_code"),
+    [
+        (
+            "relationship_domain does not match relationship_kind",
+            "RELATIONSHIP_SIGNAL_DOMAIN_KIND_MISMATCH",
+        ),
+        (
+            "statement evidence_basis requires source_speaker",
+            "RELATIONSHIP_SIGNAL_STATEMENT_REQUIRES_SPEAKER",
+        ),
+        (
+            "relationship change signal requires non-empty temporal anchor_text",
+            "RELATIONSHIP_SIGNAL_CHANGE_REQUIRES_TEMPORAL_ANCHOR",
+        ),
+    ],
+)
+def test_relationship_signal_schema_rule_codes_are_safe_and_stable(
+    message: str, expected_code: str
+) -> None:
+    assert (
+        OpenAICompatibleLLMProvider._schema_validation_rule_code({"msg": message})
+        == expected_code
+    )
 
 
 def test_openai_compatible_provider_extracts_markdown_wrapped_json() -> None:

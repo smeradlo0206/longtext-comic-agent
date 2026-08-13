@@ -24,6 +24,7 @@ from comic_agent.schemas.narrative import (
     EventProposalV1,
     KnowledgeStateProposalV1,
     KnowledgeTemporalAnchorV1,
+    RelationshipSignalProposalV1,
     StateChangeProposalV1,
 )
 from comic_agent.schemas.source import SourceChunkV1
@@ -61,6 +62,119 @@ def _chunk(order: int) -> SourceChunkV1:
 
 def _long_chunk(order: int) -> SourceChunkV1:
     return _chunk(order).model_copy(update={"text": "Synthetic " + ("x" * 1400)})
+
+
+def _relationship_signal(
+    proposal_id: str,
+    *,
+    subject: str = "甲",
+    counterpart: str = "乙",
+    directionality: str = "DIRECTED",
+    relationship_kind: str = "TRUSTS",
+    relationship_domain: str = "TRUST",
+    evidence_chunk_id: str = "chunk-0",
+) -> RelationshipSignalProposalV1:
+    return RelationshipSignalProposalV1.model_validate(
+        {
+            "proposal_id": proposal_id,
+            "subject": {
+                "mention_text": subject,
+                "participant_kind": "CHARACTER",
+                "resolution_status": "UNRESOLVED",
+                "entity_proposal_id": None,
+                "proposal_schema": None,
+            },
+            "counterpart": {
+                "mention_text": counterpart,
+                "participant_kind": "CHARACTER",
+                "resolution_status": "UNRESOLVED",
+                "entity_proposal_id": None,
+                "proposal_schema": None,
+            },
+            "relationship_domain": relationship_domain,
+            "relationship_kind": relationship_kind,
+            "directionality": directionality,
+            "signal_effect": "PRESENT",
+            "assertion_polarity": "AFFIRMED",
+            "evidence_basis": "NARRATED",
+            "support_level": "EXPLICIT",
+            "source_speaker": None,
+            "context_event": None,
+            "temporal_anchor": {
+                "valid_from": None,
+                "valid_until": None,
+                "anchor_text": None,
+                "resolution_status": "UNRESOLVED",
+                "event_proposal_id": None,
+                "proposal_schema": None,
+            },
+            "reality_layer": "PRIMARY",
+            "evidence_refs": [{"chunk_id": evidence_chunk_id, "quote_text": "关系证据"}],
+            "confidence": 0.8,
+        }
+    )
+
+
+def test_relationship_signal_aggregation_is_exact_and_symmetric_only_in_its_key() -> None:
+    directed = _relationship_signal("relationship-1")
+    directed_duplicate = _relationship_signal("relationship-2", evidence_chunk_id="chunk-1")
+    reverse = _relationship_signal("relationship-3", subject="乙", counterpart="甲")
+    sibling = _relationship_signal(
+        "relationship-4",
+        directionality="SYMMETRIC",
+        relationship_kind="SIBLING_OF",
+        relationship_domain="KINSHIP",
+    )
+    reversed_sibling = _relationship_signal(
+        "relationship-5",
+        subject="乙",
+        counterpart="甲",
+        directionality="SYMMETRIC",
+        relationship_kind="SIBLING_OF",
+        relationship_domain="KINSHIP",
+        evidence_chunk_id="chunk-1",
+    )
+
+    result = aggregate_narrative_analysis(
+        [
+            NarrativeAnalysisProposalSourceV1(
+                mode="relationship_signal_extraction", agent_run_id="run-1", proposal=directed
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="relationship_signal_extraction",
+                agent_run_id="run-2",
+                proposal=directed_duplicate,
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="relationship_signal_extraction", agent_run_id="run-3", proposal=reverse
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="relationship_signal_extraction", agent_run_id="run-4", proposal=sibling
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="relationship_signal_extraction",
+                agent_run_id="run-5",
+                proposal=reversed_sibling,
+            ),
+        ]
+    )
+
+    assert result.schema_version == "1.4"
+    assert len(result.relationship_signals) == 3
+    assert result.relationship_signals[0].agent_run_ids == ["run-1", "run-2"]
+    assert len(result.relationship_signals[0].evidence_refs) == 2
+    assert result.relationship_signals[2].agent_run_ids == ["run-4", "run-5"]
+
+
+def test_legacy_narrative_analysis_result_defaults_relationship_signals_to_empty() -> None:
+    from comic_agent.schemas.workflow import NarrativeAnalysisResultV1
+
+    result = NarrativeAnalysisResultV1.model_validate(
+        {"analysis_run_id": "legacy", "events": [], "entities": [], "claims": []}
+    )
+
+    assert result.schema_version == "1.0"
+    assert result.relationship_signals == []
 
 
 def test_plan_analysis_windows_uses_three_chunk_windows_with_stride_two() -> None:
@@ -633,6 +747,76 @@ class _StateChangeWindowProvider:
         )
 
 
+class _RelationshipSignalWindowProvider:
+    def __init__(
+        self,
+        *,
+        empty: bool = False,
+        failures: dict[int, Exception] | None = None,
+    ) -> None:
+        self.calls: list[list[str]] = []
+        self.output_recovery_markers: list[str | None] = []
+        self.empty = empty
+        self.failures = failures or {}
+
+    def structured_generate(self, request, output_model):  # type: ignore[no-untyped-def]
+        input_context = request["input_context"]
+        chunk_ids = input_context["source_chunk_ids"]
+        self.calls.append(chunk_ids)
+        self.output_recovery_markers.append(input_context.get("output_recovery"))
+        failure = self.failures.get(len(self.calls))
+        if failure is not None:
+            raise failure
+        signals = []
+        if not self.empty:
+            signals = [
+                {
+                    "proposal_id": f"relationship-{chunk_ids[0]}",
+                    "subject": {
+                        "mention_text": "甲",
+                        "participant_kind": "CHARACTER",
+                        "resolution_status": "UNRESOLVED",
+                        "entity_proposal_id": None,
+                        "proposal_schema": None,
+                    },
+                    "counterpart": {
+                        "mention_text": "乙",
+                        "participant_kind": "CHARACTER",
+                        "resolution_status": "UNRESOLVED",
+                        "entity_proposal_id": None,
+                        "proposal_schema": None,
+                    },
+                    "relationship_domain": "TRUST",
+                    "relationship_kind": "TRUSTS",
+                    "directionality": "DIRECTED",
+                    "signal_effect": "PRESENT",
+                    "assertion_polarity": "AFFIRMED",
+                    "evidence_basis": "NARRATED",
+                    "support_level": "EXPLICIT",
+                    "source_speaker": None,
+                    "context_event": None,
+                    "temporal_anchor": {
+                        "valid_from": None,
+                        "valid_until": None,
+                        "anchor_text": None,
+                        "resolution_status": "UNRESOLVED",
+                        "event_proposal_id": None,
+                        "proposal_schema": None,
+                    },
+                    "reality_layer": "PRIMARY",
+                    "evidence_refs": [{"chunk_id": chunk_ids[0], "quote_text": "甲信任乙。"}],
+                    "confidence": 0.8,
+                }
+            ]
+        return output_model.model_validate(
+            {
+                "schema_version": "1.0",
+                "batch_id": f"relationship-batch-{chunk_ids[0]}",
+                "signals": signals,
+            }
+        )
+
+
 class _StateChangeQuantityRecoveryProvider:
     def __init__(self) -> None:
         self.calls = 0
@@ -869,6 +1053,149 @@ def test_worker_dry_run_completes_windows_without_provider_or_source_text(
     assert result is not None
     assert result.events == []
     assert "synthetic source" not in json.dumps(completed.model_dump(mode="json"))
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_relationship_signal_worker_treats_owned_or_empty_batches_as_success(
+    tmp_path: Path,
+    empty: bool,
+) -> None:
+    chunks = [
+        _chunk(index).model_copy(update={"text": "甲信任乙。"}) for index in range(5)
+    ]
+    source_repository = _FakeSourceRepository(chunks)
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["relationship_signal_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _RelationshipSignalWindowProvider(empty=empty)
+    worker = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    )
+
+    completed = worker.run_pending(run.analysis_run_id)
+    result = analysis_repository.get_result(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert result is not None
+    assert all(
+        window.status == NarrativeAnalysisWindowStatus.SUCCEEDED
+        for window in analysis_repository.list_windows(run.analysis_run_id)
+    )
+    if empty:
+        assert result.relationship_signals == []
+    else:
+        assert len(result.relationship_signals) == 1
+        assert result.relationship_signals[0].proposal.relationship_kind == "TRUSTS"
+        assert provider.calls == [
+            ["chunk-0", "chunk-1", "chunk-2"],
+            ["chunk-2", "chunk-3", "chunk-4"],
+        ]
+
+
+def test_relationship_signal_worker_reuses_schema_recovery_and_resume(tmp_path: Path) -> None:
+    chunks = [
+        _chunk(index).model_copy(update={"text": "甲信任乙。"}) for index in range(3)
+    ]
+    source_repository = _FakeSourceRepository(chunks)
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["relationship_signal_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _RelationshipSignalWindowProvider(
+        failures={
+            1: ProviderResponseError(
+                "LLM provider response failed schema validation",
+                {"schema_error_kind": "missing", "schema_error_field_paths": ["signals.0"]},
+            )
+        }
+    )
+    worker = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    )
+
+    completed = worker.run_pending(run.analysis_run_id)
+    calls_before_resume = len(provider.calls)
+    resumed = worker.run_pending(run.analysis_run_id)
+    window = analysis_repository.list_windows(run.analysis_run_id)[0]
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert resumed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert window.attempt_count == 2
+    assert provider.output_recovery_markers == [None, "schema_validation"]
+    assert len(provider.calls) == calls_before_resume
+
+
+def test_relationship_signal_worker_splits_length_failure_by_owned_chunks(tmp_path: Path) -> None:
+    chunks = [
+        _chunk(index).model_copy(update={"text": "甲信任乙。"}) for index in range(3)
+    ]
+    source_repository = _FakeSourceRepository(chunks)
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["relationship_signal_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _RelationshipSignalWindowProvider(
+        failures={
+            1: ProviderResponseError(
+                "LLM provider response exceeded max output tokens before final content",
+                {"finish_reason": "length", "content_type": "NoneType"},
+            )
+        }
+    )
+    worker = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    )
+
+    completed = worker.run_pending(run.analysis_run_id)
+    windows = analysis_repository.list_windows(run.analysis_run_id)
+    parent = next(
+        window for window in windows if window.status == NarrativeAnalysisWindowStatus.SPLIT
+    )
+    children = [
+        window for window in windows if window.parent_window_id == parent.analysis_window_id
+    ]
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert parent.owned_chunk_ids == ["chunk-0", "chunk-1", "chunk-2"]
+    assert [child.owned_chunk_ids for child in children] == [
+        ["chunk-0"],
+        ["chunk-1"],
+        ["chunk-2"],
+    ]
+    assert provider.output_recovery_markers == [
+        None,
+        "length_split",
+        "length_split",
+        "length_split",
+    ]
 
 
 def test_worker_classifies_disabled_real_llm_without_calling_provider(tmp_path: Path) -> None:

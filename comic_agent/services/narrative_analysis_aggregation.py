@@ -7,6 +7,9 @@ from comic_agent.schemas.narrative import (
     EventProposalV1,
     KnowledgeStateProposalV1,
     KnowledgeTemporalAnchorV1,
+    RelationshipDirectionality,
+    RelationshipParticipantRefV1,
+    RelationshipSignalProposalV1,
     StateChangeProposalV1,
 )
 from comic_agent.schemas.workflow import (
@@ -14,6 +17,7 @@ from comic_agent.schemas.workflow import (
     AggregatedEntityProposalV1,
     AggregatedEventProposalV1,
     AggregatedKnowledgeStateProposalV1,
+    AggregatedRelationshipSignalProposalV1,
     AggregatedStateChangeProposalV1,
     NarrativeAnalysisProposalSourceV1,
     NarrativeAnalysisResultV1,
@@ -32,6 +36,7 @@ def aggregate_narrative_analysis(
     claims: dict[tuple[object, ...], AggregatedClaimProposalV1] = {}
     knowledge_states: dict[tuple[object, ...], AggregatedKnowledgeStateProposalV1] = {}
     state_changes: dict[tuple[object, ...], AggregatedStateChangeProposalV1] = {}
+    relationship_signals: dict[tuple[object, ...], AggregatedRelationshipSignalProposalV1] = {}
     for source in sources:
         proposal = source.proposal
         if isinstance(proposal, EventProposalV1):
@@ -140,6 +145,26 @@ def aggregate_narrative_analysis(
                         ),
                     }
                 )
+        elif isinstance(proposal, RelationshipSignalProposalV1):
+            relationship_key = _relationship_signal_key(proposal)
+            existing_signal = relationship_signals.get(relationship_key)
+            if existing_signal is None:
+                relationship_signals[relationship_key] = AggregatedRelationshipSignalProposalV1(
+                    proposal=proposal,
+                    agent_run_ids=[source.agent_run_id],
+                    evidence_refs=proposal.evidence_refs,
+                )
+            else:
+                relationship_signals[relationship_key] = existing_signal.model_copy(
+                    update={
+                        "agent_run_ids": _append_unique(
+                            existing_signal.agent_run_ids, source.agent_run_id
+                        ),
+                        "evidence_refs": _merge_evidence(
+                            existing_signal.evidence_refs, proposal.evidence_refs
+                        ),
+                    }
+                )
     return NarrativeAnalysisResultV1(
         analysis_run_id=analysis_run_id,
         events=list(events.values()),
@@ -147,6 +172,7 @@ def aggregate_narrative_analysis(
         claims=list(claims.values()),
         knowledge_states=list(knowledge_states.values()),
         state_changes=list(state_changes.values()),
+        relationship_signals=list(relationship_signals.values()),
     )
 
 
@@ -258,3 +284,63 @@ def _typed_scalar_key(value: object) -> tuple[str, object | None]:
     if isinstance(value, str):
         return ("str", value)
     return (type(value).__name__, repr(value))
+
+
+def _relationship_participant_key(
+    participant: RelationshipParticipantRefV1,
+) -> tuple[object, ...]:
+    return (
+        participant.mention_text,
+        participant.participant_kind,
+        participant.resolution_status,
+        participant.entity_proposal_id,
+        participant.proposal_schema,
+    )
+
+
+def _relationship_signal_key(proposal: RelationshipSignalProposalV1) -> tuple[object, ...]:
+    """Return the complete exact relationship semantics key without canonical linking."""
+
+    participants = [
+        _relationship_participant_key(proposal.subject),
+        _relationship_participant_key(proposal.counterpart),
+    ]
+    if proposal.directionality == RelationshipDirectionality.SYMMETRIC:
+        participants.sort(key=repr)
+    speaker = (
+        _relationship_participant_key(proposal.source_speaker)
+        if proposal.source_speaker is not None
+        else None
+    )
+    context_event = (
+        (
+            proposal.context_event.event_summary,
+            proposal.context_event.resolution_status,
+            proposal.context_event.event_proposal_id,
+            proposal.context_event.proposal_schema,
+        )
+        if proposal.context_event is not None
+        else None
+    )
+    anchor = proposal.temporal_anchor
+    return (
+        tuple(participants),
+        proposal.relationship_domain,
+        proposal.relationship_kind,
+        proposal.directionality,
+        proposal.signal_effect,
+        proposal.assertion_polarity,
+        proposal.evidence_basis,
+        proposal.support_level,
+        speaker,
+        context_event,
+        (
+            anchor.valid_from,
+            anchor.valid_until,
+            anchor.anchor_text,
+            anchor.resolution_status,
+            anchor.event_proposal_id,
+            anchor.proposal_schema,
+        ),
+        proposal.reality_layer,
+    )

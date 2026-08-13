@@ -34,6 +34,7 @@ def test_web_console_static_html_exposes_demo_controls_without_local_secrets() -
     assert "claim_extraction · ClaimProposalBatchV1" in html
     assert "knowledge_state_extraction · KnowledgeStateProposalBatchV1" in html
     assert "state_change_extraction · StateChangeProposalBatchV1" in html
+    assert "relationship_signal_extraction · RelationshipSignalProposalBatchV1" in html
     assert "Proposal List" in html
     assert "renderProposalList" in html
     assert "proposalItems" in html
@@ -57,6 +58,14 @@ def test_web_console_static_html_exposes_demo_controls_without_local_secrets() -
     assert "New value" in html
     assert "Persistent" in html
     assert "未发现可审计状态变化" in html
+    assert "Relationship Signal audit" in html
+    assert "未发现可审计关系信号" in html
+    assert "Relationship domain" in html
+    assert "Relationship kind" in html
+    assert "Directionality" in html
+    assert "Source speaker" in html
+    assert "Temporal anchor" in html
+    assert "result.relationship_signals" in html
     assert "Proposal ID" in html
     assert "Batch / Agent Run" in html
     assert "Status" in html

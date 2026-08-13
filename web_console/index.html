@@ -740,6 +740,10 @@
                   state_change_extraction
                 </label>
                 <label class="checkline">
+                  <input id="analysisModeRelationshipSignal" data-analysis-mode="relationship_signal_extraction" type="checkbox" checked />
+                  relationship_signal_extraction
+                </label>
+                <label class="checkline">
                   <input id="analysisRealLlmRequested" type="checkbox" />
                   real LLM requested
                 </label>
@@ -785,6 +789,7 @@
                     <option value="claim_extraction">claim_extraction · ClaimProposalBatchV1</option>
                     <option value="knowledge_state_extraction">knowledge_state_extraction · KnowledgeStateProposalBatchV1</option>
                     <option value="state_change_extraction">state_change_extraction · StateChangeProposalBatchV1</option>
+                    <option value="relationship_signal_extraction">relationship_signal_extraction · RelationshipSignalProposalBatchV1</option>
                   </select>
                 </label>
                 <label>chunk_limit
@@ -1243,7 +1248,8 @@
         claim_proposals_count: result.claims.length,
         knowledge_state_proposals_count: (result.knowledge_states || []).length,
         state_change_proposals_count: (result.state_changes || []).length,
-        total_proposals: result.events.length + result.entities.length + result.claims.length + (result.knowledge_states || []).length + (result.state_changes || []).length,
+        relationship_signal_proposals_count: (result.relationship_signals || []).length,
+        total_proposals: result.events.length + result.entities.length + result.claims.length + (result.knowledge_states || []).length + (result.state_changes || []).length + (result.relationship_signals || []).length,
         windows_total: progress.windows_total ?? null,
         windows_succeeded: progress.windows_succeeded ?? null,
         windows_failed: progress.windows_failed ?? null
@@ -1258,6 +1264,7 @@
       if (mode === "claim_extraction") return result.claims || [];
       if (mode === "knowledge_state_extraction") return result.knowledge_states || [];
       if (mode === "state_change_extraction") return result.state_changes || [];
+      if (mode === "relationship_signal_extraction") return result.relationship_signals || [];
       return [];
     }
 
@@ -1346,6 +1353,7 @@
       });
       bindKnowledgeEvidenceAuditButtons();
       renderWholeDocumentStateChanges(result.state_changes || []);
+      renderWholeDocumentRelationshipSignals(result.relationship_signals || []);
     }
 
     function stopWholeDocumentProgressPoll() {
@@ -1642,6 +1650,7 @@
       if (mode === "claim_extraction") return "ClaimProposalBatchV1";
       if (mode === "knowledge_state_extraction") return "KnowledgeStateProposalBatchV1";
       if (mode === "state_change_extraction") return "StateChangeProposalBatchV1";
+      if (mode === "relationship_signal_extraction") return "RelationshipSignalProposalBatchV1";
       return null;
     }
 
@@ -1725,6 +1734,15 @@
           agentRunId,
           batchId,
           stateChangeEvidenceResults
+        );
+        return;
+      }
+      if (Array.isArray(proposal.signals)) {
+        renderRelationshipSignalProposalList(
+          proposal.signals,
+          agentRunId,
+          batchId,
+          data.relationship_signal_evidence_results || []
         );
         return;
       }
@@ -2073,12 +2091,101 @@
       });
     }
 
+    const relationshipSignalAuditHeaders = [
+      "Proposal ID", "Batch / Agent Run", "Subject", "Subject kind", "Subject resolution",
+      "Relationship domain", "Relationship kind", "Directionality", "Counterpart",
+      "Counterpart kind", "Counterpart resolution", "Signal effect", "Assertion polarity",
+      "Evidence basis", "Support level", "Source speaker", "Context event", "Temporal anchor",
+      "Reality layer", "Evidence chunks", "Quote preview", "Review / View details"
+    ];
+
+    function relationshipSignalValue(value) {
+      return value === null || value === undefined || value === "" ? "未声明" : String(value);
+    }
+
+    function relationshipSignalRows(signals, auditContext, evidenceRefsFor, evidenceRunIdFor) {
+      return signals.map((signal, index) => {
+        const evidenceRefs = evidenceRefsFor(signal, index);
+        const evidence = evidenceRefs[0] || null;
+        const evidenceRunId = evidenceRunIdFor(signal, index);
+        const subject = signal.subject || {};
+        const counterpart = signal.counterpart || {};
+        return [
+          escapeHtml(signal.proposal_id ?? "-"),
+          escapeHtml(auditContext(signal, index)),
+          escapeHtml(subject.mention_text ?? "-"),
+          escapeHtml(subject.participant_kind ?? "-"),
+          escapeHtml(subject.resolution_status ?? "UNRESOLVED"),
+          escapeHtml(signal.relationship_domain ?? "-"),
+          escapeHtml(signal.relationship_kind ?? "-"),
+          escapeHtml(signal.directionality ?? "-"),
+          escapeHtml(counterpart.mention_text ?? "-"),
+          escapeHtml(counterpart.participant_kind ?? "-"),
+          escapeHtml(counterpart.resolution_status ?? "UNRESOLVED"),
+          escapeHtml(signal.signal_effect ?? "-"),
+          escapeHtml(signal.assertion_polarity ?? "-"),
+          escapeHtml(signal.evidence_basis ?? "-"),
+          escapeHtml(signal.support_level ?? "-"),
+          escapeHtml(relationshipSignalValue(signal.source_speaker?.mention_text)),
+          escapeHtml(relationshipSignalValue(signal.context_event?.event_summary)),
+          escapeHtml(relationshipSignalValue(signal.temporal_anchor?.anchor_text)),
+          escapeHtml(signal.reality_layer ?? "-"),
+          escapeHtml(evidenceRefs.map((ref) => ref.chunk_id).join(", ")),
+          escapeHtml(shortPreview(evidence?.quote_text ?? "", 40)),
+          evidenceRunId ? `<button data-relationship-signal-evidence-run="${escapeHtml(evidenceRunId)}">View details / Evidence audit</button>` : "—"
+        ];
+      });
+    }
+
+    function renderRelationshipSignalProposalList(signals, agentRunId, batchId) {
+      if (!signals.length) {
+        $("narrativeProposalList").innerHTML = `<span class="muted">未发现可审计关系信号</span>`;
+        return;
+      }
+      $("narrativeProposalList").innerHTML = table(
+        relationshipSignalAuditHeaders,
+        relationshipSignalRows(
+          signals,
+          () => `${batchId ?? "—"} / ${agentRunId ?? "—"}`,
+          (signal) => signal.evidence_refs || [],
+          () => agentRunId
+        )
+      );
+      bindRelationshipSignalEvidenceAuditButtons();
+    }
+
+    function renderWholeDocumentRelationshipSignals(items) {
+      if (!items.length) {
+        $("wholeDocumentProposalList").innerHTML += `<h4>Relationship Signal audit</h4><span class="muted">未发现可审计关系信号</span>`;
+        return;
+      }
+      const signals = items.map((item) => item.proposal || {});
+      const rows = relationshipSignalRows(
+        signals,
+        (_signal, index) => {
+          const runIds = items[index].agent_run_ids || [];
+          return `Aggregate / ${runIds[0] ?? "—"}${runIds.length > 1 ? ` (+${runIds.length - 1})` : ""}`;
+        },
+        (_signal, index) => items[index].evidence_refs || [],
+        (_signal, index) => (items[index].agent_run_ids || [])[0] || null
+      );
+      $("wholeDocumentProposalList").innerHTML += `<h4>Relationship Signal audit</h4>${table(relationshipSignalAuditHeaders, rows)}`;
+      bindRelationshipSignalEvidenceAuditButtons();
+    }
+
+    function bindRelationshipSignalEvidenceAuditButtons() {
+      document.querySelectorAll("[data-relationship-signal-evidence-run]").forEach((button) => {
+        button.addEventListener("click", () => loadEvidence(button.dataset.relationshipSignalEvidenceRun));
+      });
+    }
+
     function proposalItems(proposal) {
       if (Array.isArray(proposal?.events)) return proposal.events;
       if (Array.isArray(proposal?.entities)) return proposal.entities;
       if (Array.isArray(proposal?.claims)) return proposal.claims;
       if (Array.isArray(proposal?.states)) return proposal.states;
       if (Array.isArray(proposal?.changes)) return proposal.changes;
+      if (Array.isArray(proposal?.signals)) return proposal.signals;
       return [proposal];
     }
 
@@ -2262,6 +2369,17 @@
           new_value_has_supporting_evidence: null,
           persistence_is_not_inferred: null,
           unresolved_references_are_not_upgraded: null,
+          manual_score: null,
+          manual_issue: null
+        };
+      }
+      if (mode === "relationship_signal_extraction") {
+        return {
+          signals_are_source_grounded_not_canonical_relationships: null,
+          participants_and_references_remain_unresolved: null,
+          ordinary_interactions_not_upgraded_to_relationships: null,
+          statement_speaker_and_temporal_effect_contract_preserved: null,
+          every_relationship_signal_has_supporting_evidence: null,
           manual_score: null,
           manual_issue: null
         };

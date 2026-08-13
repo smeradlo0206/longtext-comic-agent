@@ -12,6 +12,7 @@ from comic_agent.schemas.narrative import (
     EntityProposalV1,
     EventProposalV1,
     KnowledgeStateProposalV1,
+    RelationshipSignalProposalV1,
     StateChangeProposalV1,
 )
 
@@ -196,6 +197,7 @@ class NarrativeAnalysisProposalSourceV1(StrictBaseModel):
         | ClaimProposalV1
         | KnowledgeStateProposalV1
         | StateChangeProposalV1
+        | RelationshipSignalProposalV1
     ) = (
         Field(description="Typed proposal to aggregate.")
     )
@@ -245,11 +247,21 @@ class AggregatedStateChangeProposalV1(StrictBaseModel):
     evidence_refs: list[EvidenceRefV1] = Field(min_length=1, description="All retained evidence.")
 
 
+class AggregatedRelationshipSignalProposalV1(StrictBaseModel):
+    """Conservatively merged Relationship Signal candidate with audit references."""
+
+    proposal: RelationshipSignalProposalV1 = Field(
+        description="Representative relationship signal proposal."
+    )
+    agent_run_ids: list[str] = Field(min_length=1, description="Source AgentRun ids.")
+    evidence_refs: list[EvidenceRefV1] = Field(min_length=1, description="All retained evidence.")
+
+
 class NarrativeAnalysisResultV1(StrictBaseModel):
     """Typed, sanitized aggregate result for one whole-document task."""
 
-    schema_version: Literal["1.0", "1.1", "1.2", "1.3"] = Field(
-        default="1.3", description="Schema version; v1.0-v1.2 results remain readable."
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4"] = Field(
+        default="1.4", description="Schema version; v1.0-v1.3 results remain readable."
     )
     analysis_run_id: str = Field(description="Owning whole-document analysis run id.")
     events: list[AggregatedEventProposalV1] = Field(default_factory=list)
@@ -257,6 +269,9 @@ class NarrativeAnalysisResultV1(StrictBaseModel):
     claims: list[AggregatedClaimProposalV1] = Field(default_factory=list)
     knowledge_states: list[AggregatedKnowledgeStateProposalV1] = Field(default_factory=list)
     state_changes: list[AggregatedStateChangeProposalV1] = Field(default_factory=list)
+    relationship_signals: list[AggregatedRelationshipSignalProposalV1] = Field(
+        default_factory=list
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -271,12 +286,18 @@ class NarrativeAnalysisResultV1(StrictBaseModel):
                 "schema_version": "1.0",
                 "knowledge_states": [],
                 "state_changes": [],
+                "relationship_signals": [],
             }
         if "state_changes" not in value and "knowledge_states" in value:
-            return {**value, "schema_version": "1.1", "state_changes": []}
-        if "state_changes" in value:
-            return {**value, "schema_version": "1.3"}
-        return {**value, "schema_version": "1.3"}
+            return {
+                **value,
+                "schema_version": "1.1",
+                "state_changes": [],
+                "relationship_signals": [],
+            }
+        if "relationship_signals" not in value:
+            return {**value, "schema_version": "1.3", "relationship_signals": []}
+        return {**value, "schema_version": "1.4"}
 
 
 class AgentInputRefV1(StrictBaseModel):

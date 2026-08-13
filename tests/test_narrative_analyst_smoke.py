@@ -845,6 +845,10 @@ def test_narrative_analyst_classifies_provider_transport_failures() -> None:
         == "PROVIDER_CONNECTION_ERROR"
     )
     assert (
+        classify_exception(ValueError("LLM provider TLS handshake failed"))
+        == "PROVIDER_CONNECTION_ERROR"
+    )
+    assert (
         classify_exception(ValueError("LLM provider response format is invalid"))
         == "PROVIDER_RESPONSE_FORMAT_INVALID"
     )

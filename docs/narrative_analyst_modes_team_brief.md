@@ -22,11 +22,7 @@ still produce one proposal when the text only supports one distinct item.
 Each proposal item needs its own `EvidenceRefV1`; repeated entities or repeated
 claims across chunks should be output once.
 
-Planned modes remain registered but not implemented:
-
-```text
-relationship_signal_extraction -> planned_with_schema (mode not implemented)
-```
+All six Narrative Analyst modes are implemented, including `relationship_signal_extraction`.
 
 Current recommended model for manual Narrative Analyst extraction eval is
 `deepseek-chat`. Keep `deepseek-v4-pro` for future Continuity Timeline or other
@@ -386,11 +382,7 @@ entity_extraction -> EntityProposalBatchV1
 claim_extraction -> ClaimProposalBatchV1
 ```
 
-当前 planned / not implemented modes：
-
-```text
-relationship_signal_extraction -> planned_with_schema (mode not implemented)
-```
+当前六个既定 Narrative Analyst mode 均为 implemented；没有 remaining planned mode。
 
 shell 的意义：
 
@@ -398,8 +390,8 @@ shell 的意义：
 1. 后续 workflow/API 只需要接一个 NarrativeAnalyst 入口。
 2. 所有 mode 的状态、output_schema、EvidenceRef 要求和 max_context_chunks 有统一注册表。
 3. event/entity/claim 继续复用各自 Agent，不复制 prompt 逻辑。
-4. planned mode 调用时返回脱敏 not implemented 错误，不调用 provider。
-5. 本次没有新增真实 LLM 调用；Relationship Signal Schema 已新增，但没有写 StoryBible。
+4. 每个 implemented mode 通过同一受限 workflow、Provider 注入、失败恢复与审计路径运行。
+5. 本次没有新增真实 LLM 调用；Relationship Signal 仍不写 StoryBible。
 ```
 
 ### 1. event_extraction
@@ -729,8 +721,8 @@ StateChangeProposalBatchV1（其中每项为 StateChangeProposalV1）
 注册、手动 workflow、整文 worker、可恢复窗口链路、精确聚合与 Console 审计表。Agent
 仅消费受限 SourceChunk，通过 Provider interface 输出 `StateChangeProposalBatchV1`，并
 始终要求 unresolved Event/Target 引用；`changes=[]` 是成功结果。整文结果使用
-`NarrativeAnalysisResultV1` v1.3 的 `state_changes` 字段；v1.0/v1.1/v1.2 结果仍可读并默认
-空列表。
+`NarrativeAnalysisResultV1` v1.4 的 `state_changes` 与 `relationship_signals` 字段；v1.0-v1.3
+结果仍可读并默认空列表。
 
 Event 是瞬时原因，State Change 是动作后可供后续叙事使用的状态结果，两者可以同时
 输出。v1.3 的 `appearance.clothing` 与 `appearance.hairstyle` 只接受人物明确完成的
@@ -761,11 +753,13 @@ context 内紧邻的、已审计的前一条变化；不得借用窗口外信息
 
 中文名：关系信号抽取
 
-当前状态：暂缓。`RelationshipSignalProposalV1` 与
-`RelationshipSignalProposalBatchV1` Schema Contract v1.0 已完成，但 mode 仍未注册为
-implemented，Agent、Prompt、workflow、整文 worker、恢复、聚合、API 与 Console 尚未实现。
+当前状态：`RelationshipSignalExtractionAgent` 已作为 implemented mode 接入。
+`RelationshipSignalProposalV1` 与 `RelationshipSignalProposalBatchV1` Schema Contract v1.0
+不变；受限单窗口 workflow、整文 worker、通用恢复/resume、ownership/split、精确聚合、API
+与 Console 独立审计表均复用现有 Narrative Analyst 协议。Agent 仍只输出 source-first Proposal，
+不写 StoryBible 或 canonical relationship。
 
-未来开发文件：
+已实现 Agent 文件：
 
 ```text
 comic_agent/agents/relationship_signal_extraction.py
@@ -775,7 +769,7 @@ tests/test_relationship_signal_extraction_agent.py
 功能：
 
 ```text
-抽取角色之间关系变化的线索。
+抽取角色或组织之间带证据、可审计的关系信号。
 ```
 
 Schema 已定义的 Proposal-only 内容：
@@ -798,24 +792,19 @@ EvidenceRef、reality layer 与置信度
 数据库、不自动链接、不写 StoryBible。
 ```
 
-未来开发前置：
+接入边界：
 
 ```text
-1. 先实现 Agent Prompt 与 source-only 输入边界
-2. 注册 mode 前补齐 workflow、worker、恢复和聚合测试
-3. 自动测试阶段不接真实 LLM
-4. 不写 StoryBible；无需数据库迁移
+1. mode 已注册为 implemented，并复用 workflow、worker、恢复和聚合测试路径
+2. 自动测试阶段不接真实 LLM
+3. 不写 StoryBible；无需数据库迁移
 ```
 
-## 推荐开发顺序
+## 已实现 mode
 
 ```text
-1. event_extraction: 已完成
-2. entity_extraction: 已完成
-3. claim_extraction: 已完成
-4. knowledge_state_extraction
-5. state_change_extraction
-6. relationship_signal_extraction
+entity_extraction / event_extraction / claim_extraction / knowledge_state_extraction /
+state_change_extraction / relationship_signal_extraction
 ```
 
 ## 硬性规则

@@ -44,8 +44,9 @@ def test_demo_status_reports_sanitized_runtime_state(
             "event_extraction",
             "entity_extraction",
             "claim_extraction",
-            "knowledge_state_extraction",
-            "state_change_extraction",
+                "knowledge_state_extraction",
+                "state_change_extraction",
+                "relationship_signal_extraction",
         ],
     }
     assert "secret-demo-code" not in serialized

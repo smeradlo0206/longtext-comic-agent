@@ -13,6 +13,8 @@ from comic_agent.schemas.narrative import (
     EntityProposalBatchV1,
     EventProposalBatchV1,
     KnowledgeStateProposalBatchV1,
+    RelationshipSignalProposalBatchV1,
+    RelationshipSignalProposalV1,
     StateChangeProposalBatchV1,
     StateChangeProposalV1,
 )
@@ -418,6 +420,18 @@ class NarrativeAnalysisWorker:
                     for proposal in StateChangeProposalBatchV1.model_validate(payload).changes
                     if self._state_change_proposal_is_owned(window, proposal)
                 )
+            elif agent_run.output_schema == "RelationshipSignalProposalBatchV1":
+                sources.extend(
+                    {
+                        "mode": window.mode,
+                        "agent_run_id": agent_run.agent_run_id,
+                        "proposal": proposal.model_dump(mode="json"),
+                    }
+                    for proposal in RelationshipSignalProposalBatchV1.model_validate(
+                        payload
+                    ).signals
+                    if self._relationship_signal_is_owned(window, proposal)
+                )
         from comic_agent.schemas.workflow import NarrativeAnalysisProposalSourceV1
 
         typed_sources = [
@@ -440,3 +454,14 @@ class NarrativeAnalysisWorker:
         if evidence_index >= len(proposal.evidence_refs):
             return False
         return proposal.evidence_refs[evidence_index].chunk_id in set(window.owned_chunk_ids)
+
+    @staticmethod
+    def _relationship_signal_is_owned(
+        window: NarrativeAnalysisWindowV1,
+        proposal: RelationshipSignalProposalV1,
+    ) -> bool:
+        """Use the first relationship EvidenceRef as its deterministic leaf owner."""
+
+        return bool(proposal.evidence_refs) and (
+            proposal.evidence_refs[0].chunk_id in set(window.owned_chunk_ids)
+        )

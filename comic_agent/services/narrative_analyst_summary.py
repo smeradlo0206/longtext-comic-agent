@@ -17,6 +17,8 @@ from comic_agent.schemas.narrative import (
     EventProposalV1,
     KnowledgeStateProposalBatchV1,
     KnowledgeStateProposalV1,
+    RelationshipSignalProposalBatchV1,
+    RelationshipSignalProposalV1,
     StateChangeProposalBatchV1,
     StateChangeProposalV1,
 )
@@ -88,6 +90,7 @@ def implemented_mode_names() -> list[str]:
         "claim_extraction",
         "knowledge_state_extraction",
         "state_change_extraction",
+        "relationship_signal_extraction",
     ]
 
 
@@ -270,6 +273,12 @@ def normalize_proposal_evidence(
             proposal=proposal.model_copy(update={"changes": changes}),
             **counts,
         )
+    if isinstance(proposal, RelationshipSignalProposalBatchV1):
+        signals, counts = _normalize_proposal_items(proposal.signals, selected_chunks)
+        return EvidenceNormalizationResult(
+            proposal=proposal.model_copy(update={"signals": signals}),
+            **counts,
+        )
     if isinstance(
         proposal,
         (
@@ -278,6 +287,7 @@ def normalize_proposal_evidence(
             ClaimProposalV1,
             KnowledgeStateProposalV1,
             StateChangeProposalV1,
+            RelationshipSignalProposalV1,
         ),
     ):
         items, counts = _normalize_proposal_items([proposal], selected_chunks)
@@ -297,6 +307,7 @@ def _normalize_proposal_items(
         | ClaimProposalV1
         | KnowledgeStateProposalV1
         | StateChangeProposalV1
+        | RelationshipSignalProposalV1
     ],
     selected_chunks: list[SourceChunkV1],
 ) -> tuple[
@@ -306,6 +317,7 @@ def _normalize_proposal_items(
         | ClaimProposalV1
         | KnowledgeStateProposalV1
         | StateChangeProposalV1
+        | RelationshipSignalProposalV1
     ],
     dict[str, int],
 ]:
@@ -315,6 +327,7 @@ def _normalize_proposal_items(
         | ClaimProposalV1
         | KnowledgeStateProposalV1
         | StateChangeProposalV1
+        | RelationshipSignalProposalV1
     ] = []
     counts = {
         "rebound_chunk_ids": 0,
@@ -429,6 +442,13 @@ def add_proposal_details(
         return
     if isinstance(proposal, StateChangeProposalBatchV1):
         add_state_change_batch_details(
+            summary=summary,
+            batch=proposal,
+            selected_chunks=selected_chunks,
+        )
+        return
+    if isinstance(proposal, RelationshipSignalProposalBatchV1):
+        add_relationship_signal_batch_details(
             summary=summary,
             batch=proposal,
             selected_chunks=selected_chunks,
@@ -724,6 +744,46 @@ def _state_change_evidence_summary(
     }
 
 
+def add_relationship_signal_batch_details(
+    *,
+    summary: dict[str, Any],
+    batch: RelationshipSignalProposalBatchV1,
+    selected_chunks: list[SourceChunkV1],
+) -> None:
+    """Add sanitized Relationship Signal batch metadata to a summary."""
+
+    evidence_results = [
+        _relationship_signal_evidence_summary(signal, selected_chunks) for signal in batch.signals
+    ]
+    summary["batch_id"] = batch.batch_id
+    summary["relationship_signals_count"] = len(batch.signals)
+    summary["relationship_signal_proposal_ids"] = [signal.proposal_id for signal in batch.signals]
+    summary["relationship_signal_evidence_results"] = evidence_results
+    summary["evidence_validation_passed"] = all(
+        result["evidence_validation_passed"] is True for result in evidence_results
+    )
+    summary["quote_matched"] = _combine_tristate(
+        [result["quote_matched"] for result in evidence_results]
+    )
+    summary["char_range_matched"] = _combine_tristate(
+        [result["char_range_matched"] for result in evidence_results]
+    )
+
+
+def _relationship_signal_evidence_summary(
+    signal: RelationshipSignalProposalV1,
+    selected_chunks: list[SourceChunkV1],
+) -> dict[str, Any]:
+    validation = validate_evidence_refs(signal.evidence_refs, selected_chunks)
+    return {
+        "proposal_id": signal.proposal_id,
+        "relationship_kind": str(signal.relationship_kind),
+        "subject_resolution_status": str(signal.subject.resolution_status),
+        "counterpart_resolution_status": str(signal.counterpart.resolution_status),
+        **validation,
+    }
+
+
 def validate_evidence(
     evidence_refs: list[Any],
     selected_chunks: list[SourceChunkV1],
@@ -870,7 +930,11 @@ def classify_exception(exc: BaseException) -> str:
         return "PROVIDER_INVALID_JSON"
     if message.startswith("llm provider http error"):
         return "PROVIDER_HTTP_ERROR"
-    if "llm provider connection" in message or "llm provider network" in message:
+    if (
+        "llm provider connection" in message
+        or "llm provider network" in message
+        or "llm provider tls handshake" in message
+    ):
         return "PROVIDER_CONNECTION_ERROR"
     if "llm provider response format is invalid" in message:
         return "PROVIDER_RESPONSE_FORMAT_INVALID"
@@ -1016,6 +1080,16 @@ def manual_review_checklist(mode: str) -> dict[str, Any]:
             "new_value_has_supporting_evidence": None,
             "persistence_is_not_inferred": None,
             "unresolved_references_are_not_upgraded": None,
+            "manual_score": None,
+            "manual_issue": None,
+        }
+    if mode == "relationship_signal_extraction":
+        return {
+            "signals_are_source_grounded_not_canonical_relationships": None,
+            "participants_and_references_remain_unresolved": None,
+            "ordinary_interactions_not_upgraded_to_relationships": None,
+            "statement_speaker_and_temporal_effect_contract_preserved": None,
+            "every_relationship_signal_has_supporting_evidence": None,
             "manual_score": None,
             "manual_issue": None,
         }

@@ -21,6 +21,7 @@ from comic_agent.schemas.narrative import (
     EntityProposalBatchV1,
     EventProposalBatchV1,
     KnowledgeStateProposalBatchV1,
+    RelationshipSignalProposalBatchV1,
     StateChangeProposalBatchV1,
 )
 from comic_agent.schemas.source import SourceChunkV1
@@ -161,7 +162,10 @@ class NarrativeAnalystWorkflow:
         input_context = slim_input_context(
             context,
             visible_chunks,
-            full_source_chunk_records=mode == "state_change_extraction",
+            full_source_chunk_records=mode in {
+                "state_change_extraction",
+                "relationship_signal_extraction",
+            },
         )
         if output_recovery is not None:
             input_context["output_recovery"] = output_recovery
@@ -486,6 +490,8 @@ class NarrativeAnalystWorkflow:
             return [state.proposal_id for state in proposal.states]
         if isinstance(proposal, StateChangeProposalBatchV1):
             return [change.proposal_id for change in proposal.changes]
+        if isinstance(proposal, RelationshipSignalProposalBatchV1):
+            return [signal.proposal_id for signal in proposal.signals]
         proposal_id = getattr(proposal, "proposal_id", None)
         return [str(proposal_id)] if proposal_id is not None else []
 

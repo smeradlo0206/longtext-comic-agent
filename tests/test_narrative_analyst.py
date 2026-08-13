@@ -9,6 +9,7 @@ from comic_agent.schemas.narrative import (
     EntityProposalBatchV1,
     EventProposalBatchV1,
     KnowledgeStateProposalBatchV1,
+    RelationshipSignalProposalBatchV1,
     StateChangeProposalBatchV1,
 )
 from comic_agent.schemas.source import SourceChunkV1
@@ -90,6 +91,14 @@ class FakeProvider:
                     "schema_version": "1.2",
                     "batch_id": "state-change-batch-1",
                     "changes": [],
+                }
+            )
+        if output_model is RelationshipSignalProposalBatchV1:
+            return output_model.model_validate(
+                {
+                    "schema_version": "1.0",
+                    "batch_id": "relationship-signal-batch-1",
+                    "signals": [],
                 }
             )
         raise AssertionError(f"Unexpected output model: {output_model}")
@@ -182,6 +191,11 @@ def test_narrative_analyst_routes_claim_extraction_to_existing_agent() -> None:
             "StateChangeProposalBatchV1",
             StateChangeProposalBatchV1,
         ),
+        (
+            "relationship_signal_extraction",
+            "RelationshipSignalProposalBatchV1",
+            RelationshipSignalProposalBatchV1,
+        ),
     ],
 )
 def test_implemented_mode_specs_are_bounded_evidence_required_and_proposal_only(
@@ -213,6 +227,20 @@ def test_state_change_extraction_routes_to_agent_and_accepts_empty_batch() -> No
     assert batch.schema_version == "1.2"
     assert batch.changes == []
     assert provider.output_models == [StateChangeProposalBatchV1]
+    assert provider.requests[0]["input_context"] == input_context
+
+
+def test_relationship_signal_extraction_routes_to_agent_and_accepts_empty_batch() -> None:
+    provider = FakeProvider()
+    analyst = NarrativeAnalyst(provider)
+
+    input_context = _state_change_input_context()
+    batch = analyst.run("relationship_signal_extraction", input_context)
+
+    assert isinstance(batch, RelationshipSignalProposalBatchV1)
+    assert batch.schema_version == "1.0"
+    assert batch.signals == []
+    assert provider.output_models == [RelationshipSignalProposalBatchV1]
     assert provider.requests[0]["input_context"] == input_context
 
 
