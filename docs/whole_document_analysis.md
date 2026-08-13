@@ -134,9 +134,9 @@ or merge.
 No similarity-based merge creates a canonical fact. The task does not call
 CommitService, write StoryBible, or write other canonical data.
 
-`NarrativeAnalysisResultV1` fresh output is v1.3 and includes `state_changes` alongside
-`knowledge_states`. Historical v1.0/v1.1/v1.2 JSON result payloads remain readable; missing
-new lists default to `[]`. 无需数据库迁移：新增字段只存在于兼容的 JSON 聚合结果中。
+`NarrativeAnalysisResultV1` fresh output is v1.4 and includes `state_changes` and
+`relationship_signals` alongside `knowledge_states`. Historical v1.0/v1.1/v1.2/v1.3 JSON
+result payloads remain readable; missing new lists default to `[]`. 无需数据库迁移：新增字段只存在于兼容的 JSON 聚合结果中。
 The State Change Console audit table is separate from the Knowledge State table and shows
 event/target resolution, attribute path, old/new values, persistence evidence indexes,
 AgentRun context, and Evidence audit access.
@@ -147,15 +147,16 @@ the resulting reusable state; `persistent=false` means no explicit continuing/pe
 support, not that the state immediately ends. No canonical write, automatic resolution,
 fuzzy merge, or semantic repair is performed.
 
-Relationship Signal Schema Contract v1.0 is available as a new proposal-only schema for
-the future `relationship_signal_extraction` mode. It supports binary CHARACTER /
+Relationship Signal Schema Contract v1.0 is an implemented proposal-only
+`relationship_signal_extraction` mode. It supports binary CHARACTER /
 ORGANIZATION participants, controlled relationship kind/domain/directionality, source
 basis, polarity, support level, optional speaker/context event, temporal anchors and
-EvidenceRef. It is not yet an Agent or implemented mode: no workflow, worker, recovery,
-aggregation, API, Console, canonical relationship or StoryBible path exists. Unresolved
+EvidenceRef. It runs through the existing bounded workflow, worker recovery/resume, deterministic
+window ownership/split lineage, exact aggregation, API and dedicated Console audit table. The first
+EvidenceRef determines leaf ownership; no fuzzy deduplication is used. Unresolved
 references remain null-linked and the schema performs no database lookup or fuzzy linking.
-This additive schema requires no database migration and does not change
-`NarrativeAnalysisResultV1`.
+This additive JSON aggregation field requires no database migration. Relationship Signal remains
+Proposal-only and never writes a canonical relationship, StoryBible, or CommitService record.
 
 ## Dry-Run and Manual Real Evaluation
 
@@ -283,3 +284,34 @@ When a real fixture run cannot produce a valid Knowledge State Batch, whole-docu
 analysis is unaffected: the evaluation Console records a sanitized run failure,
 keeps its `case_id`, and includes it in the report. It does not fabricate an empty
 Batch, write a canonical fact, or silently remove the case from totals.
+
+## Future Review Gate 2 adapter boundary
+
+Review Gate 2 is not wired into the whole-document worker in this phase. A future adapter must
+construct `ReviewGate2InputV1` from the existing six Proposal sources only: Event, Entity,
+Claim, Knowledge State, State Change, and Relationship Signal. For every item it must preserve
+the original Proposal, mode/schema, AgentRun ids, aggregated EvidenceRef values, project/document/
+analysis-run identity, and the explicitly permitted SourceChunk ids. It must not use a whole
+database scan, raw provider response, text similarity, embedding, or automatic canonical link.
+
+A future completed review can expose only the `ApprovedProposalBundleV1` from
+`ReviewGate2ResultV1` to downstream continuity/timeline and StoryBible-curation stages. Empty
+input and a completed empty approved bundle are valid. Partially reviewed or failed results have
+no approved bundle; unresolved references are not silently upgraded. This repository currently
+implements only the Schema/JSON contract—no Review Agent, linker, worker integration, API,
+Console, Timeline, StoryBible Curator, CommitService, database persistence, or migration.
+
+## Future Review Gate 1 source-quality boundary
+
+After TXT import and chunking, a future worker may build `ReviewGate1InputV1` from the parsed
+SourceDocument, SourceChapter, SourceChunk records and an in-memory normalized-text snapshot.
+The input intentionally accepts quality anomalies so a deterministic Gate 1 service can report
+duplicate ids/orders, scope mismatches, checksum/range errors, whitespace-only chunks, chapter
+gaps, and overlaps without losing the audit record. It must not include Provider output or expose
+the normalized text in a Result/Bundle/log.
+
+Only an APPROVED `ApprovedSourceChunkBundleV1` may be handed to Orchestrator/ContextBuilder;
+REJECTED, pending, or failed Gate 1 results halt whole-document analysis. Gate 1 does not perform
+semantic review, fuzzy text deduplication, automatic repair, LLM calls, canonical writes, or
+database persistence. This phase contains only the Schema/JSON contract and no service, API,
+Console, or automatic routing implementation. No database migration is required.

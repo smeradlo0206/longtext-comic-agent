@@ -1,8 +1,18 @@
 import json
 
 from comic_agent.schemas import (
+    ApprovedProposalBundleV1,
+    ApprovedProposalItemV1,
+    ApprovedSourceChunkBundleV1,
+    EvidenceReviewItemV1,
     NarrativeAnalysisWindowPlanV1,
     NarrativeAnalysisWindowV1,
+    ProposalReviewDecision,
+    ProposalReviewDecisionV1,
+    ReferenceResolutionBasis,
+    ReferenceResolutionDecisionV1,
+    ReferenceResolutionStatus,
+    ReferenceTargetCandidateV1,
     RelationshipAssertionPolarity,
     RelationshipContextEventRefV1,
     RelationshipDirectionality,
@@ -18,6 +28,32 @@ from comic_agent.schemas import (
     RelationshipSourceSpeakerRefV1,
     RelationshipSupportLevel,
     RelationshipTemporalAnchorV1,
+    ReviewableProposalEnvelopeV1,
+    ReviewableProposalMode,
+    ReviewCheckStatus,
+    ReviewGate1Check,
+    ReviewGate1CheckResultV1,
+    ReviewGate1InputV1,
+    ReviewGate1IssueCategory,
+    ReviewGate1IssueCode,
+    ReviewGate1IssueV1,
+    ReviewGate1PolicyV1,
+    ReviewGate1ResultV1,
+    ReviewGate1RunStatus,
+    ReviewGate2InputV1,
+    ReviewGate2PolicyV1,
+    ReviewGate2ResultV1,
+    ReviewGate2RunStatus,
+    ReviewIssueCategory,
+    ReviewIssueCode,
+    ReviewIssueSeverity,
+    ReviewIssueV1,
+    ReviewMethod,
+    SourceChapterReviewItemV1,
+    SourceChunkReviewItemV1,
+    SourceChunkUsability,
+    SourceReviewDecision,
+    SourceTextAuditSnapshotV1,
     StateChangeAttributePath,
     StateChangeEventRefV1,
     StateChangeProposalBatchV1,
@@ -57,6 +93,27 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     assert (output_dir / "RelationshipContextEventRefV1.json").exists()
     assert (output_dir / "RelationshipSignalProposalV1.json").exists()
     assert (output_dir / "RelationshipSignalProposalBatchV1.json").exists()
+    assert (output_dir / "AggregatedRelationshipSignalProposalV1.json").exists()
+    assert (output_dir / "ReviewGate2InputV1.json").exists()
+    assert (output_dir / "ReviewGate2PolicyV1.json").exists()
+    assert (output_dir / "ReviewGate2ResultV1.json").exists()
+    assert (output_dir / "ReviewIssueV1.json").exists()
+    assert (output_dir / "ReferenceResolutionDecisionV1.json").exists()
+    assert (output_dir / "ReviewableProposalEnvelopeV1.json").exists()
+    assert (output_dir / "ProposalReviewDecisionV1.json").exists()
+    assert (output_dir / "ApprovedProposalBundleV1.json").exists()
+    for schema_name in (
+        "SourceTextAuditSnapshotV1",
+        "ReviewGate1PolicyV1",
+        "ReviewGate1InputV1",
+        "ReviewGate1IssueV1",
+        "ReviewGate1CheckResultV1",
+        "SourceChapterReviewItemV1",
+        "SourceChunkReviewItemV1",
+        "ApprovedSourceChunkBundleV1",
+        "ReviewGate1ResultV1",
+    ):
+        assert (output_dir / f"{schema_name}.json").exists()
 
     event_schema = json.loads((output_dir / "EventProposalV1.json").read_text(encoding="utf-8"))
     claim_schema = json.loads((output_dir / "ClaimProposalV1.json").read_text(encoding="utf-8"))
@@ -83,6 +140,21 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     )
     source_chunk_schema = json.loads(
         (output_dir / "SourceChunkV1.json").read_text(encoding="utf-8")
+    )
+    review_input_schema = json.loads(
+        (output_dir / "ReviewGate2InputV1.json").read_text(encoding="utf-8")
+    )
+    review_policy_schema = json.loads(
+        (output_dir / "ReviewGate2PolicyV1.json").read_text(encoding="utf-8")
+    )
+    review_result_schema = json.loads(
+        (output_dir / "ReviewGate2ResultV1.json").read_text(encoding="utf-8")
+    )
+    review_envelope_schema = json.loads(
+        (output_dir / "ReviewableProposalEnvelopeV1.json").read_text(encoding="utf-8")
+    )
+    gate1_result_schema = json.loads(
+        (output_dir / "ReviewGate1ResultV1.json").read_text(encoding="utf-8")
     )
 
     assert "actor_resolution_status" in event_schema["properties"]
@@ -184,3 +256,60 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     assert "char_start" in source_chunk_schema["properties"]
     assert "char_end" in source_chunk_schema["properties"]
     assert "checksum" in source_chunk_schema["properties"]
+    assert review_input_schema["properties"]["schema_version"]["const"] == "1.0"
+    assert review_policy_schema["properties"]["schema_version"]["const"] == "1.0"
+    assert review_result_schema["properties"]["schema_version"]["const"] == "1.0"
+    review_text = json.dumps(review_envelope_schema, ensure_ascii=False)
+    for proposal_name in (
+        "EventProposalV1",
+        "EntityProposalV1",
+        "ClaimProposalV1",
+        "KnowledgeStateProposalV1",
+        "StateChangeProposalV1",
+        "RelationshipSignalProposalV1",
+    ):
+        assert proposal_name in review_text
+    policy_text = json.dumps(review_policy_schema, ensure_ascii=False)
+    assert "allow_canonical_writes" in policy_text
+    assert "allow_fuzzy_reference_matching" in policy_text
+    assert "allow_llm_reference_resolution" in policy_text
+    assert "provider_response" not in policy_text
+    assert ApprovedProposalBundleV1.__name__ == "ApprovedProposalBundleV1"
+    assert ApprovedProposalItemV1.__name__ == "ApprovedProposalItemV1"
+    assert EvidenceReviewItemV1.__name__ == "EvidenceReviewItemV1"
+    assert ProposalReviewDecision.APPROVED == "APPROVED"
+    assert ProposalReviewDecisionV1.__name__ == "ProposalReviewDecisionV1"
+    assert ReferenceResolutionBasis.NONE == "NONE"
+    assert ReferenceResolutionDecisionV1.__name__ == "ReferenceResolutionDecisionV1"
+    assert ReferenceResolutionStatus.AMBIGUOUS == "AMBIGUOUS"
+    assert ReferenceTargetCandidateV1.__name__ == "ReferenceTargetCandidateV1"
+    assert ReviewCheckStatus.PASSED == "PASSED"
+    assert ReviewGate2InputV1.__name__ == "ReviewGate2InputV1"
+    assert ReviewGate2PolicyV1.__name__ == "ReviewGate2PolicyV1"
+    assert ReviewGate2ResultV1.__name__ == "ReviewGate2ResultV1"
+    assert ReviewGate2RunStatus.COMPLETED == "COMPLETED"
+    assert ReviewIssueCategory.PROVENANCE == "PROVENANCE"
+    assert ReviewIssueCode.EVIDENCE_QUOTE_NOT_FOUND == "EVIDENCE_QUOTE_NOT_FOUND"
+    assert ReviewIssueSeverity.BLOCKING == "BLOCKING"
+    assert ReviewIssueV1.__name__ == "ReviewIssueV1"
+    assert ReviewMethod.DETERMINISTIC == "DETERMINISTIC"
+    assert ReviewableProposalEnvelopeV1.__name__ == "ReviewableProposalEnvelopeV1"
+    assert ReviewableProposalMode.STATE_CHANGE_EXTRACTION == "state_change_extraction"
+    gate1_result_text = json.dumps(gate1_result_schema, ensure_ascii=False)
+    for forbidden in ("normalized_text", "storage_uri", "raw_output", "provider_response"):
+        assert forbidden not in gate1_result_text
+    assert ApprovedSourceChunkBundleV1.__name__ == "ApprovedSourceChunkBundleV1"
+    assert ReviewGate1Check.DOCUMENT_TEXT == "DOCUMENT_TEXT"
+    assert ReviewGate1CheckResultV1.__name__ == "ReviewGate1CheckResultV1"
+    assert ReviewGate1InputV1.__name__ == "ReviewGate1InputV1"
+    assert ReviewGate1IssueCategory.RANGE == "RANGE"
+    assert ReviewGate1IssueCode.CHUNK_RANGE_OVERLAP == "CHUNK_RANGE_OVERLAP"
+    assert ReviewGate1IssueV1.__name__ == "ReviewGate1IssueV1"
+    assert ReviewGate1PolicyV1.__name__ == "ReviewGate1PolicyV1"
+    assert ReviewGate1ResultV1.__name__ == "ReviewGate1ResultV1"
+    assert ReviewGate1RunStatus.FAILED == "FAILED"
+    assert SourceChapterReviewItemV1.__name__ == "SourceChapterReviewItemV1"
+    assert SourceChunkReviewItemV1.__name__ == "SourceChunkReviewItemV1"
+    assert SourceChunkUsability.USABLE == "USABLE"
+    assert SourceReviewDecision.APPROVED == "APPROVED"
+    assert SourceTextAuditSnapshotV1.__name__ == "SourceTextAuditSnapshotV1"

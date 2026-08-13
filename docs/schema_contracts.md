@@ -237,7 +237,7 @@ Schema export script produces the machine-readable contracts.
 | AgentRunV1 | One auditable agent execution. Successful runs require source input chunks and at least one output proposal or provider result; failed runs require error_message. | agent_run_id, project_id, agent_name, input_chunk_ids, output_schema, status | Output Proposal carries evidence | Workflow, audit, QA | Agent wrapper | N/A |
 | NarrativeAnalysisRunV1 | Persisted whole-document Narrative Analyst task. | analysis_run_id, project_id, document_id, modes, status, window ids | Via AgentRuns and result | API, console, audit | Narrative analysis service | N/A |
 | NarrativeAnalysisWindowV1 | One independently retryable mode/window execution; v1.4 adds context/owned chunk boundaries and split lineage. | analysis_window_id, mode, window_index, chunk ids, owned chunk ids, status | Via linked AgentRun | API, console, audit | Narrative analysis worker | N/A |
-| NarrativeAnalysisResultV1 | Typed conservative aggregation of proposal candidates. | analysis_run_id, events, entities, claims | Preserves EvidenceRef and AgentRun ids | API, console, review | Aggregation service | N/A |
+| NarrativeAnalysisResultV1 | Typed conservative aggregation of proposal candidates. Fresh v1.4 adds `relationship_signals`; v1.0-v1.3 remain readable with missing lists defaulted. | analysis_run_id, events, entities, claims | Preserves EvidenceRef and AgentRun ids | API, console, review | Aggregation service | N/A |
 | ProviderResultV1 | One provider call result. Success requires raw_output or structured_output and forbids error_message; failure requires error_message. | provider_result_id, provider_name, provider_type, output_schema, success | Structured output carries evidence if any | AgentRun, audit | Provider adapter | N/A |
 | MockProviderResultV1 | Mock provider result specialization using ProviderResultV1 consistency rules. | provider_result_id, output_schema, success | Structured output carries evidence if any | Tests, AgentRun, audit | Mock provider | N/A |
 
@@ -528,8 +528,8 @@ Evidence, unresolved-link, exact duplicate, and Proposal-only boundaries remain 
 No fuzzy merge, automatic resolved link, canonical write, or semantic repair is introduced.
 Part-whole target resolution is intentionally out of scope: “木箱” and “箱盖” remain
 independent OBJECT mentions unless a future approved Schema explicitly models their relation.
-`NarrativeAnalysisResultV1` fresh output follows the compatible v1.3 result version while
-historical result payloads still read with missing lists defaulted to `[]`.
+`NarrativeAnalysisResultV1` fresh output follows compatible v1.4 and includes
+`relationship_signals`; historical result payloads still read with missing lists defaulted to `[]`.
 
 无需数据库迁移：v1.3 只扩展兼容的 Proposal/JSON Schema 与聚合结果，不写入 canonical
 StoryBible 或数据库状态表。
@@ -565,8 +565,100 @@ source speaker，且不能使用 `EXPLICIT`；旁白和观察行为禁止虚构 
 精确去重，不做文本归一化、模糊匹配、embedding 或 LLM 裁决；evidence 顺序和 confidence
 差异不能使完全相同语义逃过校验。
 
-这是新增的 v1.0 Proposal/JSON Schema；没有历史 Relationship Signal payload，未来
-版本通过 `schema_version` 分流。本轮没有 `NarrativeAnalysisResultV1` 字段变更，
-`relationship_signal_extraction` mode、Agent、workflow、整文 worker、聚合、API 和
-Console 均尚未实现。无需数据库迁移：不产生 canonical relationship，也不改变既有
-NarrativeAnalysisResult 或数据库表结构。
+Relationship Signal Proposal/Batch v1.0 remains unchanged. `relationship_signal_extraction` is
+implemented across the bounded workflow, whole-document worker, resume/split ownership flow, exact
+aggregation, API and Console audit. `NarrativeAnalysisResultV1` v1.4 adds compatible
+`relationship_signals`; v1.0-v1.3 results remain readable and default that list to `[]`. Its exact
+aggregation key includes both participant references (unordered only for symmetric signals), kind/
+domain/direction/effect/polarity/basis/support, speaker, context event, temporal anchor and reality
+layer. It never uses fuzzy matching, entity linking, fact adjudication, or canonical writes.
+
+无需数据库迁移：`relationship_signals` 只存在于兼容 JSON 聚合结果。Relationship Signal remains
+Proposal-only and does not create canonical relationships or write StoryBible/CommitService data.
+
+### Review Gate 2 Schema Contract v1.0
+
+Review Gate 2 v1.0 is a proposal-review contract, not a review Agent, linker, canonical
+writer, or automatic decision service. `ReviewGate2InputV1` carries a bounded analysis run,
+the six Narrative Analyst Proposal types with their AgentRun/Evidence provenance, an explicit
+allowed SourceChunk scope, and a fixed `ReviewGate2PolicyV1`. Empty proposal input is valid.
+The policy permanently requires Evidence and complete review before downstream use, permits
+only exact reference matching, and forbids fuzzy matching, LLM reference resolution, and
+canonical writes.
+
+`ReviewableProposalEnvelopeV1` accepts exactly Event, Entity, Claim, Knowledge State, State
+Change, and Relationship Signal Proposals. Its declared mode and schema must match the actual
+Proposal type, AgentRun ids are non-empty and unique, and aggregated Evidence is non-empty.
+The envelope preserves the original Proposal: it neither upgrades unresolved references nor
+rewrites Proposal ids, fields, Evidence, reality layers, or semantics.
+
+Review decisions record independent schema/provenance/evidence/mode-boundary statuses,
+per-Evidence review, reference-resolution decisions, and sanitized issues. `APPROVED` permits
+only passed/not-applicable checks, passed Evidence, no blocking or review-required issues, and
+no required unresolved/ambiguous/rejected reference. `REJECTED` requires a failed check and a
+blocking issue. `NEEDS_HUMAN_REVIEW` requires an unresolved review condition and a
+review-required issue, without a blocking issue. Deterministic decisions cannot supersede a
+prior decision; human decisions must identify the superseded decision and provide a non-empty
+review note. Issues are auditable metadata only and must not contain raw provider payloads or
+source content.
+
+`ReferenceResolutionDecisionV1` is restricted to Entity, Event, or Claim Proposal candidates
+in the current review scope. It records `RESOLVED`, `UNRESOLVED`, `AMBIGUOUS`, or `REJECTED`
+without performing a lookup. Resolved decisions select exactly one listed candidate with a
+non-`NONE` basis; unresolved decisions contain neither a candidate nor selection; ambiguous
+decisions retain at least two candidates and a review-required issue; rejected decisions carry
+a blocking issue. The Schema validates shapes, required issue categories, and exact declared
+types only; it does not prove that a Proposal exists or automatically resolve a mention.
+
+`ReviewGate2ResultV1` is complete only when all decisions are final and its
+`ApprovedProposalBundleV1` exactly corresponds to the approved decisions. The bundle may be
+empty when no Proposal is approved; a partially reviewed result has no bundle; a failed result
+has a blocking `EXECUTION` issue and no bundle. It remains an audit JSON artifact for future
+Timeline and StoryBible Curator consumers. This contract has no Review Agent, linker, API,
+Console, Timeline, StoryBible Curator, CommitService, database table, or migration.
+
+Schema compatibility impact: this adds independent v1.0 Review Gate 2 payloads only. Existing
+Event, Entity, Claim, Knowledge State, State Change, Relationship Signal, Narrative Analysis,
+and historical payload versions remain unchanged and readable. No historical Proposal is
+rewritten, linked, or upgraded.
+
+无需数据库迁移：Review Gate 2 新增字段仅存在于兼容的 Pydantic/JSON 审计合同中；当前未持久化
+Review Gate 2 结果，未来如需持久化应单独设计数据库模型与迁移。
+
+### Review Gate 1 Schema Contract v1.0
+
+Review Gate 1 位于 Import & Chunking 完成之后、Orchestrator/ContextBuilder 之前，审核的是
+SourceDocumentV1、SourceChapterV1、SourceChunkV1 的导入与切片质量，不判断叙事语义、不产生
+事实，也不调用 LLM。`ReviewGate1InputV1` 携带已解码的 `SourceTextAuditSnapshotV1`、章节、
+chunk 和固定 Policy 快照。Input 只验证结构、标识符和策略 Literal；重复 ID/order、范围重叠、
+checksum 不一致、scope 错误等待审异常必须能够进入 Input，由 Result 形成审计结论，而不是
+在输入层丢失。
+
+Gate 1 的确定性边界包括：规范化文本 checksum 和 chunk checksum/range 校验、replacement
+character、NUL/禁止控制字符、空文档/纯空白、章节/chunk scope、零起连续 order、重复/重叠
+range、空章节、章节 chunk 边界以及 1200 字符长度策略。`char_end` 是 Python 半开区间的
+exclusive end。标题行和空白分隔区可以造成合法 gap；不要求 chunk 覆盖全文，但有效 chunk
+range 不得重叠或重复。相同文本/相同 checksum 且范围不同仅是可能重复提示，不自动删除或合并。
+Gate 1 不修复乱码、offset、排序或 chunk 内容。
+
+“乱码”检查只覆盖已严格 UTF-8 解码并规范化文本中的确定性损坏信号，例如 `\\uFFFD`、NUL
+和禁止控制字符，不能证明自然语言质量或原始字节绝无问题。Issue 只保存受控 code/category/
+check、对象输入索引、field path 和无换行的短 sanitized message，不保存 normalized_text、
+全文、storage_uri 或 Provider 原始响应。
+
+`ReviewGate1ResultV1` 只有确定性审核完成后才可 APPROVED：所有 chunk 为 USABLE、无 BLOCKING/
+REVIEW_REQUIRED issue，并带有按源 order 排列的 `ApprovedSourceChunkBundleV1.chunk_ids`。
+REJECTED 必须有 BLOCKING issue 且无 Bundle；NEEDS_HUMAN_REVIEW 必须有 REVIEW_REQUIRED issue
+且暂停整份 Bundle；FAILED 必须是 REJECTED 并带 EXECUTION/BLOCKING issue。Bundle 只能交给
+未来 Orchestrator/ContextBuilder，不能交给 StoryBible、CommitService 或任何 canonical 写入路径。
+
+Gate 1 与 Gate 2 分工不同：Gate 1 检查输入文本/切片是否可安全供 Agent 使用；Gate 2 检查六类
+Proposal 的 Schema、Evidence、来源与 mode 边界。两者均不自动链接、不做模糊匹配、不写
+StoryBible。
+
+Schema compatibility impact：新增独立的 Review Gate 1 v1.0 Pydantic/JSON payload，不修改
+SourceDocumentV1、SourceChapterV1、SourceChunkV1 及其历史读取兼容性；当前不实现 Gate 1
+service、Agent、API、Console 或自动路由。
+
+无需数据库迁移：Gate 1 结果目前仅作为兼容的 Pydantic/JSON 审计合同；没有新增数据库表，
+未来持久化需另行设计迁移。
