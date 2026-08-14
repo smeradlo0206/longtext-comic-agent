@@ -617,6 +617,25 @@ has a blocking `EXECUTION` issue and no bundle. It remains an audit JSON artifac
 Timeline and StoryBible Curator consumers. This contract has no Review Agent, linker, API,
 Console, Timeline, StoryBible Curator, CommitService, database table, or migration.
 
+`ReviewGate2Service` now executes this contract as a pure synchronous deterministic service.
+`build_review_gate2_input()` flattens the six typed aggregate lists in stable mode order, while
+`ReviewGate2Service.review()` accepts only caller-supplied SourceChunk and AgentRun scope. It
+performs provenance, exact Evidence, mode/schema, bounded reference, duplicate, and canonical
+boundary checks without changing the original Proposal. Automatic remediation, semantic LLM
+review, total-control state-machine wiring, API, Console, and human-review persistence remain
+unimplemented.
+
+The service context is a strict caller-supplied boundary: duplicate SourceChunk ids, SourceChunks
+outside `allowed_chunk_ids`, or AgentRun-to-analysis-run mappings whose keys are outside the known
+AgentRun scope are execution-boundary failures. The result is `FAILED` with only a sanitized
+`REVIEW_EXECUTION_FAILED` issue and no approved bundle; it never selects one duplicate, ignores an
+extra chunk, or reads a repository to fill context. In contrast, Proposal Evidence referring to an
+allowed SourceChunk that the caller omitted from context remains the Proposal-level
+`EVIDENCE_CHUNK_NOT_FOUND` rejection. `build_review_gate2_input()` intentionally has no AgentRun
+parameter: provenance is checked only from the service context. For identical input, context, and
+policy, review/decision/issue ids, ordering, decisions, counts, and bundle content are stable;
+only UTC audit timestamps may differ.
+
 Schema compatibility impact: this adds independent v1.0 Review Gate 2 payloads only. Existing
 Event, Entity, Claim, Knowledge State, State Change, Relationship Signal, Narrative Analysis,
 and historical payload versions remain unchanged and readable. No historical Proposal is

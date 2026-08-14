@@ -298,8 +298,19 @@ A future completed review can expose only the `ApprovedProposalBundleV1` from
 `ReviewGate2ResultV1` to downstream continuity/timeline and StoryBible-curation stages. Empty
 input and a completed empty approved bundle are valid. Partially reviewed or failed results have
 no approved bundle; unresolved references are not silently upgraded. This repository currently
-implements only the Schema/JSON contract—no Review Agent, linker, worker integration, API,
-Console, Timeline, StoryBible Curator, CommitService, database persistence, or migration.
+implements the pure deterministic `ReviewGate2Service` and the Schema/JSON contract. It is not
+wired into the worker, total-control state machine, API, or Console. There is still no Review
+Agent, semantic LLM reviewer, automatic linker, Timeline, StoryBible Curator, CommitService,
+database persistence, or migration.
+
+When a future adapter invokes Gate 2, its SourceChunk and AgentRun context must be bounded and
+complete for that review only. Duplicate context chunk ids, context chunks outside the declared
+allowed scope, and AgentRun-analysis mappings outside the known AgentRun set fail the entire
+review with a sanitized execution issue and no bundle. Missing context for Evidence that is still
+within the allowed scope remains a Proposal-level `EVIDENCE_CHUNK_NOT_FOUND` rejection; Gate 2
+does not read repositories or databases to fill it. The input builder does not accept a separate
+AgentRun parameter, and repeated identical input/context/policy calls are deterministic except for
+UTC audit timestamps.
 
 ## Automatic import to analysis
 

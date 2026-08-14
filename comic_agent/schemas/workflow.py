@@ -298,8 +298,11 @@ class NarrativeAnalysisResultV1(StrictBaseModel):
     def infer_legacy_result_version(cls, value: Any) -> Any:
         if not isinstance(value, dict) or "schema_version" in value:
             return value
-        if "knowledge_states" not in value and any(
-            field in value for field in ("events", "entities", "claims")
+        if (
+            "knowledge_states" not in value
+            and "state_changes" not in value
+            and "relationship_signals" not in value
+            and any(field in value for field in ("events", "entities", "claims"))
         ):
             return {
                 **value,

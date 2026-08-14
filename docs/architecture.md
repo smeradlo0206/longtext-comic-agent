@@ -72,11 +72,18 @@ the bounded Proposal envelopes, AgentRun provenance, Evidence references, and al
 SourceChunk ids defined by `ReviewGate2InputV1`. It produces auditable decision, issue, and
 reference-resolution records plus an approved Proposal bundle only after complete review.
 
-The currently implemented component is the Pydantic/JSON Schema contract only. No Review Agent,
-automatic linker, database persistence, API endpoint, Console view, Timeline, StoryBible Curator,
-or canonical write path is introduced. The contract explicitly forbids fuzzy/LLM reference
-resolution and canonical writes; unresolved references remain unresolved unless a future bounded
-review process records a valid decision.
+The currently implemented component is the pure deterministic `ReviewGate2Service` plus the
+Pydantic/JSON Schema contract. It accepts only caller-supplied bounded SourceChunk and AgentRun
+context, performs exact evidence/provenance/mode/reference checks, and never mutates the original
+Proposal. No Review Agent, automatic linker, database persistence, API endpoint, Console view,
+Timeline, StoryBible Curator, or canonical write path is introduced. Fuzzy/LLM reference
+resolution and canonical writes remain forbidden; unresolved references are never rewritten.
+The context is rejected as an execution failure when it contains duplicate chunk ids, a chunk
+outside the input's allowed scope, or an AgentRun mapping outside the known AgentRun scope. A
+missing context chunk for otherwise allowed Proposal Evidence is instead an auditable
+Proposal-level evidence rejection; the service never obtains it from storage. Repeating the same
+input, context, and policy yields stable ids, ordering, decisions, counts, and bundle membership,
+apart from UTC audit timestamps.
 
 ## Automatic import to analysis
 
