@@ -1,19 +1,25 @@
 """Document import and source query routes."""
 
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import JSONResponse
 
 from comic_agent.agents.mocks import MockEventAgent
 from comic_agent.api.dependencies import get_repository
 from comic_agent.config import get_settings
 from comic_agent.repositories.source_repository import SourceRepository
 from comic_agent.schemas.narrative import EventProposalV1
+from comic_agent.schemas.review import SourceReviewDecision
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.workflow import AgentRunStatus, AgentRunV1
 from comic_agent.services.commit_service import CommitService
 from comic_agent.services.document_parser import DocumentParser
+from comic_agent.services.review_gate1_service import (
+    ReviewGate1Service,
+    build_review_gate1_input,
+)
 
 router = APIRouter()
 
@@ -40,7 +46,7 @@ async def import_document(
     project_id: str,
     file: UploadFileDep,
     repository: RepositoryDep,
-) -> dict[str, object]:
+) -> Any:
     """Import a TXT document through multipart upload."""
 
     raw = await file.read()
@@ -67,12 +73,30 @@ async def import_document(
         text=text,
         mime_type=content_type,
     )
-    result = repository.import_parsed_document(parsed)
+    gate1 = ReviewGate1Service().review(
+        build_review_gate1_input(parsed=parsed, normalized_text=text)
+    )
+    response_gate1 = gate1.model_dump(mode="json")
+    if gate1.decision != SourceReviewDecision.APPROVED:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={
+                "status": "gate1_blocked",
+                "gate1": response_gate1,
+                "approved_chunk_bundle": None,
+            },
+        )
+    result = repository.import_reviewed_document(parsed, gate1)
     return {
         "status": result.status,
         "document": result.document.model_dump(mode="json"),
         "chapters_count": len(result.chapters),
         "chunks_count": len(result.chunks),
+        "gate1": response_gate1,
+        "approved_chunk_bundle": gate1.approved_chunk_bundle.model_dump(mode="json")
+        if gate1.approved_chunk_bundle is not None
+        else None,
+        "analysis_eligible": True,
     }
 
 

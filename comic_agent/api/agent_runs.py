@@ -28,7 +28,7 @@ from comic_agent.schemas.workflow import (
     NarrativeAnalysisWindowV1,
 )
 from comic_agent.services.id_service import checksum_text, stable_id
-from comic_agent.services.narrative_analysis import create_narrative_analysis_run
+from comic_agent.services.narrative_analysis_coordinator import NarrativeAnalysisCoordinator
 from comic_agent.services.narrative_analysis_worker import NarrativeAnalysisWorker
 from comic_agent.workflows.mock_event_workflow import MockEventWorkflow
 from comic_agent.workflows.narrative_analyst_workflow import NarrativeAnalystWorkflow
@@ -184,17 +184,21 @@ def create_whole_document_analysis(
     source_repository: SourceRepositoryDep,
     analysis_repository: NarrativeAnalysisRepositoryDep,
 ) -> dict[str, Any]:
-    """Create a resumable normal-flow analysis task without exposing chunk selection."""
+    """Create a resumable Gate 1-authorized, chapter-scoped analysis task."""
 
     _require_real_llm_enabled(payload.real_llm_requested, get_settings())
     try:
-        run = create_narrative_analysis_run(
+        coordinator = NarrativeAnalysisCoordinator(
             source_repository=source_repository,
             analysis_repository=analysis_repository,
+        )
+        run = coordinator.create_run(
             project_id=project_id,
             document_id=document_id,
             modes=payload.modes,
             real_llm_requested=payload.real_llm_requested,
+            chapter_ids=payload.chapter_ids,
+            document_revision=payload.document_revision,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -205,7 +209,27 @@ def create_whole_document_analysis(
         run.analysis_run_id,
         payload.real_llm_requested,
     )
-    return _analysis_run_payload(run, analysis_repository)
+    result = _analysis_run_payload(run, analysis_repository)
+    result["selected_chapter_ids"] = payload.chapter_ids or [
+        chapter.chapter_id for chapter in source_repository.list_document_chapters(document_id)
+    ]
+    return result
+
+
+@router.get("/projects/{project_id}/documents/{document_id}/narrative-analysis-chapters")
+def list_narrative_analysis_chapters(
+    project_id: str,
+    document_id: str,
+    source_repository: SourceRepositoryDep,
+) -> dict[str, Any]:
+    """Return Gate 1 eligibility and safe chapter selection metadata."""
+
+    try:
+        return NarrativeAnalysisCoordinator(
+            source_repository=source_repository,
+        ).chapter_selection(project_id=project_id, document_id=document_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/narrative-analysis-runs/{analysis_run_id}")

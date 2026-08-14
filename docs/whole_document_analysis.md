@@ -301,6 +301,13 @@ no approved bundle; unresolved references are not silently upgraded. This reposi
 implements only the Schema/JSON contract—no Review Agent, linker, worker integration, API,
 Console, Timeline, StoryBible Curator, CommitService, database persistence, or migration.
 
+## Automatic import to analysis
+
+The normal console path is TXT import → Gate 1 review → chapter selection → one-click
+Narrative Analyst. Omitted modes default to all six implemented extraction modes, while
+the coordinator computes the exact approved chunk intersection server-side. Rejected or
+human-review imports cannot start analysis; this flow remains proposal-only.
+
 ## Future Review Gate 1 source-quality boundary
 
 After TXT import and chunking, a future worker may build `ReviewGate1InputV1` from the parsed
@@ -310,8 +317,16 @@ duplicate ids/orders, scope mismatches, checksum/range errors, whitespace-only c
 gaps, and overlaps without losing the audit record. It must not include Provider output or expose
 the normalized text in a Result/Bundle/log.
 
+Gate 1 counts newline runs only after CRLF/CR to LF normalization. Under policy v1.1,
+four newline characters are warning-only layout whitespace while five or more require
+human review; these are fixed policy literals. Explicit v1.0 policies retain the
+historical four-newline review boundary.
+
 Only an APPROVED `ApprovedSourceChunkBundleV1` may be handed to Orchestrator/ContextBuilder;
 REJECTED, pending, or failed Gate 1 results halt whole-document analysis. Gate 1 does not perform
 semantic review, fuzzy text deduplication, automatic repair, LLM calls, canonical writes, or
-database persistence. This phase contains only the Schema/JSON contract and no service, API,
-Console, or automatic routing implementation. No database migration is required.
+database persistence. The synchronous `ReviewGate1Service.review()` now executes this
+deterministic review and returns source-free metrics plus bounded routing advice. TXT import now
+invokes it automatically; only APPROVED results persist. The chapter coordinator authorizes
+downstream analysis without automatic repair or human-review persistence. No database migration
+is required.

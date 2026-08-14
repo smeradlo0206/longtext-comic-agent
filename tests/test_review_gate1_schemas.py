@@ -18,6 +18,7 @@ from comic_agent.schemas import (
 )
 from comic_agent.services.document_parser import DocumentParser
 from comic_agent.services.id_service import checksum_text
+from comic_agent.services.review_gate1_service import ReviewGate1Service, build_review_gate1_input
 
 TEXT = "第一章 开始\n\n林夏站在门边。\n\n她打开了门。\n"
 
@@ -121,6 +122,7 @@ def _chunk_review(
 def _result(parsed, **updates):
     issues: list[dict[str, object]] = []
     result: dict[str, object] = {
+        "schema_version": "1.0",
         "review_run_id": "review-1",
         "project_id": parsed.document.project_id,
         "document_id": parsed.document.document_id,
@@ -157,6 +159,37 @@ def test_parser_snapshot_can_form_approved_gate1_result() -> None:
     assert result.decision == SourceReviewDecision.APPROVED
     assert result.approved_chunk_bundle is not None
     assert result.approved_chunk_bundle.chunk_ids == [chunk.chunk_id for chunk in parsed.chunks]
+
+
+def test_review_gate1_policy_v11_exposes_fixed_whitespace_thresholds() -> None:
+    policy = ReviewGate1InputV1.model_validate(_input()).policy
+
+    assert policy.schema_version == "1.1"
+    assert policy.max_warning_whitespace_run == 4
+    assert policy.review_required_whitespace_run == 5
+    with pytest.raises(ValidationError):
+        type(policy).model_validate(
+            policy.model_dump() | {"review_required_whitespace_run": 6}
+        )
+
+
+def test_review_gate1_policy_v10_remains_readable_with_legacy_whitespace_semantics() -> None:
+    payload = _policy() | {"schema_version": "1.0"}
+    policy = ReviewGate1InputV1.model_validate(_input(policy=payload)).policy
+
+    assert policy.schema_version == "1.0"
+    assert policy.max_warning_whitespace_run is None
+    assert policy.review_required_whitespace_run is None
+
+
+def test_result_without_version_and_new_fields_reads_as_legacy_v10() -> None:
+    parsed = _parsed()
+    payload = _result(parsed)
+    payload.pop("schema_version")
+    result = ReviewGate1ResultV1.model_validate(payload)
+    assert result.schema_version == "1.0"
+    assert result.metrics is None
+    assert result.routing_advice is None
 
 
 def test_gate1_input_accepts_snapshots_with_auditable_quality_anomalies() -> None:
@@ -315,7 +348,10 @@ def test_issue_and_check_cross_validation_is_strict_and_sanitized() -> None:
 def test_review_items_require_unique_contiguous_input_indexes_and_valid_usability() -> None:
     parsed = _parsed()
     duplicate = _result(parsed)
-    duplicate["chunk_reviews"] = [_chunk_review(parsed.chunks[0]), _chunk_review(parsed.chunks[0])]
+    duplicate["chunk_reviews"] = [
+        _chunk_review(parsed.chunks[0]),
+        _chunk_review(parsed.chunks[1]) | {"chunk_input_index": 0},
+    ] + [_chunk_review(chunk) for chunk in parsed.chunks[2:]]
     with pytest.raises(ValidationError):
         ReviewGate1ResultV1.model_validate(duplicate)
     with pytest.raises(ValidationError):
@@ -336,3 +372,35 @@ def test_bundle_is_id_only_and_preserves_source_order() -> None:
     assert "normalized_text" not in serialized
     assert "storage_uri" not in serialized
     assert "provider_response" not in serialized
+
+
+def test_fresh_v11_result_requires_metrics_and_routing_advice() -> None:
+    parsed = _parsed()
+    review_input = build_review_gate1_input(parsed=parsed, normalized_text=TEXT)
+    result = ReviewGate1Service().review(review_input)
+    payload = result.model_dump()
+    assert payload["schema_version"] == "1.1"
+    assert payload["metrics"] is not None
+    assert payload["routing_advice"] is not None
+
+    with pytest.raises(ValidationError):
+        ReviewGate1ResultV1.model_validate(payload | {"metrics": None})
+    with pytest.raises(ValidationError):
+        ReviewGate1ResultV1.model_validate(payload | {"routing_advice": None})
+
+
+def test_v11_result_rejects_conflicting_decision_and_routing() -> None:
+    parsed = _parsed()
+    result = ReviewGate1Service().review(
+        build_review_gate1_input(parsed=parsed, normalized_text=TEXT)
+    )
+    payload = result.model_dump()
+    conflicting = dict(payload)
+    conflicting["routing_advice"] = {
+        **payload["routing_advice"],
+        "action": "RECHUNK_REQUIRED",
+        "retryable": True,
+        "downstream_permitted": False,
+    }
+    with pytest.raises(ValidationError):
+        ReviewGate1ResultV1.model_validate(conflicting)

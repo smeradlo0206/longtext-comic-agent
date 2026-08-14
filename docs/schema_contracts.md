@@ -625,7 +625,23 @@ rewritten, linked, or upgraded.
 无需数据库迁移：Review Gate 2 新增字段仅存在于兼容的 Pydantic/JSON 审计合同中；当前未持久化
 Review Gate 2 结果，未来如需持久化应单独设计数据库模型与迁移。
 
-### Review Gate 1 Schema Contract v1.0
+### Automatic import authorization (Gate 1 → Narrative Analyst)
+
+TXT import runs deterministic Gate 1 before persistence. Only APPROVED results persist
+source rows; the sanitized Gate 1 result is retained in the existing document JSON
+payload for refresh. The coordinator derives chapter-selected chunks from that approved
+bundle and defaults to the six implemented Narrative Analyst modes. This is proposal-only
+and requires no database migration.
+
+### Review Gate 1 Schema Contract v1.1 (v1.0 readable)
+
+`ReviewGate1PolicyV1` v1.1 fixes normalized newline-run thresholds: a run of 4
+newline characters is classified as `DOCUMENT_EXCESSIVE_WHITESPACE/WARNING` and
+does not block approval; a run of 5 or more is `REVIEW_REQUIRED` and routes to
+`HOLD_FOR_HUMAN_REVIEW`. These fields are fixed literals, not caller-configurable
+integers. Explicit v1.0 policies remain readable and retain the historical rule in
+which 4 or more newline characters require review. CRLF and CR are normalized to LF
+before counting. Chapter/title gaps remain valid and are never rewritten.
 
 Review Gate 1 位于 Import & Chunking 完成之后、Orchestrator/ContextBuilder 之前，审核的是
 SourceDocumentV1、SourceChapterV1、SourceChunkV1 的导入与切片质量，不判断叙事语义、不产生
@@ -656,9 +672,20 @@ Gate 1 与 Gate 2 分工不同：Gate 1 检查输入文本/切片是否可安全
 Proposal 的 Schema、Evidence、来源与 mode 边界。两者均不自动链接、不做模糊匹配、不写
 StoryBible。
 
-Schema compatibility impact：新增独立的 Review Gate 1 v1.0 Pydantic/JSON payload，不修改
-SourceDocumentV1、SourceChapterV1、SourceChunkV1 及其历史读取兼容性；当前不实现 Gate 1
-service、Agent、API、Console 或自动路由。
+Schema compatibility impact：ReviewGate1ResultV1 新写入默认使用 v1.1；显式 v1.0
+payload 继续可读，且 v1.0 允许 `metrics` 与 `routing_advice` 为 null。v1.1 要求两者完整，
+并以确定性校验保证计数、issue 列表、review item 与 routing action 一致。不修改
+SourceDocumentV1、SourceChapterV1、SourceChunkV1，也不增加 Gate 1 Agent、API、Console 或
+自动执行路由。
+
+Review Gate 1 v1.1 的 `ReviewGate1Service.review()` 是纯同步、无副作用的确定性审核服务。它
+计算不含源文本的完整 metrics（文本长度、章节/chunk 数、offset/range 有效性、可用性、检查与
+issue 严重度、重复/重叠计数及按 enum 稳定排序的 code/category 计数），并返回受限
+`ReviewGate1RoutingAdviceV1`。只有 `APPROVED + CONTINUE_TO_CONTEXT_BUILDER` 才带有
+`ApprovedSourceChunkBundleV1`，总控未来只能把该 Bundle 的 chunk_ids 交给 ContextBuilder。
+`NEEDS_HUMAN_REVIEW`、`REIMPORT_REQUIRED`、`RECHUNK_REQUIRED` 和执行失败路由都不放行下游。
+服务不调用 Provider/LLM、不自动修复或重排输入、不持久化审核结果，也不写 StoryBible 或
+CommitService。
 
 无需数据库迁移：Gate 1 结果目前仅作为兼容的 Pydantic/JSON 审计合同；没有新增数据库表，
 未来持久化需另行设计迁移。

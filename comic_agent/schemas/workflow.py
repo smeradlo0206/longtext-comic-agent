@@ -176,9 +176,29 @@ class NarrativeAnalysisRunV1(StrictBaseModel):
 
 
 class NarrativeAnalysisCreateRequestV1(StrictBaseModel):
-    """Normal whole-document analysis request without manual chunk selection."""
+    """Chapter-scoped whole-document analysis request."""
 
-    modes: list[str] = Field(min_length=1, description="Independent NarrativeAnalyst modes.")
+    modes: list[str] = Field(
+        default_factory=lambda: [
+            "entity_extraction",
+            "event_extraction",
+            "claim_extraction",
+            "knowledge_state_extraction",
+            "state_change_extraction",
+            "relationship_signal_extraction",
+        ],
+        min_length=1,
+        description="Independent implemented NarrativeAnalyst modes.",
+    )
+    chapter_ids: list[str] | None = Field(
+        default=None,
+        description="Optional chapter selection; chunks are derived from approved Gate 1 output.",
+    )
+    document_revision: int | None = Field(
+        default=None,
+        ge=1,
+        description="Optional source revision assertion.",
+    )
     real_llm_requested: bool = Field(
         default=False,
         description="Explicit request-level opt-in; server settings remain authoritative.",

@@ -152,6 +152,15 @@ class DocumentParser:
         title = _NOISE_PREFIX_RE.sub("", title).strip()
         if not title or len(title) > _TITLE_MAX_CHARS:
             return None
+        # A line that starts like an English chapter heading but ends with
+        # sentence punctuation is narrative prose, not a heading.  Keep this
+        # deterministic line-level guard before the general chapter regex so
+        # valid forms such as ``Chapter 2 Night Route`` remain supported.
+        if (
+            re.match(r"^Chapter\s+(?:\d+\b|[IVXLCDM]+\b)", title, re.IGNORECASE)
+            and title.endswith((".", "!", "?"))
+        ):
+            return None
         if CHAPTER_RE.fullmatch(title) is None:
             return None
         return title

@@ -23,6 +23,10 @@ from comic_agent.schemas.narrative import (
 from comic_agent.schemas.source import SourceChapterV1, SourceChunkV1, SourceDocumentV1
 
 
+def _enum_value(value: object) -> str:
+    return str(getattr(value, "value", value))
+
+
 class ProposalReviewDecision(StrEnum):
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
@@ -772,9 +776,15 @@ class SourceTextAuditSnapshotV1(StrictBaseModel):
 
 
 class ReviewGate1PolicyV1(StrictBaseModel):
-    """Fixed source-quality safety policy; not a dynamic review configuration."""
+    """Fixed source-quality safety policy; not a dynamic review configuration.
 
-    schema_version: Literal["1.0"] = Field(default="1.0")
+    v1.1 distinguishes ordinary layout gaps (warning) from an anomalously long
+    normalized newline run (human review). The values are fixed literals so callers
+    cannot tune the safety boundary per request. Legacy v1.0 payloads omit these
+    fields and retain the historical four-newline review threshold.
+    """
+
+    schema_version: Literal["1.0", "1.1"] = Field(default="1.1")
     policy_id: str
     require_utf8_strict_decode: Literal[True] = True
     require_document_checksum_match: Literal[True] = True
@@ -788,6 +798,40 @@ class ReviewGate1PolicyV1(StrictBaseModel):
     allow_canonical_writes: Literal[False] = False
     allow_partial_document_downstream: Literal[False] = False
     max_expected_chunk_chars: Literal[1200] = 1200
+    max_warning_whitespace_run: Literal[4] | None = Field(
+        default=None,
+        description=(
+            "v1.1 maximum normalized newline-run length classified as layout warning; fixed at 4."
+        ),
+    )
+    review_required_whitespace_run: Literal[5] | None = Field(
+        default=None,
+        description=(
+            "v1.1 normalized newline-run length that requires human review; fixed at 5."
+        ),
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_whitespace_thresholds(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        version = payload.get("schema_version", "1.1")
+        payload.setdefault("schema_version", version)
+        if version == "1.1":
+            payload.setdefault("max_warning_whitespace_run", 4)
+            payload.setdefault("review_required_whitespace_run", 5)
+        return payload
+
+    @model_validator(mode="after")
+    def validate_whitespace_thresholds(self) -> "ReviewGate1PolicyV1":
+        if self.schema_version == "1.1" and (
+            self.max_warning_whitespace_run != 4
+            or self.review_required_whitespace_run != 5
+        ):
+            raise ValueError("v1.1 whitespace thresholds are fixed at 4 and 5")
+        return self
 
     @field_validator("policy_id")
     @classmethod
@@ -1059,8 +1103,177 @@ class ApprovedSourceChunkBundleV1(StrictBaseModel):
         return self
 
 
-class ReviewGate1ResultV1(StrictBaseModel):
+class ReviewGate1RoutingAction(StrEnum):
+    CONTINUE_TO_CONTEXT_BUILDER = "CONTINUE_TO_CONTEXT_BUILDER"
+    HOLD_FOR_HUMAN_REVIEW = "HOLD_FOR_HUMAN_REVIEW"
+    REIMPORT_REQUIRED = "REIMPORT_REQUIRED"
+    RECHUNK_REQUIRED = "RECHUNK_REQUIRED"
+    STOP_REVIEW_EXECUTION_FAILED = "STOP_REVIEW_EXECUTION_FAILED"
+
+
+class ReviewGate1IssueCountV1(StrictBaseModel):
     schema_version: Literal["1.0"] = Field(default="1.0")
+    code: ReviewGate1IssueCode
+    count: int = Field(ge=1)
+
+
+class ReviewGate1CategoryCountV1(StrictBaseModel):
+    schema_version: Literal["1.0"] = Field(default="1.0")
+    category: ReviewGate1IssueCategory
+    count: int = Field(ge=1)
+
+
+class ReviewGate1MetricsV1(StrictBaseModel):
+    """Deterministic, source-free metrics for future routing."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0")
+    normalized_text_char_count: int = Field(ge=0)
+    chapter_count: int = Field(ge=0)
+    chunk_count: int = Field(ge=0)
+    total_chunk_char_count: int = Field(ge=0)
+    max_chunk_char_count: int = Field(ge=0)
+    chunks_with_complete_offsets: int = Field(ge=0)
+    chunks_missing_offsets: int = Field(ge=0)
+    chunks_with_valid_text_range: int = Field(ge=0)
+    chunks_with_invalid_text_range: int = Field(ge=0)
+    usable_chunk_count: int = Field(ge=0)
+    excluded_chunk_count: int = Field(ge=0)
+    needs_human_review_chunk_count: int = Field(ge=0)
+    checks_passed_count: int = Field(ge=0)
+    checks_failed_count: int = Field(ge=0)
+    checks_needs_human_review_count: int = Field(ge=0)
+    checks_not_applicable_count: int = Field(ge=0)
+    blocking_issue_count: int = Field(ge=0)
+    review_required_issue_count: int = Field(ge=0)
+    warning_issue_count: int = Field(ge=0)
+    info_issue_count: int = Field(ge=0)
+    duplicate_chunk_id_group_count: int = Field(ge=0)
+    duplicate_chunk_order_group_count: int = Field(ge=0)
+    overlapping_range_pair_count: int = Field(ge=0)
+    duplicate_range_pair_count: int = Field(ge=0)
+    exact_duplicate_text_group_count: int = Field(ge=0)
+    issue_counts_by_code: list[ReviewGate1IssueCountV1] = Field(default_factory=list)
+    issue_counts_by_category: list[ReviewGate1CategoryCountV1] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_metric_shapes(self) -> "ReviewGate1MetricsV1":
+        if (
+            self.usable_chunk_count
+            + self.excluded_chunk_count
+            + self.needs_human_review_chunk_count
+            != self.chunk_count
+        ):
+            raise ValueError("chunk usability counts must equal chunk_count")
+        if self.chunks_with_complete_offsets + self.chunks_missing_offsets != self.chunk_count:
+            raise ValueError("offset counts must equal chunk_count")
+        if (
+            self.chunks_with_valid_text_range + self.chunks_with_invalid_text_range
+            != self.chunk_count
+        ):
+            raise ValueError("range counts must equal chunk_count")
+        if (
+            self.blocking_issue_count
+            + self.review_required_issue_count
+            + self.warning_issue_count
+            + self.info_issue_count
+            < 0
+        ):
+            raise ValueError("issue counts must be non-negative")
+        code_values = [_enum_value(item.code) for item in self.issue_counts_by_code]
+        category_values = [_enum_value(item.category) for item in self.issue_counts_by_category]
+        if code_values != sorted(code_values) or len(code_values) != len(set(code_values)):
+            raise ValueError("issue_counts_by_code must be unique and sorted")
+        if category_values != sorted(category_values) or len(category_values) != len(
+            set(category_values)
+        ):
+            raise ValueError("issue_counts_by_category must be unique and sorted")
+        return self
+
+
+class ReviewGate1RoutingAdviceV1(StrictBaseModel):
+    """Bounded deterministic recommendation for a future Orchestrator."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0")
+    action: ReviewGate1RoutingAction
+    reason_codes: list[ReviewGate1IssueCode] = Field(default_factory=list)
+    blocking_issue_codes: list[ReviewGate1IssueCode] = Field(default_factory=list)
+    review_required_issue_codes: list[ReviewGate1IssueCode] = Field(default_factory=list)
+    warning_issue_codes: list[ReviewGate1IssueCode] = Field(default_factory=list)
+    retryable: bool
+    requires_human_review: bool
+    downstream_permitted: bool
+
+    @model_validator(mode="after")
+    def validate_routing(self) -> "ReviewGate1RoutingAdviceV1":
+        lists = (
+            self.reason_codes,
+            self.blocking_issue_codes,
+            self.review_required_issue_codes,
+            self.warning_issue_codes,
+        )
+        for values in lists:
+            if list(values) != sorted(values, key=_enum_value):
+                raise ValueError("routing issue codes must be sorted")
+            if len(values) != len(set(values)):
+                raise ValueError("routing issue codes must be unique")
+        if self.action == ReviewGate1RoutingAction.CONTINUE_TO_CONTEXT_BUILDER:
+            if self.retryable or self.requires_human_review or not self.downstream_permitted:
+                raise ValueError("CONTINUE routing flags are inconsistent")
+            if self.blocking_issue_codes or self.review_required_issue_codes:
+                raise ValueError(
+                    "CONTINUE routing cannot include blocking or review-required codes"
+                )
+        elif self.action == ReviewGate1RoutingAction.HOLD_FOR_HUMAN_REVIEW:
+            if self.retryable or not self.requires_human_review or self.downstream_permitted:
+                raise ValueError("HOLD routing flags are inconsistent")
+            if not self.review_required_issue_codes:
+                raise ValueError("HOLD routing requires review-required codes")
+        elif self.action == ReviewGate1RoutingAction.REIMPORT_REQUIRED:
+            if not self.retryable or self.requires_human_review or self.downstream_permitted:
+                raise ValueError("REIMPORT routing flags are inconsistent")
+            allowed = {
+                ReviewGate1IssueCode.DOCUMENT_EMPTY,
+                ReviewGate1IssueCode.DOCUMENT_CHECKSUM_MISMATCH,
+                ReviewGate1IssueCode.DOCUMENT_TEXT_REPLACEMENT_CHARACTER,
+                ReviewGate1IssueCode.DOCUMENT_FORBIDDEN_CONTROL_CHARACTER,
+            }
+            if not set(self.blocking_issue_codes) & allowed:
+                raise ValueError("REIMPORT routing requires a document blocking code")
+        elif self.action == ReviewGate1RoutingAction.RECHUNK_REQUIRED:
+            if not self.retryable or self.requires_human_review or self.downstream_permitted:
+                raise ValueError("RECHUNK routing flags are inconsistent")
+            allowed = {
+                ReviewGate1IssueCode.CHAPTER_ID_DUPLICATE,
+                ReviewGate1IssueCode.CHAPTER_ORDER_DUPLICATE,
+                ReviewGate1IssueCode.CHAPTER_ORDER_NON_CONTIGUOUS,
+                ReviewGate1IssueCode.CHAPTER_SCOPE_MISMATCH,
+                ReviewGate1IssueCode.CHAPTER_CHUNK_RANGE_MISMATCH,
+                ReviewGate1IssueCode.CHUNK_ID_DUPLICATE,
+                ReviewGate1IssueCode.CHUNK_ORDER_DUPLICATE,
+                ReviewGate1IssueCode.CHUNK_ORDER_NON_CONTIGUOUS,
+                ReviewGate1IssueCode.CHUNK_SCOPE_MISMATCH,
+                ReviewGate1IssueCode.CHUNK_CHAPTER_NOT_FOUND,
+                ReviewGate1IssueCode.CHUNK_TEXT_WHITESPACE_ONLY,
+                ReviewGate1IssueCode.CHUNK_CHECKSUM_MISMATCH,
+                ReviewGate1IssueCode.CHUNK_OFFSETS_MISSING,
+                ReviewGate1IssueCode.CHUNK_OFFSET_OUT_OF_BOUNDS,
+                ReviewGate1IssueCode.CHUNK_TEXT_RANGE_MISMATCH,
+                ReviewGate1IssueCode.CHUNK_RANGE_OVERLAP,
+                ReviewGate1IssueCode.CHUNK_RANGE_DUPLICATE,
+                ReviewGate1IssueCode.NO_USABLE_CHUNKS,
+            }
+            if not set(self.blocking_issue_codes) & allowed:
+                raise ValueError("RECHUNK routing requires a chunk blocking code")
+        else:
+            if self.retryable or self.requires_human_review or self.downstream_permitted:
+                raise ValueError("STOP routing flags are inconsistent")
+            if ReviewGate1IssueCode.GATE1_EXECUTION_FAILED not in self.reason_codes:
+                raise ValueError("STOP routing requires execution failure code")
+        return self
+
+
+class ReviewGate1ResultV1(StrictBaseModel):
+    schema_version: Literal["1.0", "1.1"] = Field(default="1.1")
     review_run_id: str
     project_id: str
     document_id: str
@@ -1075,7 +1288,21 @@ class ReviewGate1ResultV1(StrictBaseModel):
     approved_chunk_bundle: ApprovedSourceChunkBundleV1 | None = None
     review_method: Literal[ReviewMethod.DETERMINISTIC] = ReviewMethod.DETERMINISTIC
     reviewed_by: str
+    metrics: ReviewGate1MetricsV1 | None = None
+    routing_advice: ReviewGate1RoutingAdviceV1 | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_legacy_version(cls, value: object) -> object:
+        if isinstance(value, dict) and "schema_version" not in value:
+            value = dict(value)
+            value["schema_version"] = (
+                "1.1"
+                if value.get("metrics") is not None or value.get("routing_advice") is not None
+                else "1.0"
+            )
+        return value
 
     @model_validator(mode="after")
     def validate_result(self) -> "ReviewGate1ResultV1":
@@ -1087,6 +1314,8 @@ class ReviewGate1ResultV1(StrictBaseModel):
             "reviewed_by",
         ):
             _require_nonblank(getattr(self, field_name), field_name)
+        if self.schema_version == "1.1" and (self.metrics is None or self.routing_advice is None):
+            raise ValueError("v1.1 result requires metrics and routing_advice")
         issue_map = {issue.issue_id: issue for issue in self.issues}
         if len(issue_map) != len(self.issues):
             raise ValueError("issues issue_id must be unique")
@@ -1096,16 +1325,6 @@ class ReviewGate1ResultV1(StrictBaseModel):
             raise ValueError("chapter review input indexes must be contiguous from zero")
         if chunk_indexes != list(range(len(chunk_indexes))):
             raise ValueError("chunk review input indexes must be contiguous from zero")
-        chapter_orders = [item.chapter_order for item in self.chapter_reviews]
-        chunk_orders = [item.chunk_order for item in self.chunk_reviews]
-        if chapter_orders != list(range(len(chapter_orders))):
-            raise ValueError("chapter review orders must be contiguous from zero")
-        if chunk_orders != list(range(len(chunk_orders))):
-            raise ValueError("chunk review orders must be contiguous from zero")
-        if len({item.chapter_id for item in self.chapter_reviews}) != len(self.chapter_reviews):
-            raise ValueError("chapter review ids must be unique")
-        if len({item.chunk_id for item in self.chunk_reviews}) != len(self.chunk_reviews):
-            raise ValueError("chunk review ids must be unique")
         self._validate_review_references(issue_map)
         blocking = any(issue.severity == ReviewIssueSeverity.BLOCKING for issue in self.issues)
         review_required = any(
@@ -1117,6 +1336,8 @@ class ReviewGate1ResultV1(StrictBaseModel):
                     raise ValueError(
                         "APPROVED result requires no blocking/review issue and a bundle"
                     )
+                if not self.chunk_reviews:
+                    raise ValueError("APPROVED result requires at least one chunk")
                 if any(
                     item.usability != SourceChunkUsability.USABLE for item in self.chunk_reviews
                 ):
@@ -1152,6 +1373,12 @@ class ReviewGate1ResultV1(StrictBaseModel):
             ):
                 raise ValueError("FAILED result requires execution blocking issue and no bundle")
         if self.approved_chunk_bundle is not None:
+            if self.schema_version == "1.1" and (
+                self.routing_advice is None
+                or self.routing_advice.action
+                != ReviewGate1RoutingAction.CONTINUE_TO_CONTEXT_BUILDER
+            ):
+                raise ValueError("approved bundle requires CONTINUE routing")
             bundle = self.approved_chunk_bundle
             if (
                 bundle.project_id != self.project_id
@@ -1164,6 +1391,84 @@ class ReviewGate1ResultV1(StrictBaseModel):
             expected_ids = [item.chunk_id for item in self.chunk_reviews]
             if bundle.chunk_ids != expected_ids:
                 raise ValueError("approved chunk bundle must preserve source chunk order")
+        if self.schema_version == "1.1" and self.routing_advice is not None:
+            expected_action = (
+                ReviewGate1RoutingAction.CONTINUE_TO_CONTEXT_BUILDER
+                if self.decision == SourceReviewDecision.APPROVED
+                else ReviewGate1RoutingAction.HOLD_FOR_HUMAN_REVIEW
+                if self.decision == SourceReviewDecision.NEEDS_HUMAN_REVIEW
+                else ReviewGate1RoutingAction.STOP_REVIEW_EXECUTION_FAILED
+                if self.status == ReviewGate1RunStatus.FAILED
+                else None
+            )
+            if expected_action is None:
+                if self.routing_advice.action not in {
+                    ReviewGate1RoutingAction.REIMPORT_REQUIRED,
+                    ReviewGate1RoutingAction.RECHUNK_REQUIRED,
+                }:
+                    raise ValueError("REJECTED result requires reimport or rechunk routing")
+            elif self.routing_advice.action != expected_action:
+                raise ValueError("result decision and routing action must agree")
+        if self.schema_version == "1.1" and self.metrics is not None:
+            issue_count = sum(
+                (
+                    self.metrics.blocking_issue_count,
+                    self.metrics.review_required_issue_count,
+                    self.metrics.warning_issue_count,
+                    self.metrics.info_issue_count,
+                )
+            )
+            if issue_count != len(self.issues):
+                raise ValueError("metrics severity counts must equal issue count")
+            if self.metrics.chapter_count != len(self.chapter_reviews):
+                raise ValueError("metrics chapter_count must match chapter reviews")
+            if self.metrics.chunk_count != len(self.chunk_reviews):
+                raise ValueError("metrics chunk_count must match chunk reviews")
+            expected_code_counts: dict[ReviewGate1IssueCode, int] = {}
+            expected_category_counts: dict[ReviewGate1IssueCategory, int] = {}
+            for issue in self.issues:
+                expected_code_counts[issue.code] = expected_code_counts.get(issue.code, 0) + 1
+                expected_category_counts[issue.category] = (
+                    expected_category_counts.get(issue.category, 0) + 1
+                )
+            if [(item.code, item.count) for item in self.metrics.issue_counts_by_code] != [
+                (code, expected_code_counts[code])
+                for code in sorted(expected_code_counts, key=_enum_value)
+            ]:
+                raise ValueError("metrics issue code counts do not match issues")
+            if [(item.category, item.count) for item in self.metrics.issue_counts_by_category] != [
+                (category, expected_category_counts[category])
+                for category in sorted(expected_category_counts, key=_enum_value)
+            ]:
+                raise ValueError("metrics issue category counts do not match issues")
+            check_results = [
+                *self.document_checks,
+                *(check for item in self.chapter_reviews for check in item.check_results),
+                *(check for item in self.chunk_reviews for check in item.check_results),
+            ]
+            check_counts = {
+                ReviewCheckStatus.PASSED: sum(
+                    check.status == ReviewCheckStatus.PASSED for check in check_results
+                ),
+                ReviewCheckStatus.FAILED: sum(
+                    check.status == ReviewCheckStatus.FAILED for check in check_results
+                ),
+                ReviewCheckStatus.NEEDS_HUMAN_REVIEW: sum(
+                    check.status == ReviewCheckStatus.NEEDS_HUMAN_REVIEW for check in check_results
+                ),
+                ReviewCheckStatus.NOT_APPLICABLE: sum(
+                    check.status == ReviewCheckStatus.NOT_APPLICABLE for check in check_results
+                ),
+            }
+            if (
+                self.metrics.checks_passed_count != check_counts[ReviewCheckStatus.PASSED]
+                or self.metrics.checks_failed_count != check_counts[ReviewCheckStatus.FAILED]
+                or self.metrics.checks_needs_human_review_count
+                != check_counts[ReviewCheckStatus.NEEDS_HUMAN_REVIEW]
+                or self.metrics.checks_not_applicable_count
+                != check_counts[ReviewCheckStatus.NOT_APPLICABLE]
+            ):
+                raise ValueError("metrics check counts do not match review checks")
         return self
 
     def _validate_review_references(self, issue_map: dict[str, "ReviewGate1IssueV1"]) -> None:
@@ -1177,25 +1482,25 @@ class ReviewGate1ResultV1(StrictBaseModel):
         all_ids: list[str] = []
         for chapter_item in self.chapter_reviews:
             all_ids.extend(chapter_item.issue_ids)
-            for check in chapter_item.check_results:
-                all_ids.extend(check.issue_ids)
+            for chapter_check in chapter_item.check_results:
+                all_ids.extend(chapter_check.issue_ids)
         for chunk_item in self.chunk_reviews:
             all_ids.extend(chunk_item.issue_ids)
-            for check in chunk_item.check_results:
-                all_ids.extend(check.issue_ids)
-        for check in self.document_checks:
-            all_ids.extend(check.issue_ids)
+            for chunk_check in chunk_item.check_results:
+                all_ids.extend(chunk_check.issue_ids)
+        for document_check in self.document_checks:
+            all_ids.extend(document_check.issue_ids)
         for issue_id in all_ids:
             if issue_id not in issue_map:
                 raise ValueError("review item references unknown issue id")
-        for check in self.document_checks:
-            self._validate_check_severity(check, issue_map)
+        for document_check in self.document_checks:
+            self._validate_check_severity(document_check, issue_map)
         for chapter_item in self.chapter_reviews:
-            for check in chapter_item.check_results:
-                self._validate_check_severity(check, issue_map)
+            for chapter_check in chapter_item.check_results:
+                self._validate_check_severity(chapter_check, issue_map)
         for chunk_item in self.chunk_reviews:
-            for check in chunk_item.check_results:
-                self._validate_check_severity(check, issue_map)
+            for chunk_check in chunk_item.check_results:
+                self._validate_check_severity(chunk_check, issue_map)
 
     @staticmethod
     def _validate_check_severity(

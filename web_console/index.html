@@ -666,6 +666,11 @@
               </label>
               <button id="importTxt" class="primary">导入 TXT</button>
               <pre id="importResult">{}</pre>
+              <details id="gate1ReviewDetails">
+                <summary>Gate 1 import quality review</summary>
+                <div id="gate1ReviewSummary" class="selected">尚未导入文档。</div>
+                <pre id="gate1ReviewPayload">{}</pre>
+              </details>
             </div>
           </section>
 
@@ -716,6 +721,10 @@
                     <option value="">Select an imported document</option>
                   </select>
                 </label>
+                <div class="wide">
+                  <h3>Chapters authorized by Gate 1</h3>
+                  <div id="analysisChapterSelection" class="selected">Select an approved document to load chapters.</div>
+                </div>
                 <div class="row">
                   <button id="loadAnalysisDocuments">Load documents</button>
                 </div>
@@ -965,6 +974,8 @@
       wholeDocumentResult: null,
       wholeDocumentWindows: [],
       wholeDocumentPollTimer: null,
+      selectedAnalysisChapters: [],
+      analysisGate1: null,
       accessGranted: true,
       requireAccessCode: false,
       lastNarrativeResponse: null,
@@ -1018,6 +1029,9 @@
       let data = null;
       try { data = text ? JSON.parse(text) : null; } catch { data = text; }
       if (!response.ok) {
+        if (data && typeof data === "object" && data.gate1) {
+          renderGate1Review(data.gate1, data.approved_chunk_bundle);
+        }
         const error = new Error(typeof data === "object" && data?.detail ? data.detail : response.statusText);
         error.payload = data;
         error.status = response.status;
@@ -1111,6 +1125,9 @@
         body: form
       });
       $("importResult").textContent = pretty(data);
+      renderGate1Review(data.gate1, data.approved_chunk_bundle);
+      if (data.gate1?.decision === "APPROVED") showLog("Gate 1 APPROVED; analysis is available.");
+      if (data.document?.document_id) localStorage.setItem(analysisDocumentStorageKey, data.document.document_id);
       clearSelectedChunks();
       await loadAnalysisDocuments();
       showLog(`导入完成：${data.status}, chapters=${data.chapters_count}, chunks=${data.chunks_count}。请点击“查看章节”并选择本次要分析的 chunks。`);
@@ -1161,7 +1178,36 @@
       ].join("");
       if (documents.some((document) => document.document_id === remembered)) {
         $("analysisDocumentId").value = remembered;
+        await loadAnalysisChapters(remembered);
       }
+    }
+
+    function renderGate1Review(gate1, bundle) {
+      state.analysisGate1 = gate1 || null;
+      $("gate1ReviewSummary").textContent = gate1
+        ? `Gate 1: ${gate1.decision}; routing=${gate1.routing_advice?.action || "未声明"}; issues=${(gate1.issues || []).length}`
+        : "尚未导入文档。";
+      $("gate1ReviewPayload").textContent = pretty({gate1: gate1 || null, approved_chunk_bundle: bundle || null});
+    }
+
+    async function loadAnalysisChapters(documentId = analysisDocumentId()) {
+      if (!documentId) return;
+      const payload = await request(
+        `/projects/${encodeURIComponent(projectId())}/documents/${encodeURIComponent(documentId)}/narrative-analysis-chapters`
+      );
+      state.selectedAnalysisChapters = (payload.chapters || [])
+        .filter((chapter) => chapter.available)
+        .map((chapter) => chapter.chapter_id);
+      $("analysisChapterSelection").innerHTML = (payload.chapters || []).map((chapter) => `
+        <label class="checkline"><input type="checkbox" data-analysis-chapter="${escapeHtml(chapter.chapter_id)}" ${state.selectedAnalysisChapters.includes(chapter.chapter_id) ? "checked" : ""} ${chapter.available ? "" : "disabled"} />
+          ${escapeHtml(chapter.title)} · ${chapter.available_chunk_count}/${chapter.chunk_count}
+        </label>`).join("") || "No chapters available after Gate 1.";
+      document.querySelectorAll("[data-analysis-chapter]").forEach((input) => input.addEventListener("change", () => {
+        state.selectedAnalysisChapters = Array.from(document.querySelectorAll("[data-analysis-chapter]:checked"))
+          .map((item) => item.dataset.analysisChapter);
+      }));
+      renderGate1Review(payload.gate1, payload.gate1?.approved_chunk_bundle);
+      $("startWholeDocumentAnalysis").disabled = !payload.eligible;
     }
 
     function renderWholeDocumentProgress(data) {
@@ -1401,6 +1447,7 @@
           headers: demoHeaders(),
           body: JSON.stringify({
             modes,
+            chapter_ids: state.selectedAnalysisChapters,
             real_llm_requested: $("analysisRealLlmRequested").checked
           })
         }
@@ -2757,7 +2804,10 @@
       clearWholeDocumentResult();
       $("analysisDocumentId").innerHTML = `<option value="">Select an imported document</option>`;
     });
-    $("analysisDocumentId").addEventListener("change", rememberAnalysisDocumentId);
+    $("analysisDocumentId").addEventListener("change", () => {
+      rememberAnalysisDocumentId();
+      loadAnalysisChapters().catch((error) => showLog(error.message));
+    });
     document.addEventListener("click", (event) => {
       const sidebarControl = event.target.closest("[data-sidebar-scroll]");
       if (sidebarControl) {

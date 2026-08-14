@@ -14,6 +14,7 @@ from comic_agent.database.models import (
     SourceDocumentModel,
 )
 from comic_agent.schemas.narrative import EventProposalV1
+from comic_agent.schemas.review import ReviewGate1ResultV1, SourceReviewDecision
 from comic_agent.schemas.source import (
     ProjectSpecV1,
     SourceChapterV1,
@@ -32,6 +33,10 @@ class ImportResult:
     document: SourceDocumentV1
     chapters: list[SourceChapterV1]
     chunks: list[SourceChunkV1]
+    gate1_result: ReviewGate1ResultV1 | None = None
+
+
+_GATE1_PAYLOAD_KEY = "__review_gate1__"
 
 
 class SourceRepository:
@@ -81,12 +86,13 @@ class SourceRepository:
             )
         )
         if existing is not None:
-            document = SourceDocumentV1.model_validate(existing.payload)
+            document = self._document_from_payload(existing.payload)
             return ImportResult(
                 status="existing",
                 document=document,
                 chapters=self.list_chapters(document.project_id),
                 chunks=self.list_document_chunks(document.document_id),
+                gate1_result=self._review_from_payload(existing.payload),
             )
 
         self._session.add(
@@ -139,6 +145,106 @@ class SourceRepository:
             chunks=parsed.chunks,
         )
 
+    def import_reviewed_document(
+        self,
+        parsed: ParsedDocument,
+        gate1_result: ReviewGate1ResultV1,
+    ) -> ImportResult:
+        """Persist source records only after an APPROVED Gate 1 result."""
+
+        if gate1_result.decision != SourceReviewDecision.APPROVED:
+            raise ValueError("only APPROVED Gate 1 results may be persisted")
+        if gate1_result.approved_chunk_bundle is None:
+            raise ValueError("APPROVED Gate 1 result requires an approved chunk bundle")
+
+        existing = self._session.scalar(
+            select(SourceDocumentModel).where(
+                SourceDocumentModel.project_id == parsed.document.project_id,
+                SourceDocumentModel.checksum == parsed.document.checksum,
+            )
+        )
+        if existing is not None:
+            existing.payload = {
+                **existing.payload,
+                _GATE1_PAYLOAD_KEY: gate1_result.model_dump(mode="json"),
+            }
+            self._session.commit()
+            document = self._document_from_payload(existing.payload)
+            return ImportResult(
+                status="existing",
+                document=document,
+                chapters=self.list_document_chapters(document.document_id),
+                chunks=self.list_document_chunks(document.document_id),
+                gate1_result=gate1_result,
+            )
+
+        document_payload = {
+            **parsed.document.model_dump(mode="json"),
+            _GATE1_PAYLOAD_KEY: gate1_result.model_dump(mode="json"),
+        }
+        self._session.add(
+            SourceDocumentModel(
+                document_id=parsed.document.document_id,
+                project_id=parsed.document.project_id,
+                filename=parsed.document.filename,
+                mime_type=parsed.document.mime_type,
+                checksum=parsed.document.checksum,
+                storage_uri=parsed.document.storage_uri,
+                imported_at=parsed.document.imported_at,
+                revision=parsed.document.revision,
+                payload=document_payload,
+            )
+        )
+        for chapter in parsed.chapters:
+            self._session.add(
+                SourceChapterModel(
+                    chapter_id=chapter.chapter_id,
+                    document_id=chapter.document_id,
+                    project_id=chapter.project_id,
+                    title=chapter.title,
+                    order=chapter.order,
+                    start_chunk_order=chapter.start_chunk_order,
+                    end_chunk_order=chapter.end_chunk_order,
+                    payload=chapter.model_dump(mode="json"),
+                )
+            )
+        for chunk in parsed.chunks:
+            self._session.add(
+                SourceChunkModel(
+                    chunk_id=chunk.chunk_id,
+                    document_id=chunk.document_id,
+                    chapter_id=chunk.chapter_id,
+                    project_id=chunk.project_id,
+                    order=chunk.order,
+                    text=chunk.text,
+                    source_page=chunk.source_page,
+                    char_start=chunk.char_start,
+                    char_end=chunk.char_end,
+                    checksum=chunk.checksum,
+                    payload=chunk.model_dump(mode="json"),
+                )
+            )
+        self._session.commit()
+        return ImportResult(
+            status="created",
+            document=parsed.document,
+            chapters=parsed.chapters,
+            chunks=parsed.chunks,
+            gate1_result=gate1_result,
+        )
+
+    def get_document(self, document_id: str) -> SourceDocumentV1 | None:
+        """Return one source document without exposing review metadata."""
+
+        row = self._session.get(SourceDocumentModel, document_id)
+        return self._document_from_payload(row.payload) if row is not None else None
+
+    def get_review_gate1(self, document_id: str) -> ReviewGate1ResultV1 | None:
+        """Return the sanitized Gate 1 artifact for an approved document."""
+
+        row = self._session.get(SourceDocumentModel, document_id)
+        return self._review_from_payload(row.payload) if row is not None else None
+
     def list_chapters(self, project_id: str) -> list[SourceChapterV1]:
         """Return chapters for a project ordered by source order."""
 
@@ -157,7 +263,17 @@ class SourceRepository:
             .where(SourceDocumentModel.project_id == project_id)
             .order_by(SourceDocumentModel.imported_at, SourceDocumentModel.document_id)
         ).all()
-        return [SourceDocumentV1.model_validate(row.payload) for row in rows]
+        return [self._document_from_payload(row.payload) for row in rows]
+
+    def list_document_chapters(self, document_id: str) -> list[SourceChapterV1]:
+        """Return chapters for one document in source order."""
+
+        rows = self._session.scalars(
+            select(SourceChapterModel)
+            .where(SourceChapterModel.document_id == document_id)
+            .order_by(SourceChapterModel.order)
+        ).all()
+        return [SourceChapterV1.model_validate(row.payload) for row in rows]
 
     def list_document_chunks(self, document_id: str) -> list[SourceChunkV1]:
         """Return chunks for a document ordered by source order."""
@@ -291,3 +407,16 @@ class SourceRepository:
         """Return total source chunk count."""
 
         return len(self._session.scalars(select(SourceChunkModel)).all())
+
+    @staticmethod
+    def _document_from_payload(payload: dict[str, object]) -> SourceDocumentV1:
+        return SourceDocumentV1.model_validate(
+            {key: value for key, value in payload.items() if key != _GATE1_PAYLOAD_KEY}
+        )
+
+    @staticmethod
+    def _review_from_payload(
+        payload: dict[str, object],
+    ) -> ReviewGate1ResultV1 | None:
+        review_payload = payload.get(_GATE1_PAYLOAD_KEY)
+        return ReviewGate1ResultV1.model_validate(review_payload) if review_payload else None

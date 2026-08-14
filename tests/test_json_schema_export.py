@@ -31,14 +31,18 @@ from comic_agent.schemas import (
     ReviewableProposalEnvelopeV1,
     ReviewableProposalMode,
     ReviewCheckStatus,
+    ReviewGate1CategoryCountV1,
     ReviewGate1Check,
     ReviewGate1CheckResultV1,
     ReviewGate1InputV1,
     ReviewGate1IssueCategory,
     ReviewGate1IssueCode,
+    ReviewGate1IssueCountV1,
     ReviewGate1IssueV1,
+    ReviewGate1MetricsV1,
     ReviewGate1PolicyV1,
     ReviewGate1ResultV1,
+    ReviewGate1RoutingAdviceV1,
     ReviewGate1RunStatus,
     ReviewGate2InputV1,
     ReviewGate2PolicyV1,
@@ -109,9 +113,13 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
         "ReviewGate1IssueV1",
         "ReviewGate1CheckResultV1",
         "SourceChapterReviewItemV1",
-        "SourceChunkReviewItemV1",
-        "ApprovedSourceChunkBundleV1",
-        "ReviewGate1ResultV1",
+            "SourceChunkReviewItemV1",
+            "ApprovedSourceChunkBundleV1",
+            "ReviewGate1IssueCountV1",
+            "ReviewGate1CategoryCountV1",
+            "ReviewGate1MetricsV1",
+            "ReviewGate1RoutingAdviceV1",
+            "ReviewGate1ResultV1",
     ):
         assert (output_dir / f"{schema_name}.json").exists()
 
@@ -155,6 +163,9 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     )
     gate1_result_schema = json.loads(
         (output_dir / "ReviewGate1ResultV1.json").read_text(encoding="utf-8")
+    )
+    gate1_policy_schema = json.loads(
+        (output_dir / "ReviewGate1PolicyV1.json").read_text(encoding="utf-8")
     )
 
     assert "actor_resolution_status" in event_schema["properties"]
@@ -258,6 +269,9 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     assert "checksum" in source_chunk_schema["properties"]
     assert review_input_schema["properties"]["schema_version"]["const"] == "1.0"
     assert review_policy_schema["properties"]["schema_version"]["const"] == "1.0"
+    assert gate1_policy_schema["properties"]["schema_version"]["enum"] == ["1.0", "1.1"]
+    assert "max_warning_whitespace_run" in gate1_policy_schema["properties"]
+    assert "review_required_whitespace_run" in gate1_policy_schema["properties"]
     assert review_result_schema["properties"]["schema_version"]["const"] == "1.0"
     review_text = json.dumps(review_envelope_schema, ensure_ascii=False)
     for proposal_name in (
@@ -296,7 +310,7 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     assert ReviewableProposalEnvelopeV1.__name__ == "ReviewableProposalEnvelopeV1"
     assert ReviewableProposalMode.STATE_CHANGE_EXTRACTION == "state_change_extraction"
     gate1_result_text = json.dumps(gate1_result_schema, ensure_ascii=False)
-    for forbidden in ("normalized_text", "storage_uri", "raw_output", "provider_response"):
+    for forbidden in ('"normalized_text"', '"storage_uri"', '"raw_output"', '"provider_response"'):
         assert forbidden not in gate1_result_text
     assert ApprovedSourceChunkBundleV1.__name__ == "ApprovedSourceChunkBundleV1"
     assert ReviewGate1Check.DOCUMENT_TEXT == "DOCUMENT_TEXT"
@@ -307,6 +321,10 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     assert ReviewGate1IssueV1.__name__ == "ReviewGate1IssueV1"
     assert ReviewGate1PolicyV1.__name__ == "ReviewGate1PolicyV1"
     assert ReviewGate1ResultV1.__name__ == "ReviewGate1ResultV1"
+    assert ReviewGate1IssueCountV1.__name__ == "ReviewGate1IssueCountV1"
+    assert ReviewGate1CategoryCountV1.__name__ == "ReviewGate1CategoryCountV1"
+    assert ReviewGate1MetricsV1.__name__ == "ReviewGate1MetricsV1"
+    assert ReviewGate1RoutingAdviceV1.__name__ == "ReviewGate1RoutingAdviceV1"
     assert ReviewGate1RunStatus.FAILED == "FAILED"
     assert SourceChapterReviewItemV1.__name__ == "SourceChapterReviewItemV1"
     assert SourceChunkReviewItemV1.__name__ == "SourceChunkReviewItemV1"

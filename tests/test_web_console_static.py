@@ -247,6 +247,20 @@ def test_web_console_exposes_whole_document_analysis_as_the_normal_flow() -> Non
     assert advanced_start < manual_chunk_input < advanced_end
 
 
+def test_web_console_exposes_automatic_gate1_and_chapter_authorization() -> None:
+    html = Path("web_console/index.html").read_text(encoding="utf-8")
+
+    assert 'id="gate1ReviewDetails"' in html
+    assert 'id="gate1ReviewSummary"' in html
+    assert 'id="gate1ReviewPayload"' in html
+    assert 'id="analysisChapterSelection"' in html
+    assert "narrative-analysis-chapters" in html
+    assert "approved_chunk_bundle" in html
+    assert "state.selectedAnalysisChapters" in html
+    assert "chapter_ids: state.selectedAnalysisChapters" in html
+    assert "Gate 1 APPROVED" in html
+
+
 def test_web_console_exposes_whole_document_outputs_for_manual_review() -> None:
     html = Path("web_console/index.html").read_text(encoding="utf-8")
 

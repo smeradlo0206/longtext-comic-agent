@@ -86,6 +86,7 @@ def create_narrative_analysis_run(
     window_size: int = DEFAULT_ANALYSIS_WINDOW_SIZE,
     stride: int = DEFAULT_ANALYSIS_STRIDE,
     real_llm_requested: bool = False,
+    selected_chunks: list[SourceChunkV1] | None = None,
 ) -> NarrativeAnalysisRunV1:
     """Create an idempotent task with independent mode-window audit records."""
 
@@ -98,9 +99,21 @@ def create_narrative_analysis_run(
         if mode_spec.status != "implemented":
             raise ValueError(f"NarrativeAnalyst mode is not implemented: {mode}")
 
-    chunks = source_repository.list_document_chunks(document_id)
-    if not chunks or any(chunk.project_id != project_id for chunk in chunks):
+    all_chunks = source_repository.list_document_chunks(document_id)
+    if not all_chunks or any(chunk.project_id != project_id for chunk in all_chunks):
         raise ValueError("SourceDocument has no SourceChunk records for project")
+    if selected_chunks is None:
+        chunks = all_chunks
+    else:
+        selected_ids = [chunk.chunk_id for chunk in selected_chunks]
+        available = {chunk.chunk_id: chunk for chunk in all_chunks}
+        if not selected_ids or len(set(selected_ids)) != len(selected_ids):
+            raise ValueError("selected chunks must be non-empty and distinct")
+        if any(chunk.project_id != project_id for chunk in selected_chunks):
+            raise ValueError("selected chunks must belong to project")
+        if any(chunk_id not in available for chunk_id in selected_ids):
+            raise ValueError("selected chunk is not part of document")
+        chunks = [chunk for chunk in all_chunks if chunk.chunk_id in set(selected_ids)]
     plans = plan_analysis_windows(chunks, window_size=window_size, stride=stride)
     analysis_run_id = stable_id(
         "narrative-analysis-run",
@@ -110,6 +123,7 @@ def create_narrative_analysis_run(
         window_size,
         stride,
         real_llm_requested,
+        ",".join(chunk.chunk_id for chunk in chunks),
     )
     existing = analysis_repository.get_run(analysis_run_id)
     if existing is not None:

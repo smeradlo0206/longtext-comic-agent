@@ -151,6 +151,33 @@ def test_parser_does_not_detect_chapter_words_inside_body() -> None:
     ]
 
 
+def test_parser_does_not_treat_english_sentence_as_chapter_heading() -> None:
+    parsed = DocumentParser().parse_txt(
+        project_id="project-1",
+        filename="english-sentence.txt",
+        text=(
+            "第二章 旧图书馆\n\n"
+            "Chapter 2 is written here only to test English chapter detection.\n\n"
+            "正文仍属于第二章。"
+        ),
+    )
+
+    assert [chapter.title for chapter in parsed.chapters] == ["第二章 旧图书馆"]
+    assert parsed.chapters[0].start_chunk_order == 0
+    assert parsed.chapters[0].end_chunk_order == len(parsed.chunks) - 1
+    assert len(parsed.chunks) >= 1
+
+
+def test_golden_fixture_second_chapter_is_not_empty() -> None:
+    text = Path("tests/golden_novel/source.txt").read_text(encoding="utf-8")
+    parsed = DocumentParser().parse_txt(
+        project_id="project-1", filename="source.txt", text=text
+    )
+
+    second = next(chapter for chapter in parsed.chapters if "第二章" in chapter.title)
+    assert any(chunk.chapter_id == second.chapter_id for chunk in parsed.chunks)
+
+
 def test_parser_preserves_existing_long_mixed_fixture() -> None:
     text = LONG_FIXTURE.read_text(encoding="utf-8")
 

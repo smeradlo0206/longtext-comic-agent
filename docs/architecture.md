@@ -55,13 +55,14 @@ rules, and candidate commit plans.
 The future source-quality path is `Import & Chunking -> Review Gate 1 -> Orchestrator /
 ContextBuilder -> Narrative Analyst`. Gate 1 receives a bounded in-memory source snapshot and
 the parsed document/chapter/chunk records. It checks deterministic encoding, checksum, scope,
-order, range, duplicate, whitespace, and chunk usability rules. It does not interpret story
-meaning, call a Provider, repair input, or write canonical data.
+order, range, duplicate, whitespace, and chunk usability rules. The synchronous
+`ReviewGate1Service` does not interpret story meaning, call a Provider, repair input, or write
+canonical data.
 
 Only `ApprovedSourceChunkBundleV1.chunk_ids` may be routed downstream after an APPROVED result.
 The bundle contains no text, storage URI, provider payload, or StoryBible data. This repository
-currently implements only the Schema/JSON contract; Gate 1 service, Agent, API, Console,
-Orchestrator wiring, automatic repair, and human-review persistence are not implemented.
+The service is not wired to an Agent, import API, Console, Orchestrator, automatic repair, or
+human-review persistence; those remain future integration work.
 
 ## Review Gate 2 Contract Boundary
 
@@ -76,6 +77,13 @@ automatic linker, database persistence, API endpoint, Console view, Timeline, St
 or canonical write path is introduced. The contract explicitly forbids fuzzy/LLM reference
 resolution and canonical writes; unresolved references remain unresolved unless a future bounded
 review process records a valid decision.
+
+## Automatic import to analysis
+
+The normal path is TXT import → deterministic Gate 1 → chapter selection → Narrative
+Analyst. Only an APPROVED Gate 1 bundle may reach ContextBuilder; forged chapter or
+chunk selections are rejected by the coordinator. Gate 1 metadata is a namespaced JSON
+artifact in the existing source document payload, so no table migration is required.
 
 ## Startup Phase Boundary
 
