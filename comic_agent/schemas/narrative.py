@@ -49,10 +49,30 @@ class EventProposalV1(StrictBaseModel):
     reality_layer: RealityLayer = Field(description="Narrative reality layer.")
 
 
+class ClaimProposalV1(StrictBaseModel):
+    """Candidate assertion that remains distinct from a confirmed story event."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0", description="Schema version.")
+    claim_id: str = Field(description="Claim proposal id.")
+    subject_id: str = Field(description="Entity or event the assertion concerns.")
+    predicate: str = Field(min_length=1, description="Assertion relation or attribute.")
+    object_value: str = Field(min_length=1, description="Asserted value or target id.")
+    asserted_by_entity_id: str | None = Field(
+        default=None,
+        description="Entity making the assertion, if known.",
+    )
+    evidence_refs: list[EvidenceRefV1] = Field(
+        min_length=1,
+        description="Source evidence for this assertion.",
+    )
+    confidence: float = Field(ge=0, le=1, description="Agent confidence.")
+    reality_layer: RealityLayer = Field(description="Narrative reality layer.")
+
+
 class TemporalRelationProposalV1(StrictBaseModel):
     """Candidate temporal relation between two events."""
 
-    schema_version: Literal["1.0"] = Field(default="1.0", description="Schema version.")
+    schema_version: Literal["1.0", "1.1"] = Field(default="1.1", description="Schema version.")
     proposal_id: str = Field(description="Proposal id.")
     source_event_id: str = Field(description="Source event id.")
     target_event_id: str = Field(description="Target event id.")
@@ -64,6 +84,11 @@ class TemporalRelationProposalV1(StrictBaseModel):
         description="Evidence required when relation is known.",
     )
     confidence: float = Field(ge=0, le=1, description="Agent confidence.")
+    reasoning_summary: str | None = Field(
+        default=None,
+        max_length=400,
+        description="Brief evidence-grounded rationale; never hidden chain-of-thought.",
+    )
 
     @model_validator(mode="after")
     def validate_relation(self) -> "TemporalRelationProposalV1":

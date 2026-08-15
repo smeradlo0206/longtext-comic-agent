@@ -31,12 +31,15 @@ class AgentRunStatus(StrEnum):
 
 
 class AgentRunV1(StrictBaseModel):
-    """Trace record for one agent execution against one source chunk."""
+    """Trace record for one agent execution against a chunk or aggregate input."""
 
     schema_version: Literal["1.0"] = Field(default="1.0", description="Schema version.")
     agent_run_id: str = Field(description="Unique agent run id.")
     project_id: str = Field(description="Project owning the input chunk.")
-    source_chunk_id: str = Field(description="Source chunk supplied to the agent.")
+    source_chunk_id: str | None = Field(
+        default=None,
+        description="Source chunk supplied to the agent, if the input is a single chunk.",
+    )
     agent_id: str = Field(description="Agent implementation identifier.")
     status: AgentRunStatus = Field(description="Execution outcome.")
     output_proposal_id: str | None = Field(

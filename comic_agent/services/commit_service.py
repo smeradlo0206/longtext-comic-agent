@@ -1,7 +1,11 @@
 """Canonical commit boundary for evidence-backed story data."""
 
 from comic_agent.repositories.storybible_repository import StoryBibleRepository
-from comic_agent.schemas.narrative import EventProposalV1
+from comic_agent.schemas.narrative import (
+    EventProposalV1,
+    TemporalRelation,
+    TemporalRelationProposalV1,
+)
 from comic_agent.schemas.source import SourceChapterV1, SourceChunkV1, SourceDocumentV1
 from comic_agent.schemas.storybible import CommitPlanV1
 from comic_agent.services.storybible_validator import EvidenceLookup, StoryBibleValidator
@@ -19,6 +23,19 @@ class CommitService:
         StoryBibleValidator(self._evidence_lookup).validate_evidence_refs(
             proposal.evidence_refs,
             owner=f"event proposal {proposal.proposal_id}",
+        )
+
+    def validate_temporal_relation_evidence(
+        self, proposal: TemporalRelationProposalV1, project_id: str
+    ) -> None:
+        """Validate LLM evidence before a known temporal relation is persisted."""
+
+        if proposal.relation == TemporalRelation.UNKNOWN and not proposal.evidence_refs:
+            return
+        StoryBibleValidator(self._evidence_lookup).validate_evidence_refs(
+            proposal.evidence_refs,
+            project_id=project_id,
+            owner=f"temporal relation {proposal.proposal_id}",
         )
 
     def commit_storybible_plan(

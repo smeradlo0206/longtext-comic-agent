@@ -97,6 +97,24 @@ class EventProposalModel(Base):
     )
 
 
+class TimelineAnalysisProposalModel(Base):
+    """Stored candidate output of a whole-text timeline analysis run."""
+
+    __tablename__ = "timeline_analysis_proposals"
+    __table_args__ = (
+        UniqueConstraint("project_id", "input_hash", name="uq_timeline_analysis_project_input"),
+    )
+
+    proposal_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    input_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
 class WorkflowRunModel(Base):
     """Stored workflow run shell."""
 

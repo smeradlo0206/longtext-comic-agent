@@ -32,6 +32,11 @@ class Settings(BaseSettings):
         default="deepseek-v4-pro",
         validation_alias="STORYBIBLE_MODEL",
     )
+    timeline_model: str | None = Field(
+        default=None,
+        validation_alias="TIMELINE_MODEL",
+        description="Optional TimelineAgent model; defaults to STORYBIBLE_MODEL.",
+    )
     llm_timeout_seconds: float = Field(
         default=60,
         gt=0,

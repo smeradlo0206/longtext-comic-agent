@@ -3,6 +3,7 @@
 from comic_agent.schemas.base import EvidenceRefV1, RealityLayer, RecordStatus
 from comic_agent.schemas.continuity import CharacterStateV1
 from comic_agent.schemas.narrative import (
+    ClaimProposalV1,
     EntityProposalV1,
     EventProposalV1,
     StateChangeProposalV1,
@@ -32,6 +33,13 @@ from comic_agent.schemas.storybible import (
     WorldRuleV1,
 )
 from comic_agent.schemas.storyboard import SceneSpecV1, StoryBeatV1
+from comic_agent.schemas.timeline import (
+    DuplicateCandidateV1,
+    TimelineAnalysisInputV1,
+    TimelineAnalysisMode,
+    TimelineAnalysisProposalV1,
+    TimelineConflictV1,
+)
 from comic_agent.schemas.visual import PanelSpecV1
 from comic_agent.schemas.workflow import AgentRunStatus, AgentRunV1
 
@@ -39,9 +47,11 @@ __all__ = [
     "AgentRunStatus",
     "AgentRunV1",
     "CharacterStateV1",
+    "ClaimProposalV1",
     "CommitPlanV1",
     "ConflictV1",
     "EntityProposalV1",
+    "DuplicateCandidateV1",
     "EventProposalV1",
     "EvidenceRefV1",
     "PanelSpecV1",
@@ -67,6 +77,10 @@ __all__ = [
     "StoryEntityStateV1",
     "StoryRelationshipV1",
     "TemporalRelationProposalV1",
+    "TimelineAnalysisInputV1",
+    "TimelineAnalysisMode",
+    "TimelineAnalysisProposalV1",
+    "TimelineConflictV1",
     "WorldRuleUpdateProposalV1",
     "WorldRuleV1",
 ]

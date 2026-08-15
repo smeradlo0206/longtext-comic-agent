@@ -12,6 +12,7 @@ from comic_agent.database.models import (
     SourceChapterModel,
     SourceChunkModel,
     SourceDocumentModel,
+    TimelineAnalysisProposalModel,
 )
 from comic_agent.schemas.narrative import EventProposalV1
 from comic_agent.schemas.source import (
@@ -20,6 +21,7 @@ from comic_agent.schemas.source import (
     SourceChunkV1,
     SourceDocumentV1,
 )
+from comic_agent.schemas.timeline import TimelineAnalysisProposalV1
 from comic_agent.schemas.workflow import AgentRunV1
 from comic_agent.services.document_parser import ParsedDocument
 
@@ -217,6 +219,72 @@ class SourceRepository:
         ).all()
         return [EventProposalV1.model_validate(row.payload) for row in rows]
 
+    def save_timeline_analysis(
+        self,
+        proposal: TimelineAnalysisProposalV1,
+        input_hash: str,
+    ) -> TimelineAnalysisProposalV1:
+        """Persist a project-scoped timeline candidate idempotently by input hash."""
+
+        existing = self._session.scalar(
+            select(TimelineAnalysisProposalModel).where(
+                TimelineAnalysisProposalModel.project_id == proposal.project_id,
+                TimelineAnalysisProposalModel.input_hash == input_hash,
+            )
+        )
+        if existing is not None:
+            return TimelineAnalysisProposalV1.model_validate(existing.payload)
+        self._session.add(
+            TimelineAnalysisProposalModel(
+                proposal_id=proposal.proposal_id,
+                project_id=proposal.project_id,
+                input_hash=input_hash,
+                status=str(proposal.status),
+                payload=proposal.model_dump(mode="json"),
+            )
+        )
+        self._session.commit()
+        return proposal
+
+    def get_timeline_analysis_by_input_hash(
+        self,
+        project_id: str,
+        input_hash: str,
+    ) -> TimelineAnalysisProposalV1 | None:
+        """Return an idempotently cached analysis before another agent call is made."""
+
+        row = self._session.scalar(
+            select(TimelineAnalysisProposalModel).where(
+                TimelineAnalysisProposalModel.project_id == project_id,
+                TimelineAnalysisProposalModel.input_hash == input_hash,
+            )
+        )
+        if row is None:
+            return None
+        return TimelineAnalysisProposalV1.model_validate(row.payload)
+
+    def get_timeline_analysis(
+        self,
+        project_id: str,
+        proposal_id: str,
+    ) -> TimelineAnalysisProposalV1 | None:
+        """Return one project-owned timeline candidate."""
+
+        row = self._session.get(TimelineAnalysisProposalModel, proposal_id)
+        if row is None or row.project_id != project_id:
+            return None
+        return TimelineAnalysisProposalV1.model_validate(row.payload)
+
+    def list_timeline_analyses(self, project_id: str) -> list[TimelineAnalysisProposalV1]:
+        """List timeline candidates in creation order for one project."""
+
+        rows = self._session.scalars(
+            select(TimelineAnalysisProposalModel)
+            .where(TimelineAnalysisProposalModel.project_id == project_id)
+            .order_by(TimelineAnalysisProposalModel.created_at)
+        ).all()
+        return [TimelineAnalysisProposalV1.model_validate(row.payload) for row in rows]
+
     def save_agent_run(self, agent_run: AgentRunV1) -> AgentRunV1:
         """Persist one immutable agent execution trace."""
 
@@ -250,6 +318,16 @@ class SourceRepository:
         rows = self._session.scalars(
             select(AgentRunModel)
             .where(AgentRunModel.source_chunk_id == chunk_id)
+            .order_by(AgentRunModel.created_at)
+        ).all()
+        return [AgentRunV1.model_validate(row.payload) for row in rows]
+
+    def list_agent_runs_for_project(self, project_id: str) -> list[AgentRunV1]:
+        """Return all agent execution traces for one project."""
+
+        rows = self._session.scalars(
+            select(AgentRunModel)
+            .where(AgentRunModel.project_id == project_id)
             .order_by(AgentRunModel.created_at)
         ).all()
         return [AgentRunV1.model_validate(row.payload) for row in rows]

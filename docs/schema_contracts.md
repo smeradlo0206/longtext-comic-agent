@@ -12,7 +12,10 @@ All V1 schemas use `schema_version = "1.0"` and live in `comic_agent/schemas`.
 | SourceChunkV1 | Evidence atom. | chunk_id, document_id, chapter_id, text, checksum | Self | All agents | DocumentParser | SourceRepository |
 | EntityProposalV1 | Candidate entity. | proposal_id, type, name, evidence_refs, confidence | Required | Merge services | Entity agents | CommitService later |
 | EventProposalV1 | Candidate event. | proposal_id, type, non-empty summary, non-empty evidence_refs, confidence | At least one reference required; persisted with CANDIDATE status | Temporal/state agents | Event agent | CommitService later |
+| ClaimProposalV1 | Candidate assertion, separate from confirmed events. | claim_id, subject, predicate, value, evidence_refs, confidence | At least one reference required | Timeline/StoryBible agents | Claim agent | CommitService later |
 | TemporalRelationProposalV1 | Candidate event relation. | proposal_id, source, target, relation, confidence | Required unless UNKNOWN | Temporal solver | Temporal agent | CommitService later |
+| TimelineAnalysisInputV1 | Whole-text timeline analysis input. | project_id plus event, claim, or state-change proposals | At least one input evidence reference | Timeline agent | Context builder | N/A |
+| TimelineAnalysisProposalV1 | Candidate time relations, conflicts, and duplicates. | proposal_id, project_id, evidence_refs, confidence | Never canonical; derived evidence only | StoryBible review | Timeline agent | CommitService later |
 | StateChangeProposalV1 | Candidate state mutation. | proposal_id, event_id, target, path, evidence_refs | Required | State compiler | State agent | CommitService later |
 | CharacterStateV1 | Compiled character state. | state_id, character_id, reality_layer | Derived from changes | Story/visual agents | State compiler | CommitService later |
 | SceneSpecV1 | Source-grounded scene. | scene_id, chapter_id, chunks, layer, purpose | Via chunks | Translation agents | Narrative translator | CommitService later |
@@ -71,3 +74,16 @@ and names longer than 255 characters, values the existing `0004_storybible_resou
 columns could not portably store. No Alembic data migration is required: migration
 `0004` already defines the matching database lengths, and no column or stored-payload
 shape changed.
+
+### 2026-08-15 TimelineAgent V2 compatibility and migration note
+
+`TimelineAnalysisInputV1`, `TimelineAnalysisProposalV1`, and
+`TemporalRelationProposalV1` now default to `schema_version = "1.1"` while accepting
+the prior `"1.0"` payloads. V2 adds the optional input `mode` (`RULES_ONLY` remains the
+default) and an optional short `reasoning_summary` on a temporal-relation candidate.
+LLM mode emits only reviewable candidate relations, never canonical StoryBible data.
+
+No new Alembic migration is required: V2 continues to store the versioned Pydantic
+payload in the JSON column introduced by `0005_timeline_analysis_proposals`. Its
+idempotency key is strengthened in application code to include evidence text, prompt,
+agent version, and provider model before any LLM call.
