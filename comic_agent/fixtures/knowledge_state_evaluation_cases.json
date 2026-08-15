@@ -1,0 +1,130 @@
+[
+  {
+    "case_id": "knows-observed-positive",
+    "title": "KNOWS + OBSERVED：确认矿洞入口封死",
+    "category": "KNOWS",
+    "risk_tags": ["EVIDENCE_EXACTNESS", "TEMPORAL_NULL_WHEN_ABSENT", "UNRESOLVED_REFERENCE_BOUNDARY"],
+    "fixture_origin": "SYNTHETIC",
+    "source_chunks": [{"chunk_id": "fixture-knows-1", "document_id": "fixture-doc", "chapter_id": "fixture-chapter", "project_id": "knowledge-state-evaluation", "order": 0, "text": "林舟亲眼看见火把熄灭，并确认矿洞入口已经封死。", "checksum": "synthetic-knows"}],
+    "expected_states": [{"subject_text": "林舟", "subject_resolution_status": "UNRESOLVED", "epistemic_status": "KNOWS", "epistemic_basis": "OBSERVED", "target_kind": "WORLD_FACT", "target_text": "矿洞入口已经封死", "target_resolution_status": "UNRESOLVED", "evidence_quote": "林舟亲眼看见火把熄灭，并确认矿洞入口已经封死。"}],
+    "forbidden_states": [],
+    "notes": "只评估被明确确认的入口封死事实，不把两个事实无依据地合并。"
+  },
+  {
+    "case_id": "heard-world-fact-positive",
+    "title": "HEARD + WORLD_FACT：城门封锁",
+    "category": "HEARD",
+    "risk_tags": ["TARGET_KIND_BOUNDARY", "NO_KNOWS_FROM_SPEECH", "EVIDENCE_EXACTNESS"],
+    "fixture_origin": "SYNTHETIC",
+    "source_chunks": [{"chunk_id": "fixture-heard-1", "document_id": "fixture-doc", "chapter_id": "fixture-chapter", "project_id": "knowledge-state-evaluation", "order": 0, "text": "林舟听掌柜说城门已经封锁。", "checksum": "synthetic-heard"}],
+    "expected_states": [{"subject_text": "林舟", "subject_resolution_status": "UNRESOLVED", "epistemic_status": "HEARD", "epistemic_basis": "HEARD", "target_kind": "WORLD_FACT", "target_text": "城门已经封锁", "target_resolution_status": "UNRESOLVED", "evidence_quote": "林舟听掌柜说城门已经封锁。"}],
+    "forbidden_states": [{"epistemic_status": "KNOWS"}, {"epistemic_status": "HEARD", "target_kind": "CLAIM"}],
+    "notes": "听说世界状态不等于知道，也不因 HEARD 自动成为 CLAIM。"
+  },
+  {
+    "case_id": "suspects-world-fact-positive",
+    "title": "SUSPECTS：守卫隐瞒山路",
+    "category": "SUSPECTS",
+    "risk_tags": ["TARGET_KIND_BOUNDARY", "UNRESOLVED_REFERENCE_BOUNDARY"],
+    "fixture_origin": "SYNTHETIC",
+    "source_chunks": [{"chunk_id": "fixture-suspects-1", "document_id": "fixture-doc", "chapter_id": "fixture-chapter", "project_id": "knowledge-state-evaluation", "order": 0, "text": "林舟怀疑守卫故意隐瞒了山路的位置。", "checksum": "synthetic-suspects"}],
+    "expected_states": [{"subject_text": "林舟", "subject_resolution_status": "UNRESOLVED", "epistemic_status": "SUSPECTS", "epistemic_basis": "UNKNOWN", "target_kind": "WORLD_FACT", "target_text": "守卫故意隐瞒了山路的位置", "target_resolution_status": "UNRESOLVED", "evidence_quote": "林舟怀疑守卫故意隐瞒了山路的位置。"}],
+    "forbidden_states": [{"epistemic_status": "SUSPECTS", "target_kind": "CLAIM"}],
+    "notes": "怀疑的目标是世界事实，不是守卫的说法。"
+  },
+  {
+    "case_id": "believes-positive",
+    "title": "BELIEVES：哥哥仍然活着",
+    "category": "BELIEVES",
+    "risk_tags": ["NO_BELIEF_FROM_DIRECT_ASSERTION", "EVIDENCE_EXACTNESS"],
+    "fixture_origin": "SYNTHETIC",
+    "source_chunks": [{"chunk_id": "fixture-believes-1", "document_id": "fixture-doc", "chapter_id": "fixture-chapter", "project_id": "knowledge-state-evaluation", "order": 0, "text": "林舟坚信失踪的哥哥仍然活着。", "checksum": "synthetic-believes"}],
+    "expected_states": [{"subject_text": "林舟", "subject_resolution_status": "UNRESOLVED", "epistemic_status": "BELIEVES", "epistemic_basis": "UNKNOWN", "target_kind": "WORLD_FACT", "target_text": "失踪的哥哥仍然活着", "target_resolution_status": "UNRESOLVED", "evidence_quote": "林舟坚信失踪的哥哥仍然活着。"}],
+    "forbidden_states": [],
+    "notes": "必须有明确心理状态词，不从直接断言推断相信。"
+  },
+  {
+    "case_id": "disbelieves-rumor-content-boundary",
+    "title": "DISBELIEVES：传言内容不是 CLAIM",
+    "category": "DISBELIEVES",
+    "risk_tags": ["TARGET_KIND_BOUNDARY", "RUMOR_CONTENT_NORMALIZATION", "NO_KNOWS_FROM_SPEECH"],
+    "fixture_origin": "SYNTHETIC",
+    "source_chunks": [{"chunk_id": "fixture-disbelieves-1", "document_id": "fixture-doc", "chapter_id": "fixture-chapter", "project_id": "knowledge-state-evaluation", "order": 0, "text": "林舟说：‘我不信山中有鬼。’", "checksum": "synthetic-disbelieves"}],
+    "expected_states": [{"subject_text": "林舟", "subject_resolution_status": "UNRESOLVED", "epistemic_status": "DISBELIEVES", "epistemic_basis": "STATED", "target_kind": "WORLD_FACT", "target_text": "山中有鬼", "target_resolution_status": "UNRESOLVED", "evidence_quote": "我不信山中有鬼。", "allowed_evidence_quotes": ["林舟说：‘我不信山中有鬼。’"]}],
+    "forbidden_states": [{"epistemic_status": "DISBELIEVES", "target_kind": "CLAIM"}, {"epistemic_status": "KNOWS"}],
+    "notes": "严格文本匹配；山中有鬼与山中有鬼的传言不同。"
+  },
+  {
+    "case_id": "unaware-positive-null-temporal",
+    "title": "UNAWARE：明确不知情且无时间锚点",
+    "category": "UNAWARE",
+    "risk_tags": ["TEMPORAL_NULL_WHEN_ABSENT", "UNRESOLVED_REFERENCE_BOUNDARY"],
+    "fixture_origin": "SYNTHETIC",
+    "source_chunks": [{"chunk_id": "fixture-unaware-1", "document_id": "fixture-doc", "chapter_id": "fixture-chapter", "project_id": "knowledge-state-evaluation", "order": 0, "text": "林舟不知道妹妹已经离开小镇。", "checksum": "synthetic-unaware"}],
+    "expected_states": [{"subject_text": "林舟", "subject_resolution_status": "UNRESOLVED", "epistemic_status": "UNAWARE", "epistemic_basis": "UNKNOWN", "target_kind": "EVENT", "target_text": "妹妹已经离开小镇", "target_resolution_status": "UNRESOLVED", "evidence_quote": "林舟不知道妹妹已经离开小镇。"}],
+    "forbidden_states": [],
+    "notes": "没有起止事实时，两个时间锚点必须为 null。"
+  },
+  {
+    "case_id": "speech-only-empty",
+    "title": "仅说话：零输出",
+    "category": "SPEECH_ONLY_NEGATIVE",
+    "risk_tags": ["NO_KNOWS_FROM_SPEECH", "NO_BELIEF_FROM_DIRECT_ASSERTION", "EMPTY_BATCH"],
+    "fixture_origin": "SYNTHETIC",
+    "source_chunks": [{"chunk_id": "fixture-speech-1", "document_id": "fixture-doc", "chapter_id": "fixture-chapter", "project_id": "knowledge-state-evaluation", "order": 0, "text": "林舟说：‘城门已经封锁。’", "checksum": "synthetic-speech"}],
+    "expected_states": [], "forbidden_states": [{"epistemic_status": "BELIEVES"}, {"epistemic_status": "KNOWS"}],
+    "notes": "发言本身只构成 Claim，不自动证明相信或知道。"
+  },
+  {
+    "case_id": "presence-only-empty",
+    "title": "仅在场：零输出",
+    "category": "PRESENCE_ONLY_NEGATIVE",
+    "risk_tags": ["NO_KNOWS_FROM_PRESENCE", "EMPTY_BATCH"],
+    "fixture_origin": "SYNTHETIC",
+    "source_chunks": [{"chunk_id": "fixture-presence-1", "document_id": "fixture-doc", "chapter_id": "fixture-chapter", "project_id": "knowledge-state-evaluation", "order": 0, "text": "林舟站在城门旁。", "checksum": "synthetic-presence"}],
+    "expected_states": [], "forbidden_states": [{"epistemic_status": "KNOWS"}, {"epistemic_status": "UNAWARE"}],
+    "notes": "在场不证明知道，也不证明不知道。"
+  },
+  {
+    "case_id": "seeing-object-empty",
+    "title": "看见物体：零输出",
+    "category": "OBSERVATION_BOUNDARY",
+    "risk_tags": ["NO_KNOWS_FROM_SEEING_OBJECT", "EMPTY_BATCH"],
+    "fixture_origin": "SYNTHETIC",
+    "source_chunks": [{"chunk_id": "fixture-object-1", "document_id": "fixture-doc", "chapter_id": "fixture-chapter", "project_id": "knowledge-state-evaluation", "order": 0, "text": "林舟看见桌上有一个信封。", "checksum": "synthetic-object"}],
+    "expected_states": [], "forbidden_states": [{"epistemic_status": "KNOWS"}],
+    "notes": "看见信封不代表知道信件内容。"
+  },
+  {
+    "case_id": "claim-target-positive",
+    "title": "CLAIM：掌柜作出的声明本身",
+    "category": "TARGET_KIND_BOUNDARY",
+    "risk_tags": ["TARGET_KIND_BOUNDARY", "EVIDENCE_EXACTNESS"],
+    "fixture_origin": "SYNTHETIC",
+    "source_chunks": [{"chunk_id": "fixture-claim-1", "document_id": "fixture-doc", "chapter_id": "fixture-chapter", "project_id": "knowledge-state-evaluation", "order": 0, "text": "林舟听说掌柜声称城门已经封锁。", "checksum": "synthetic-claim"}],
+    "expected_states": [{"subject_text": "林舟", "subject_resolution_status": "UNRESOLVED", "epistemic_status": "HEARD", "epistemic_basis": "HEARD", "target_kind": "CLAIM", "target_text": "掌柜声称城门已经封锁", "target_resolution_status": "UNRESOLVED", "evidence_quote": "林舟听说掌柜声称城门已经封锁。"}],
+    "forbidden_states": [],
+    "notes": "CLAIM 合法，因为目标是掌柜作出的声明本身。"
+  },
+  {
+    "case_id": "unresolved-reference-boundary",
+    "title": "未解析引用不得伪造 Proposal ID",
+    "category": "TARGET_KIND_BOUNDARY",
+    "risk_tags": ["UNRESOLVED_REFERENCE_BOUNDARY"],
+    "fixture_origin": "SYNTHETIC",
+    "source_chunks": [{"chunk_id": "fixture-unresolved-1", "document_id": "fixture-doc", "chapter_id": "fixture-chapter", "project_id": "knowledge-state-evaluation", "order": 0, "text": "林舟觉得山路不安全。", "checksum": "synthetic-unresolved"}],
+    "expected_states": [{"subject_text": "林舟", "subject_resolution_status": "UNRESOLVED", "epistemic_status": "SUSPECTS", "epistemic_basis": "UNKNOWN", "target_kind": "WORLD_FACT", "target_text": "山路不安全", "target_resolution_status": "UNRESOLVED", "evidence_quote": "林舟觉得山路不安全。"}],
+    "forbidden_states": [{"subject_resolution_status": "RESOLVED"}, {"target_resolution_status": "RESOLVED"}],
+    "notes": "该 fixture 不提供候选 Proposal；引用必须保持 unresolved。"
+  },
+  {
+    "case_id": "empty-batch-baseline",
+    "title": "空 Batch 基线",
+    "category": "EMPTY_BATCH",
+    "risk_tags": ["EMPTY_BATCH"],
+    "fixture_origin": "SYNTHETIC",
+    "source_chunks": [{"chunk_id": "fixture-empty-1", "document_id": "fixture-doc", "chapter_id": "fixture-chapter", "project_id": "knowledge-state-evaluation", "order": 0, "text": "风吹过空巷。", "checksum": "synthetic-empty"}],
+    "expected_states": [], "forbidden_states": [],
+    "notes": "没有明确认知状态时，空 batch 是正确结果。"
+  }
+]

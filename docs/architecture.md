@@ -50,6 +50,55 @@ later constraint or persistence failure rolls the entire promotion back. Migrati
 `0004_storybible_resources` persists canonical profiles, states, relationships, world
 rules, and candidate commit plans.
 
+## Review Gate 1 Contract Boundary
+
+The future source-quality path is `Import & Chunking -> Review Gate 1 -> Orchestrator /
+ContextBuilder -> Narrative Analyst`. Gate 1 receives a bounded in-memory source snapshot and
+the parsed document/chapter/chunk records. It checks deterministic encoding, checksum, scope,
+order, range, duplicate, whitespace, and chunk usability rules. The synchronous
+`ReviewGate1Service` does not interpret story meaning, call a Provider, repair input, or write
+canonical data.
+
+Only `ApprovedSourceChunkBundleV1.chunk_ids` may be routed downstream after an APPROVED result.
+The bundle contains no text, storage URI, provider payload, or StoryBible data. This repository
+The service is not wired to an Agent, import API, Console, Orchestrator, automatic repair, or
+human-review persistence; those remain future integration work.
+
+## Review Gate 2 Contract Boundary
+
+The future review path is `Narrative Analyst Proposal output -> Review Gate 2 -> Continuity
+Timeline -> StoryBible Curator -> Review Gate 4 -> CommitService`. Review Gate 2 receives only
+the bounded Proposal envelopes, AgentRun provenance, Evidence references, and allowed
+SourceChunk ids defined by `ReviewGate2InputV1`. It produces auditable decision, issue, and
+reference-resolution records plus an approved Proposal bundle only after complete review.
+
+The deterministic `ReviewGate2Service` is automatically invoked by
+`NarrativeAnalysisReviewCoordinator` only after a whole-document Narrative Analyst run has
+persisted a successful aggregate result and all leaf windows succeeded. The coordinator derives a
+strict, Gate 1-approved SourceChunk/AgentRun context for that one run, persists the typed result
+and `NarrativeAnalysisReviewRouteV1` inside the existing analysis-run JSON payload, and exposes
+readonly progress/audit/bundle API surfaces. It never changes Narrative Analyst status or Proposal
+contents. Stage B may rerun only the original mode and leaf window under a fixed policy, budget,
+and Gate 1-approved source scope. Each fresh Proposal receives a fresh Gate 2 review; old
+Proposals, AgentRuns, and Gate 2 artifacts are never overwritten. The non-canonical
+`narrative_analysis_recovery_attempts` audit table is created by Alembic migration
+`0005_narrative_analysis_recovery_attempts`. No Review Agent, automatic linker, Timeline,
+StoryBible Curator, CommitService, semantic repair, or canonical write path is introduced. Fuzzy/LLM reference
+resolution and canonical writes remain forbidden; unresolved references are never rewritten.
+The context is rejected as an execution failure when it contains duplicate chunk ids, a chunk
+outside the input's allowed scope, or an AgentRun mapping outside the known AgentRun scope. A
+missing context chunk for otherwise allowed Proposal Evidence is instead an auditable
+Proposal-level evidence rejection; the service never obtains it from storage. Repeating the same
+input, context, and policy yields stable ids, ordering, decisions, counts, and bundle membership,
+apart from UTC audit timestamps.
+
+## Automatic import to analysis
+
+The normal path is TXT import → deterministic Gate 1 → chapter selection → Narrative
+Analyst. Only an APPROVED Gate 1 bundle may reach ContextBuilder; forged chapter or
+chunk selections are rejected by the coordinator. Gate 1 metadata is a namespaced JSON
+artifact in the existing source document payload, so no table migration is required.
+
 ## Startup Phase Boundary
 
 This phase implements the source evidence chain, schema contracts, mock providers, API shell, database shell, docs, and tests. Full story compilation, image generation, QA repair loops, and frontend workflows are planned but not implemented.

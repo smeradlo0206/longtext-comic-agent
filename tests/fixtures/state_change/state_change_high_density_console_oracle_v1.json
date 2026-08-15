@@ -1,0 +1,120 @@
+{
+  "schema_version": "1.0",
+  "source_file": "local_eval/state_change_high_density_challenge_v1.txt",
+  "identity": {
+    "strategy": "parser_order_checksum_anchor",
+    "project_id": "fixture-console-oracle",
+    "filename": "state_change_high_density_challenge_v1.txt",
+    "random_ids_forbidden": true
+  },
+  "chunks": [
+    {
+      "order": 0,
+      "checksum": "d708cd4cb242390094c84e5d53be767fa9586f268d94b88e0ee6e70c29d789e4",
+      "anchor": "昨夜的箭伤又裂开了",
+      "expected_changes": [
+        {"target_text": "周砚", "target_kind": "CHARACTER", "attribute_path": "health.injury", "new_value_contains": "渗血", "evidence_quote": "左臂渗出血珠"},
+        {"target_text": "周砚", "target_kind": "CHARACTER", "attribute_path": "health.injury", "new_value_contains": "止住", "evidence_quote": "血色才渐渐止住"},
+        {"target_text": "周砚", "target_kind": "CHARACTER", "attribute_path": "appearance.clothing", "new_value_contains": "灰衣", "evidence_quote": "换上灰衣"},
+        {"target_text": "周砚", "target_kind": "CHARACTER", "attribute_path": "appearance.hairstyle", "new_value_contains": "披", "evidence_quote": "让长发披在肩后"}
+      ],
+      "forbidden_changes": ["persistent=true without explicit persistence evidence"],
+      "expects_empty_batch": false
+    },
+    {
+      "order": 1,
+      "checksum": "66d4a5fe8ae8afa10c3aeaab07ce9df57ec8764334f822ae33e65edaff7a367e",
+      "anchor": "周砚先穿过东院",
+      "expected_changes": [
+        {"target_text": "周砚", "target_kind": "CHARACTER", "attribute_path": "location", "new_value_contains": "档案室", "evidence_quote": "走到档案室门前"},
+        {"target_text": "木箱", "target_kind": "OBJECT", "attribute_path": "physical.condition", "new_value_contains": "裂", "evidence_quote": "木箱的箱角立刻裂开"},
+        {"target_text": "木箱", "target_kind": "OBJECT", "attribute_path": "physical.condition", "new_value_contains": "合拢", "evidence_quote": "箱板重新合拢"},
+        {"target_text": "木箱", "target_kind": "OBJECT", "attribute_path": "physical.condition", "new_value_contains": "塌", "evidence_quote": "木箱再次焦黑并塌下一角"}
+      ],
+      "forbidden_changes": ["箱盖 is automatically resolved to 木箱"],
+      "expects_empty_batch": false
+    },
+    {
+      "order": 2,
+      "checksum": "f6290135b438e7b2bb98b310f14aa69abf8f66242cc09e5fff0025067787be60",
+      "anchor": "铁门被风撞得合上",
+      "expected_changes": [
+        {"target_text": "铁门", "target_kind": "OBJECT", "attribute_path": "accessibility", "new_value_contains": "开启", "evidence_quote": "铁门向内开启"},
+        {"target_text": "铁门", "target_kind": "OBJECT", "attribute_path": "accessibility", "new_value_contains": "关", "evidence_quote": "又把铁门关上"},
+        {"target_text": "铁门", "target_kind": "OBJECT", "attribute_path": "accessibility", "new_value_contains": "打开", "evidence_quote": "铁门再次打开"}
+      ],
+      "forbidden_changes": [],
+      "expects_empty_batch": false
+    },
+    {
+      "order": 3,
+      "checksum": "37f27b011afc280234876ac4f1174ae88f87ab0a892661467d1db4ac29a89c0a",
+      "anchor": "地图卷轴先在阿葵手中",
+      "expected_changes": [
+        {"target_text": "卷轴", "target_kind": "OBJECT", "attribute_path": "possession.holder", "new_value_contains": "周砚", "evidence_quote": "把卷轴交给周砚"},
+        {"target_text": "卷轴", "target_kind": "OBJECT", "attribute_path": "possession.holder", "new_value_contains": "沈策", "evidence_quote": "递给守在廊下的沈策"},
+        {"target_text": "卷轴", "target_kind": "OBJECT", "attribute_path": "possession.holder", "new_value_contains": "陆衡", "evidence_quote": "转交给陆衡保管"},
+        {"target_text": "药瓶", "target_kind": "OBJECT", "attribute_path": "quantity", "new_value": 4, "evidence_quote": "从六瓶减到四瓶"}
+      ],
+      "forbidden_changes": ["quantity new_value as string"],
+      "expects_empty_batch": false
+    },
+    {
+      "order": 4,
+      "checksum": "8c6563d93e1825980cca84e9dfc945878da02a659bca02696f389598b3110eb7",
+      "anchor": "整块假山轰然崩塌",
+      "expected_changes": [
+        {"target_text": "假山", "target_kind": "OBJECT", "attribute_path": "physical.condition", "new_value_contains": "崩塌", "evidence_quote": "整块假山轰然崩塌"},
+        {"target_text": "窄门", "target_kind": "OBJECT", "attribute_path": "accessibility", "new_value_contains": "堵", "evidence_quote": "碎石堵住窄门"},
+        {"target_text": "墙体", "target_kind": "OBJECT", "attribute_path": "physical.condition", "new_value_contains": "裂", "evidence_quote": "旧墙面又出现细裂"},
+        {"target_text": "墙体", "target_kind": "OBJECT", "attribute_path": "physical.condition", "new_value_contains": "坍", "evidence_quote": "墙体才在第二次震动中坍下"},
+        {"target_text": "地道", "target_kind": "LOCATION", "attribute_path": "accessibility", "new_value_contains": "封", "evidence_quote": "尘土封住地道"}
+      ],
+      "forbidden_changes": ["uninterrupted rockery crack as a separate final state"],
+      "expects_empty_batch": false
+    },
+    {
+      "order": 5,
+      "checksum": "5afe76b216e5959bb924c1ee50325e7cf427883c52d937a2d4a940f0fb40b6aa",
+      "anchor": "扶着栏杆走到二楼",
+      "expected_changes": [
+        {"target_text": "周砚", "target_kind": "CHARACTER", "attribute_path": "location", "new_value_contains": "二楼", "evidence_quote": "走到二楼"},
+        {"target_text": "地图", "target_kind": "OBJECT", "attribute_path": "location", "new_value_contains": "内袋", "evidence_quote": "把地图塞入内袋"}
+      ],
+      "forbidden_changes": ["wind-blown hair as appearance change", "脸色一变 as state change"],
+      "expects_empty_batch": false
+    },
+    {
+      "order": 6,
+      "checksum": "df4badd282343eb1711a022545847f7e3678c2ebf48f29c6f6094c5e6ed390aa",
+      "anchor": "说明日要换一身礼服",
+      "expected_changes": [],
+      "forbidden_changes": ["plan to change clothes", "seeing silver cup", "wood chips imply broken board"],
+      "expects_empty_batch": true
+    },
+    {
+      "order": 7,
+      "checksum": "f445ce7587466ac1e2af9c1237057b3506be5a0fdf88e7e737cac810cb7a2bda",
+      "anchor": "周砚回到东院",
+      "expected_changes": [
+        {"target_text": "周砚", "target_kind": "CHARACTER", "attribute_path": "location", "new_value_contains": "东院", "evidence_quote": "周砚回到东院"},
+        {"target_text": "铁门", "target_kind": "OBJECT", "attribute_path": "accessibility", "new_value_contains": "打开", "evidence_quote": "陆衡打开铁门"},
+        {"target_text": "铁门", "target_kind": "OBJECT", "attribute_path": "accessibility", "new_value_contains": "关", "evidence_quote": "再度关门"}
+      ],
+      "forbidden_changes": ["跨-window old_value from earlier paragraphs"],
+      "expects_empty_batch": false
+    },
+    {
+      "order": 8,
+      "checksum": "b9ecc2e2526fd3cf50033cca5135c90fbd32889ad51aea421686765f689130ea",
+      "anchor": "灰衣外套扣好",
+      "expected_changes": [
+        {"target_text": "周砚", "target_kind": "CHARACTER", "attribute_path": "appearance.clothing", "new_value_contains": "扣好", "evidence_quote": "把灰衣外套扣好"},
+        {"target_text": "周砚", "target_kind": "CHARACTER", "attribute_path": "appearance.hairstyle", "new_value_contains": "束", "evidence_quote": "重新束起长发"},
+        {"target_text": "木箱", "target_kind": "OBJECT", "attribute_path": "physical.condition", "new_value_contains": "裂", "evidence_quote": "木箱在搬运中又裂了一道"}
+      ],
+      "forbidden_changes": ["old_value inferred from earlier window"],
+      "expects_empty_batch": false
+    }
+  ]
+}
