@@ -10,12 +10,16 @@ from starlette.datastructures import State
 from comic_agent.api.demo import require_demo_access_code
 from comic_agent.api.dependencies import (
     get_agent_run_repository,
+    get_narrative_analysis_recovery_repository,
     get_narrative_analysis_repository,
     get_repository,
 )
 from comic_agent.config import Settings, get_settings
 from comic_agent.providers.mocks import MockLLMProvider
 from comic_agent.repositories.agent_run_repository import AgentRunRepository
+from comic_agent.repositories.narrative_analysis_recovery_repository import (
+    NarrativeAnalysisRecoveryRepository,
+)
 from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
 from comic_agent.repositories.source_repository import SourceRepository
 from comic_agent.schemas.base import RealityLayer
@@ -40,6 +44,9 @@ SourceRepositoryDep = Annotated[SourceRepository, Depends(get_repository)]
 AgentRunRepositoryDep = Annotated[AgentRunRepository, Depends(get_agent_run_repository)]
 NarrativeAnalysisRepositoryDep = Annotated[
     NarrativeAnalysisRepository, Depends(get_narrative_analysis_repository)
+]
+NarrativeAnalysisRecoveryRepositoryDep = Annotated[
+    NarrativeAnalysisRecoveryRepository, Depends(get_narrative_analysis_recovery_repository)
 ]
 
 
@@ -275,6 +282,112 @@ def get_whole_document_analysis_result(
     return result.model_dump(mode="json")
 
 
+@router.get("/narrative-analysis-runs/{analysis_run_id}/review-gate2")
+def get_whole_document_review_gate2(
+    analysis_run_id: str,
+    analysis_repository: NarrativeAnalysisRepositoryDep,
+) -> dict[str, Any]:
+    """Return the typed deterministic Gate 2 audit only after a successful analysis run."""
+
+    run = analysis_repository.get_run(analysis_run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="NarrativeAnalysisRun not found")
+    if (
+        str(run.status) != "SUCCEEDED"
+        or run.review_gate2_result is None
+        or run.review_gate2_route is None
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Review Gate 2 is not ready for this analysis run",
+        )
+    return {
+        "result": run.review_gate2_result.model_dump(mode="json"),
+        "route": run.review_gate2_route.model_dump(mode="json"),
+    }
+
+
+@router.get("/narrative-analysis-runs/{analysis_run_id}/approved-proposal-bundle")
+def get_approved_proposal_bundle(
+    analysis_run_id: str,
+    analysis_repository: NarrativeAnalysisRepositoryDep,
+) -> dict[str, Any]:
+    """Expose a downstream bundle only when the persisted route is fully APPROVED."""
+
+    run = analysis_repository.get_run(analysis_run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="NarrativeAnalysisRun not found")
+    route = run.review_gate2_route
+    if route is None or str(route.decision) != "APPROVED" or route.approved_proposal_bundle is None:
+        raise HTTPException(status_code=409, detail="Approved proposal bundle is not available")
+    return route.approved_proposal_bundle.model_dump(mode="json")
+
+
+@router.get("/narrative-analysis-runs/{analysis_run_id}/recovery")
+def get_narrative_analysis_recovery(
+    analysis_run_id: str,
+    analysis_repository: NarrativeAnalysisRepositoryDep,
+    recovery_repository: NarrativeAnalysisRecoveryRepositoryDep,
+) -> dict[str, Any]:
+    """Return source-free Stage B status without exposing attempt payloads."""
+
+    run = analysis_repository.get_run(analysis_run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="NarrativeAnalysisRun not found")
+    attempts = recovery_repository.list_attempts(analysis_run_id)
+    latest = attempts[-1] if attempts else None
+    outcome = latest.outcome if latest is not None else None
+    safe_codes = sorted(
+        {
+            str(code)
+            for attempt in attempts
+            for code in attempt.original_gate2_issue_codes
+        }
+    )
+    bundle_available = bool(
+        latest
+        and latest.fresh_route is not None
+        and str(latest.fresh_route.decision) == "APPROVED"
+        and latest.fresh_route.approved_proposal_bundle is not None
+    )
+    return {
+        "recovery_ready": bool(
+            run.review_gate2_route and str(run.review_gate2_route.decision) == "REJECTED"
+        ),
+        "status": str(outcome.status) if outcome is not None else "NOT_STARTED",
+        "route_decision": outcome.route_decision if outcome is not None else None,
+        "attempt_count": len(attempts),
+        "safe_issue_codes": safe_codes,
+        "approved_bundle_available": bundle_available,
+    }
+
+
+@router.get("/narrative-analysis-runs/{analysis_run_id}/recovery/approved-proposal-bundle")
+def get_recovery_approved_proposal_bundle(
+    analysis_run_id: str,
+    analysis_repository: NarrativeAnalysisRepositoryDep,
+    recovery_repository: NarrativeAnalysisRecoveryRepositoryDep,
+) -> dict[str, Any]:
+    """Expose only a fresh bundle from a completed, approved recovery attempt."""
+
+    if analysis_repository.get_run(analysis_run_id) is None:
+        raise HTTPException(status_code=404, detail="NarrativeAnalysisRun not found")
+    for attempt in reversed(recovery_repository.list_attempts(analysis_run_id)):
+        route = attempt.fresh_route
+        if (
+            attempt.outcome is not None
+            and str(attempt.outcome.status) == "APPROVED"
+            and route is not None
+            and str(route.decision) == "APPROVED"
+            and route.approved_proposal_bundle is not None
+        ):
+            return route.approved_proposal_bundle.model_dump(mode="json")
+    raise HTTPException(
+        status_code=409,
+        detail="Recovery approved proposal bundle is not available",
+    )
+
+
 @router.post(
     "/narrative-analysis-runs/{analysis_run_id}/resume", status_code=status.HTTP_202_ACCEPTED
 )
@@ -315,6 +428,7 @@ def _run_whole_document_analysis(
             source_repository=SourceRepository(session),
             agent_run_repository=AgentRunRepository(session),
             analysis_repository=NarrativeAnalysisRepository(session),
+            recovery_repository=NarrativeAnalysisRecoveryRepository(session),
             provider=getattr(app_state, "narrative_analyst_provider", None),
         )
         worker.run_pending(analysis_run_id, real_llm_requested=real_llm_requested)
@@ -329,12 +443,38 @@ def _analysis_run_payload(
     """Return progress metadata only; proposal data is served by the result route."""
 
     payload = run.model_dump(mode="json")
+    review_result = payload.pop("review_gate2_result", None)
+    review_route = payload.pop("review_gate2_route", None)
     windows = analysis_repository.list_windows(run.analysis_run_id)
     payload["windows_total"] = len(windows)
     payload["windows_succeeded"] = sum(str(window.status) == "SUCCEEDED" for window in windows)
     payload["windows_failed"] = sum(str(window.status) == "FAILED" for window in windows)
     payload["windows_pending"] = sum(
         str(window.status) in {"PENDING", "RUNNING"} for window in windows
+    )
+    route = run.review_gate2_route
+    result = run.review_gate2_result
+    safe_issue_codes = sorted(
+        {
+            code.value
+            for diagnostic in (route.recovery_diagnostics if route is not None else [])
+            for code in diagnostic.issue_codes
+        }
+        | {
+            issue.code.value
+            for issue in (result.execution_issues if result is not None else [])
+        }
+    )
+    payload.update(
+        {
+            "review_gate2_ready": review_result is not None and review_route is not None,
+            "review_gate2_route_decision": str(route.decision) if route is not None else None,
+            "review_gate2_run_id": result.review_run_id if result is not None else None,
+            "review_gate2_approved_count": route.approved_count if route is not None else 0,
+            "review_gate2_rejected_count": route.rejected_count if route is not None else 0,
+            "review_gate2_held_count": route.held_count if route is not None else 0,
+            "review_gate2_issue_codes": safe_issue_codes,
+        }
     )
     return dict(payload)
 

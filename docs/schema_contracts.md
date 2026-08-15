@@ -636,13 +636,32 @@ parameter: provenance is checked only from the service context. For identical in
 policy, review/decision/issue ids, ordering, decisions, counts, and bundle content are stable;
 only UTC audit timestamps may differ.
 
-Schema compatibility impact: this adds independent v1.0 Review Gate 2 payloads only. Existing
-Event, Entity, Claim, Knowledge State, State Change, Relationship Signal, Narrative Analysis,
-and historical payload versions remain unchanged and readable. No historical Proposal is
-rewritten, linked, or upgraded.
+`NarrativeAnalysisReviewRouteV1` and `ProposalRecoveryDiagnosticV1` record the automatic
+whole-document handoff without changing the aggregate Proposal result. A completed analysis run
+is written as `NarrativeAnalysisRunV1` v1.2 and may carry a typed Gate 2 result plus one route:
+`APPROVED` exposes the complete (possibly empty) approved bundle, `REJECTED` retains only safe
+per-Proposal diagnostics, `NEEDS_HUMAN_REVIEW` retains the exact held Proposal ids, and `FAILED`
+retains no bundle or recovery diagnostics. `NOT_READY` has no review artifacts. New v1.2 runs
+write these optional fields and source-free recovery outcomes; historical v1.0/v1.1 runs remain
+readable with compatible absent fields.
 
-无需数据库迁移：Review Gate 2 新增字段仅存在于兼容的 Pydantic/JSON 审计合同中；当前未持久化
-Review Gate 2 结果，未来如需持久化应单独设计数据库模型与迁移。
+The automatic coordinator runs only after the Narrative Analysis run is `SUCCEEDED`, every leaf
+window succeeded, and the aggregate result was persisted. It derives its context solely from the
+Gate 1-approved SourceChunks actually used by that run and its own window AgentRun ids. Gate 2
+does not alter analysis status, mutate Proposals, fetch missing context from a repository, or
+perform remediation. Re-entry preserves an already valid persisted result/route pair rather than
+creating another review run. The readonly API may expose the typed audit, while the downstream
+bundle endpoint permits access only for an `APPROVED` route.
+
+Schema compatibility impact: Gate 2 and Narrative Proposal Schema versions are unchanged. The
+current `NarrativeAnalysisRunV1` write version is v1.2; v1.0/v1.1 runs remain readable. Existing
+Event, Entity, Claim, Knowledge State, State Change, Relationship Signal, Narrative Analysis, and
+historical payload versions remain readable. No historical Proposal is rewritten, linked, or upgraded.
+
+数据库迁移影响：Gate 2 result/route 继续存放在兼容的 Narrative Analysis JSON payload 中；Stage B
+新增非 canonical `narrative_analysis_recovery_attempts` 审计表，由 Alembic
+`0005_narrative_analysis_recovery_attempts` 创建。该表只保存固定范围重跑的 attempt、预算和 fresh
+review 审计，不写入 StoryBible，也不替代 CommitService。
 
 ### Automatic import authorization (Gate 1 → Narrative Analyst)
 

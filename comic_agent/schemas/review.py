@@ -39,6 +39,16 @@ class ReviewGate2RunStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class ReviewGate2RoutingDecision(StrEnum):
+    """Bounded downstream routing state derived from one Gate 2 result."""
+
+    NOT_READY = "NOT_READY"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    NEEDS_HUMAN_REVIEW = "NEEDS_HUMAN_REVIEW"
+    FAILED = "FAILED"
+
+
 class ReviewMethod(StrEnum):
     DETERMINISTIC = "DETERMINISTIC"
     HUMAN = "HUMAN"
@@ -571,6 +581,127 @@ class ApprovedProposalBundleV1(StrictBaseModel):
                 or reference.required_for_downstream
             ):
                 raise ValueError("bundle can retain only nonblocking UNRESOLVED references")
+        return self
+
+
+class ProposalRecoveryDiagnosticV1(StrictBaseModel):
+    """Safe, bounded diagnostic for a future original-mode recovery decision."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0")
+    proposal_id: str
+    proposal_schema: ProposalSchemaName
+    mode: ReviewableProposalMode
+    agent_run_ids: list[str] = Field(default_factory=list)
+    analysis_window_ids: list[str] = Field(default_factory=list)
+    issue_ids: list[str] = Field(default_factory=list)
+    issue_codes: list[ReviewIssueCode] = Field(default_factory=list)
+    source_chunk_ids: list[str] = Field(default_factory=list)
+    eligible_for_original_mode_rerun: bool
+
+    @model_validator(mode="after")
+    def validate_diagnostic(self) -> "ProposalRecoveryDiagnosticV1":
+        _require_nonblank(self.proposal_id, "proposal_id")
+        for field_name in (
+            "agent_run_ids",
+            "analysis_window_ids",
+            "issue_ids",
+            "source_chunk_ids",
+        ):
+            values = getattr(self, field_name)
+            for value in values:
+                _require_nonblank(value, f"{field_name} item")
+            _require_unique(values, field_name)
+        code_values = [_enum_value(code) for code in self.issue_codes]
+        _require_unique(code_values, "issue_codes")
+        return self
+
+
+class NarrativeAnalysisReviewRouteV1(StrictBaseModel):
+    """Persisted, non-mutating Gate 2 routing record for one analysis run."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0")
+    analysis_run_id: str
+    review_run_id: str | None = None
+    decision: ReviewGate2RoutingDecision
+    review_status: ReviewGate2RunStatus | None = None
+    total_count: int = Field(ge=0)
+    approved_count: int = Field(ge=0)
+    rejected_count: int = Field(ge=0)
+    held_count: int = Field(ge=0)
+    approved_proposal_bundle: ApprovedProposalBundleV1 | None = None
+    recovery_diagnostics: list[ProposalRecoveryDiagnosticV1] = Field(default_factory=list)
+    held_proposal_ids: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @model_validator(mode="after")
+    def validate_route(self) -> "NarrativeAnalysisReviewRouteV1":
+        _require_nonblank(self.analysis_run_id, "analysis_run_id")
+        if self.review_run_id is not None:
+            _require_nonblank(self.review_run_id, "review_run_id")
+        if self.total_count != self.approved_count + self.rejected_count + self.held_count:
+            raise ValueError("route counts must add up to total_count")
+        _require_unique(self.held_proposal_ids, "held_proposal_ids")
+        diagnostic_ids = [item.proposal_id for item in self.recovery_diagnostics]
+        _require_unique(diagnostic_ids, "recovery_diagnostics proposal_id")
+        if self.decision == ReviewGate2RoutingDecision.NOT_READY:
+            if any(
+                value is not None
+                for value in (self.review_run_id, self.review_status, self.approved_proposal_bundle)
+            ) or any(
+                (self.total_count, self.approved_count, self.rejected_count, self.held_count)
+            ) or self.recovery_diagnostics or self.held_proposal_ids:
+                raise ValueError("NOT_READY route cannot contain review artifacts")
+        elif self.decision == ReviewGate2RoutingDecision.APPROVED:
+            if (
+                self.review_status != ReviewGate2RunStatus.COMPLETED
+                or self.review_run_id is None
+                or self.approved_proposal_bundle is None
+                or self.rejected_count
+                or self.held_count
+                or self.recovery_diagnostics
+                or self.held_proposal_ids
+                or self.approved_count != self.total_count
+            ):
+                raise ValueError("APPROVED route requires only an approved proposal bundle")
+        elif self.decision == ReviewGate2RoutingDecision.REJECTED:
+            if (
+                self.review_status != ReviewGate2RunStatus.COMPLETED
+                or self.review_run_id is None
+                or not self.rejected_count
+                or self.held_count
+                or self.approved_proposal_bundle is not None
+                or self.held_proposal_ids
+                or len(self.recovery_diagnostics) != self.rejected_count
+            ):
+                raise ValueError("REJECTED route requires diagnostics and no bundle")
+        elif self.decision == ReviewGate2RoutingDecision.NEEDS_HUMAN_REVIEW:
+            if (
+                self.review_status != ReviewGate2RunStatus.NEEDS_HUMAN_REVIEW
+                or self.review_run_id is None
+                or not self.held_count
+                or self.approved_proposal_bundle is not None
+                or len(self.held_proposal_ids) != self.held_count
+            ):
+                raise ValueError(
+                    "NEEDS_HUMAN_REVIEW route requires held proposal ids and no bundle"
+                )
+        else:
+            if (
+                self.review_status != ReviewGate2RunStatus.FAILED
+                or self.review_run_id is None
+                or self.approved_proposal_bundle is not None
+                or self.recovery_diagnostics
+                or self.held_proposal_ids
+                or any(
+                    (
+                        self.total_count,
+                        self.approved_count,
+                        self.rejected_count,
+                        self.held_count,
+                    )
+                )
+            ):
+                raise ValueError("FAILED route cannot contain proposal routing artifacts")
         return self
 
 

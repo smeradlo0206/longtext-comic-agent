@@ -72,11 +72,18 @@ the bounded Proposal envelopes, AgentRun provenance, Evidence references, and al
 SourceChunk ids defined by `ReviewGate2InputV1`. It produces auditable decision, issue, and
 reference-resolution records plus an approved Proposal bundle only after complete review.
 
-The currently implemented component is the pure deterministic `ReviewGate2Service` plus the
-Pydantic/JSON Schema contract. It accepts only caller-supplied bounded SourceChunk and AgentRun
-context, performs exact evidence/provenance/mode/reference checks, and never mutates the original
-Proposal. No Review Agent, automatic linker, database persistence, API endpoint, Console view,
-Timeline, StoryBible Curator, or canonical write path is introduced. Fuzzy/LLM reference
+The deterministic `ReviewGate2Service` is automatically invoked by
+`NarrativeAnalysisReviewCoordinator` only after a whole-document Narrative Analyst run has
+persisted a successful aggregate result and all leaf windows succeeded. The coordinator derives a
+strict, Gate 1-approved SourceChunk/AgentRun context for that one run, persists the typed result
+and `NarrativeAnalysisReviewRouteV1` inside the existing analysis-run JSON payload, and exposes
+readonly progress/audit/bundle API surfaces. It never changes Narrative Analyst status or Proposal
+contents. Stage B may rerun only the original mode and leaf window under a fixed policy, budget,
+and Gate 1-approved source scope. Each fresh Proposal receives a fresh Gate 2 review; old
+Proposals, AgentRuns, and Gate 2 artifacts are never overwritten. The non-canonical
+`narrative_analysis_recovery_attempts` audit table is created by Alembic migration
+`0005_narrative_analysis_recovery_attempts`. No Review Agent, automatic linker, Timeline,
+StoryBible Curator, CommitService, semantic repair, or canonical write path is introduced. Fuzzy/LLM reference
 resolution and canonical writes remain forbidden; unresolved references are never rewritten.
 The context is rejected as an execution failure when it contains duplicate chunk ids, a chunk
 outside the input's allowed scope, or an AgentRun mapping outside the known AgentRun scope. A

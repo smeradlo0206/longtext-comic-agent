@@ -6,26 +6,28 @@ from typing import Any, Protocol
 from comic_agent.config import Settings
 from comic_agent.providers.llm import LLMProvider
 from comic_agent.repositories.agent_run_repository import AgentRunRepository
+from comic_agent.repositories.narrative_analysis_recovery_repository import (
+    NarrativeAnalysisRecoveryRepository,
+)
 from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
 from comic_agent.repositories.source_repository import SourceRepository
-from comic_agent.schemas.narrative import (
-    ClaimProposalBatchV1,
-    EntityProposalBatchV1,
-    EventProposalBatchV1,
-    KnowledgeStateProposalBatchV1,
-    RelationshipSignalProposalBatchV1,
-    RelationshipSignalProposalV1,
-    StateChangeProposalBatchV1,
-    StateChangeProposalV1,
-)
 from comic_agent.schemas.workflow import (
     AgentRunStatus,
+    NarrativeAnalysisProposalSourceV1,
     NarrativeAnalysisRunStatus,
     NarrativeAnalysisRunV1,
     NarrativeAnalysisWindowStatus,
     NarrativeAnalysisWindowV1,
 )
 from comic_agent.services.narrative_analysis_aggregation import aggregate_narrative_analysis
+from comic_agent.services.narrative_analysis_proposal_sources import proposal_sources_for_window
+from comic_agent.services.narrative_analysis_recovery_coordinator import (
+    NarrativeAnalysisRecoveryCoordinator,
+    default_recovery_policy,
+)
+from comic_agent.services.narrative_analysis_review_coordinator import (
+    NarrativeAnalysisReviewCoordinator,
+)
 from comic_agent.services.narrative_analyst_summary import (
     FAILURE_RECOMMENDED_ACTIONS,
     add_provider_diagnostics,
@@ -60,12 +62,14 @@ class NarrativeAnalysisWorker:
         source_repository: SourceRepository,
         agent_run_repository: AgentRunRepository | _AgentRunStore,
         analysis_repository: NarrativeAnalysisRepository,
+        recovery_repository: NarrativeAnalysisRecoveryRepository | None = None,
         provider: LLMProvider | None = None,
     ) -> None:
         self._settings = settings
         self._source_repository = source_repository
         self._agent_run_repository = agent_run_repository
         self._analysis_repository = analysis_repository
+        self._recovery_repository = recovery_repository
         self._provider = provider
 
     def run_pending(
@@ -101,7 +105,7 @@ class NarrativeAnalysisWorker:
         pending_windows.sort(key=lambda window: (run.modes.index(window.mode), window.window_index))
         for window in pending_windows:
             self._run_window(workflow, run, window, requested_real_llm)
-        return self._finalize_run(analysis_run_id)
+        return self._finalize_run(analysis_run_id, workflow, requested_real_llm)
 
     def _run_window(
         self,
@@ -333,7 +337,12 @@ class NarrativeAnalysisWorker:
             "provider_error_diagnostics": diagnostics,
         }
 
-    def _finalize_run(self, analysis_run_id: str) -> NarrativeAnalysisRunV1:
+    def _finalize_run(
+        self,
+        analysis_run_id: str,
+        workflow: NarrativeAnalystWorkflow,
+        real_llm_requested: bool,
+    ) -> NarrativeAnalysisRunV1:
         run = self._analysis_repository.get_run(analysis_run_id)
         if run is None:
             raise ValueError("NarrativeAnalysisRun not found")
@@ -354,6 +363,37 @@ class NarrativeAnalysisWorker:
         completed = run.model_copy(update={"status": status, "updated_at": datetime.now(UTC)})
         saved = self._analysis_repository.save_run(completed)
         self._save_aggregate_result(saved, windows)
+        if saved.status == NarrativeAnalysisRunStatus.SUCCEEDED:
+            reviewed = NarrativeAnalysisReviewCoordinator(
+                source_repository=self._source_repository,
+                analysis_repository=self._analysis_repository,
+            ).review_if_ready(saved.analysis_run_id)
+            if self._recovery_repository is not None:
+                def rerun(directive, attempt_id):  # type: ignore[no-untyped-def]
+                    result = workflow.run(
+                        project_id=directive.project_id,
+                        mode=directive.mode,
+                        chunk_ids=directive.ordered_source_chunk_ids,
+                        chunk_limit=len(directive.ordered_source_chunk_ids),
+                        max_chars_per_chunk=directive.max_chars_per_chunk,
+                        execution_nonce=attempt_id,
+                        real_llm_requested=real_llm_requested,
+                    )
+                    return result.agent_run
+
+                get_agent_run = getattr(self._agent_run_repository, "get_agent_run", None)
+                if callable(get_agent_run):
+                    NarrativeAnalysisRecoveryCoordinator(
+                        source_repository=self._source_repository,
+                        analysis_repository=self._analysis_repository,
+                        recovery_repository=self._recovery_repository,
+                        policy=default_recovery_policy(),
+                        rerun_window=rerun,
+                        get_agent_run=get_agent_run,
+                    ).recover_if_eligible(
+                        reviewed.analysis_run_id, real_llm_requested=real_llm_requested
+                    )
+            return reviewed
         return saved
 
     def _save_aggregate_result(
@@ -364,104 +404,15 @@ class NarrativeAnalysisWorker:
         get_agent_run = getattr(self._agent_run_repository, "get_agent_run", None)
         if not callable(get_agent_run):
             return
-        sources: list[dict[str, object]] = []
+        sources: list[NarrativeAnalysisProposalSourceV1] = []
         for window in windows:
             if window.status != NarrativeAnalysisWindowStatus.SUCCEEDED or not window.agent_run_id:
                 continue
             agent_run = get_agent_run(window.agent_run_id)
             if not hasattr(agent_run, "payload"):
                 continue
-            payload = agent_run.payload.get("proposal")
-            if not isinstance(payload, dict):
-                continue
-            if agent_run.output_schema == "EventProposalBatchV1":
-                sources.extend(
-                    {
-                        "mode": window.mode,
-                        "agent_run_id": agent_run.agent_run_id,
-                        "proposal": proposal.model_dump(mode="json"),
-                    }
-                    for proposal in EventProposalBatchV1.model_validate(payload).events
-                )
-            elif agent_run.output_schema == "EntityProposalBatchV1":
-                sources.extend(
-                    {
-                        "mode": window.mode,
-                        "agent_run_id": agent_run.agent_run_id,
-                        "proposal": proposal.model_dump(mode="json"),
-                    }
-                    for proposal in EntityProposalBatchV1.model_validate(payload).entities
-                )
-            elif agent_run.output_schema == "ClaimProposalBatchV1":
-                sources.extend(
-                    {
-                        "mode": window.mode,
-                        "agent_run_id": agent_run.agent_run_id,
-                        "proposal": proposal.model_dump(mode="json"),
-                    }
-                    for proposal in ClaimProposalBatchV1.model_validate(payload).claims
-                )
-            elif agent_run.output_schema == "KnowledgeStateProposalBatchV1":
-                sources.extend(
-                    {
-                        "mode": window.mode,
-                        "agent_run_id": agent_run.agent_run_id,
-                        "proposal": proposal.model_dump(mode="json"),
-                    }
-                    for proposal in KnowledgeStateProposalBatchV1.model_validate(payload).states
-                )
-            elif agent_run.output_schema == "StateChangeProposalBatchV1":
-                sources.extend(
-                    {
-                        "mode": window.mode,
-                        "agent_run_id": agent_run.agent_run_id,
-                        "proposal": proposal.model_dump(mode="json"),
-                    }
-                    for proposal in StateChangeProposalBatchV1.model_validate(payload).changes
-                    if self._state_change_proposal_is_owned(window, proposal)
-                )
-            elif agent_run.output_schema == "RelationshipSignalProposalBatchV1":
-                sources.extend(
-                    {
-                        "mode": window.mode,
-                        "agent_run_id": agent_run.agent_run_id,
-                        "proposal": proposal.model_dump(mode="json"),
-                    }
-                    for proposal in RelationshipSignalProposalBatchV1.model_validate(
-                        payload
-                    ).signals
-                    if self._relationship_signal_is_owned(window, proposal)
-                )
-        from comic_agent.schemas.workflow import NarrativeAnalysisProposalSourceV1
-
-        typed_sources = [
-            NarrativeAnalysisProposalSourceV1.model_validate(source) for source in sources
-        ]
+            sources.extend(proposal_sources_for_window(agent_run, window))
+        typed_sources = sources
         self._analysis_repository.save_result(
             aggregate_narrative_analysis(typed_sources, analysis_run_id=run.analysis_run_id)
-        )
-
-    @staticmethod
-    def _state_change_proposal_is_owned(
-        window: NarrativeAnalysisWindowV1,
-        proposal: StateChangeProposalV1,
-    ) -> bool:
-        """Use the first new-value EvidenceRef as the deterministic output owner."""
-
-        if not proposal.new_value_evidence_indexes:
-            return False
-        evidence_index = proposal.new_value_evidence_indexes[0]
-        if evidence_index >= len(proposal.evidence_refs):
-            return False
-        return proposal.evidence_refs[evidence_index].chunk_id in set(window.owned_chunk_ids)
-
-    @staticmethod
-    def _relationship_signal_is_owned(
-        window: NarrativeAnalysisWindowV1,
-        proposal: RelationshipSignalProposalV1,
-    ) -> bool:
-        """Use the first relationship EvidenceRef as its deterministic leaf owner."""
-
-        return bool(proposal.evidence_refs) and (
-            proposal.evidence_refs[0].chunk_id in set(window.owned_chunk_ids)
         )

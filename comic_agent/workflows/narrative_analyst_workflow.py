@@ -95,6 +95,7 @@ class NarrativeAnalystWorkflow:
         max_chars_per_chunk: int = DEFAULT_MAX_CHARS_PER_CHUNK,
         output_recovery: str | None = None,
         output_recovery_rule_codes: list[str] | None = None,
+        execution_nonce: str | None = None,
         real_llm_requested: bool = False,
     ) -> NarrativeAnalystWorkflowResult:
         """Run or dry-run a NarrativeAnalyst mode over selected chunks."""
@@ -192,6 +193,7 @@ class NarrativeAnalystWorkflow:
                 error_message=disabled_error_message,
                 provider_error_diagnostics=None,
                 max_chars_per_chunk=max_chars_per_chunk,
+                execution_nonce=execution_nonce,
             )
             saved = self._agent_run_repository.save_agent_run(agent_run)
             self._mark_saved_failure(
@@ -288,6 +290,7 @@ class NarrativeAnalystWorkflow:
             error_message=error_message,
             provider_error_diagnostics=provider_error_diagnostics,
             max_chars_per_chunk=max_chars_per_chunk,
+            execution_nonce=execution_nonce,
         )
         saved = self._agent_run_repository.save_agent_run(agent_run)
         self._mark_saved(summary, saved, provider_result, status)
@@ -403,6 +406,7 @@ class NarrativeAnalystWorkflow:
         error_message: str | None,
         provider_error_diagnostics: dict[str, object] | None,
         max_chars_per_chunk: int,
+        execution_nonce: str | None,
     ) -> AgentRunV1:
         output_proposal_ids = self._proposal_ids(proposal)
         payload = {
@@ -412,6 +416,7 @@ class NarrativeAnalystWorkflow:
                 "source_chunk_ids": chunk_ids,
                 "chunks_count": len(chunk_ids),
                 "max_chars_per_chunk": max_chars_per_chunk,
+                "execution_nonce": execution_nonce,
             },
             "provider": {
                 "provider_name": self._settings.llm_provider_name,

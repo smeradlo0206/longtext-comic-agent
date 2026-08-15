@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from comic_agent.database.models import NarrativeAnalysisRunModel, NarrativeAnalysisWindowModel
+from comic_agent.schemas.review import NarrativeAnalysisReviewRouteV1, ReviewGate2ResultV1
 from comic_agent.schemas.workflow import (
     NarrativeAnalysisResultV1,
     NarrativeAnalysisRunV1,
@@ -115,6 +116,30 @@ class NarrativeAnalysisRepository:
         if row is None or row.result_payload is None:
             return None
         return NarrativeAnalysisResultV1.model_validate(row.result_payload)
+
+    def save_review_gate2_artifacts(
+        self,
+        *,
+        analysis_run_id: str,
+        result: ReviewGate2ResultV1,
+        route: NarrativeAnalysisReviewRouteV1,
+    ) -> NarrativeAnalysisRunV1:
+        """Persist one typed Gate 2 result/route pair without replacing a prior audit."""
+
+        run = self.get_run(analysis_run_id)
+        if run is None:
+            raise ValueError(f"NarrativeAnalysisRun not found: {analysis_run_id}")
+        if run.review_gate2_result is not None and run.review_gate2_route is not None:
+            return run
+        saved = run.model_copy(
+            update={
+                "schema_version": "1.1",
+                "review_gate2_result": result,
+                "review_gate2_route": route,
+                "updated_at": datetime.now(UTC),
+            }
+        )
+        return self.save_run(saved)
 
     def _create_window(self, window: NarrativeAnalysisWindowV1) -> None:
         existing = self._session.get(NarrativeAnalysisWindowModel, window.analysis_window_id)

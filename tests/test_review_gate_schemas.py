@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from comic_agent.schemas import (
     ApprovedProposalBundleV1,
     EvidenceReviewItemV1,
+    NarrativeAnalysisReviewRouteV1,
     ProposalReviewDecisionV1,
     ReferenceResolutionDecisionV1,
     ReferenceTargetCandidateV1,
@@ -15,6 +16,7 @@ from comic_agent.schemas import (
     ReviewGate2InputV1,
     ReviewGate2PolicyV1,
     ReviewGate2ResultV1,
+    ReviewGate2RoutingDecision,
     ReviewIssueV1,
 )
 
@@ -525,3 +527,25 @@ def test_result_rejects_duplicate_decisions_and_count_mismatch() -> None:
     for invalid in (duplicate_decisions, count_mismatch):
         with pytest.raises(ValidationError):
             ReviewGate2ResultV1.model_validate(invalid)
+
+
+def test_review_route_requires_an_approved_bundle_for_an_approved_gate2_result() -> None:
+    route = NarrativeAnalysisReviewRouteV1.model_validate(
+        {
+            "analysis_run_id": "analysis-1",
+            "review_run_id": "review-1",
+            "decision": ReviewGate2RoutingDecision.APPROVED,
+            "review_status": "COMPLETED",
+            "total_count": 1,
+            "approved_count": 1,
+            "rejected_count": 0,
+            "held_count": 0,
+            "approved_proposal_bundle": _bundle(),
+        }
+    )
+
+    assert route.decision == ReviewGate2RoutingDecision.APPROVED
+    with pytest.raises(ValidationError, match="approved proposal bundle"):
+        NarrativeAnalysisReviewRouteV1.model_validate(
+            route.model_dump(mode="json") | {"approved_proposal_bundle": None}
+        )

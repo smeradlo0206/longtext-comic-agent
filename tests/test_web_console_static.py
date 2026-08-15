@@ -274,6 +274,28 @@ def test_web_console_exposes_whole_document_outputs_for_manual_review() -> None:
     assert '"type", "basis", "subject / subtype"' in html
 
 
+def test_web_console_exposes_readonly_automatic_gate2_route_summary() -> None:
+    html = Path("web_console/index.html").read_text(encoding="utf-8")
+
+    assert 'id="wholeDocumentGate2"' in html
+    assert "review_gate2_route_decision" in html
+    assert "review_gate2_approved_count" in html
+    assert "review_gate2_rejected_count" in html
+    assert "review_gate2_held_count" in html
+    assert "/review-gate2" in html
+    assert "runReviewGate2" not in html
+    assert "forceReviewGate2" not in html
+
+
+def test_web_console_exposes_readonly_recovery_summary_without_actions() -> None:
+    html = Path("web_console/index.html").read_text(encoding="utf-8")
+
+    assert 'id="wholeDocumentRecovery"' in html
+    assert "/recovery" in html
+    assert "runRecovery" not in html
+    assert "forceRecovery" not in html
+
+
 def test_web_console_exposes_a_separate_offline_knowledge_state_evaluation_area() -> None:
     html = Path("web_console/index.html").read_text(encoding="utf-8")
 

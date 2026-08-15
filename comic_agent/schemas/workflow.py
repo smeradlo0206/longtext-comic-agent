@@ -15,6 +15,8 @@ from comic_agent.schemas.narrative import (
     RelationshipSignalProposalV1,
     StateChangeProposalV1,
 )
+from comic_agent.schemas.recovery import RecoveryOutcomeV1
+from comic_agent.schemas.review import NarrativeAnalysisReviewRouteV1, ReviewGate2ResultV1
 
 
 class AgentRunStatus(StrEnum):
@@ -154,7 +156,13 @@ class NarrativeAnalysisWindowV1(NarrativeAnalysisWindowPlanV1):
 class NarrativeAnalysisRunV1(StrictBaseModel):
     """Persistent, resumable whole-document NarrativeAnalyst task."""
 
-    schema_version: Literal["1.0"] = Field(default="1.0", description="Schema version.")
+    schema_version: Literal["1.0", "1.1", "1.2"] = Field(
+        default="1.2",
+        description=(
+            "Schema version; v1.0/v1.1 records remain readable and v1.2 adds "
+            "source-free recovery outcomes."
+        ),
+    )
     analysis_run_id: str = Field(description="Persistent analysis task id.")
     project_id: str = Field(description="Owning project id.")
     document_id: str = Field(description="Selected source document id.")
@@ -173,6 +181,65 @@ class NarrativeAnalysisRunV1(StrictBaseModel):
     updated_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC), description="Last state update timestamp in UTC."
     )
+    review_gate2_result: ReviewGate2ResultV1 | None = Field(
+        default=None,
+        description="Completed deterministic Gate 2 audit; absent until automatic review is ready.",
+    )
+    review_gate2_route: NarrativeAnalysisReviewRouteV1 | None = Field(
+        default=None,
+        description="Safe downstream routing record derived from the Gate 2 result.",
+    )
+    recovery_outcomes: list[RecoveryOutcomeV1] = Field(
+        default_factory=list,
+        description="Append-only source-free summaries for Stage B recovery decisions.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_legacy_run_version(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        if "schema_version" in value:
+            if value.get("schema_version") in {"1.0", "1.1"} and "recovery_outcomes" not in value:
+                return {**value, "recovery_outcomes": []}
+            return value
+        return {
+            **value,
+            "schema_version": "1.0",
+            "review_gate2_result": None,
+            "review_gate2_route": None,
+            "recovery_outcomes": [],
+        }
+
+    @model_validator(mode="after")
+    def validate_review_artifacts(self) -> "NarrativeAnalysisRunV1":
+        if (self.review_gate2_result is None) != (self.review_gate2_route is None):
+            raise ValueError("review_gate2_result and review_gate2_route must be present together")
+        if self.schema_version == "1.0" and (
+            self.review_gate2_result is not None or self.review_gate2_route is not None
+        ):
+            raise ValueError("v1.0 NarrativeAnalysisRun cannot contain Gate 2 artifacts")
+        if self.schema_version in {"1.0", "1.1"} and self.recovery_outcomes:
+            raise ValueError("v1.0/v1.1 NarrativeAnalysisRun cannot contain recovery outcomes")
+        if self.review_gate2_result is not None and self.review_gate2_route is not None:
+            result = self.review_gate2_result
+            route = self.review_gate2_route
+            if (
+                result.analysis_run_id != self.analysis_run_id
+                or route.analysis_run_id != self.analysis_run_id
+            ):
+                raise ValueError("Gate 2 artifact analysis_run_id must match the analysis run")
+            if result.review_run_id != route.review_run_id or result.status != route.review_status:
+                raise ValueError("Gate 2 route must match the stored review result")
+        outcome_ids = [outcome.outcome_id for outcome in self.recovery_outcomes]
+        if len(outcome_ids) != len(set(outcome_ids)):
+            raise ValueError("recovery_outcomes must have unique outcome ids")
+        if any(
+            outcome.root_analysis_run_id != self.analysis_run_id
+            for outcome in self.recovery_outcomes
+        ):
+            raise ValueError("recovery outcome root_analysis_run_id must match the analysis run")
+        return self
 
 
 class NarrativeAnalysisCreateRequestV1(StrictBaseModel):

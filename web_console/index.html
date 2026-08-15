@@ -771,6 +771,14 @@
                 <h3>Whole-document summary</h3>
                 <pre id="wholeDocumentSummary">{}</pre>
               </div>
+              <div>
+                <h3>Automatic Review Gate 2</h3>
+                <pre id="wholeDocumentGate2">{"state":"NOT_READY"}</pre>
+              </div>
+              <div>
+                <h3>Automatic Recovery (read-only)</h3>
+                <pre id="wholeDocumentRecovery">{"state":"NOT_STARTED"}</pre>
+              </div>
               <details>
                 <summary>Whole-document Full Proposal JSON</summary>
                 <pre id="wholeDocumentFullProposal">{}</pre>
@@ -972,6 +980,7 @@
       wholeDocumentAnalysisRunId: null,
       wholeDocumentProgress: null,
       wholeDocumentResult: null,
+      wholeDocumentGate2: null,
       wholeDocumentWindows: [],
       wholeDocumentPollTimer: null,
       selectedAnalysisChapters: [],
@@ -1230,6 +1239,38 @@
         statusPill("windows failed", data.windows_failed),
         statusPill("windows pending", data.windows_pending)
       ].join("");
+      renderWholeDocumentGate2(data);
+    }
+
+    function renderWholeDocumentGate2(progress, audit = null) {
+      state.wholeDocumentGate2 = audit;
+      const route = audit?.route || {};
+      $("wholeDocumentGate2").textContent = pretty({
+        ready: progress.review_gate2_ready === true,
+        route_decision: progress.review_gate2_route_decision ?? route.decision ?? "NOT_READY",
+        review_run_id: progress.review_gate2_run_id ?? route.review_run_id ?? null,
+        approved_count: progress.review_gate2_approved_count ?? route.approved_count ?? 0,
+        rejected_count: progress.review_gate2_rejected_count ?? route.rejected_count ?? 0,
+        held_count: progress.review_gate2_held_count ?? route.held_count ?? 0,
+        safe_issue_codes: progress.review_gate2_issue_codes ?? []
+      });
+    }
+
+    async function loadWholeDocumentGate2(progress) {
+      const runId = state.wholeDocumentAnalysisRunId;
+      if (!runId || progress.review_gate2_ready !== true) return;
+      try {
+        const audit = await request(`/narrative-analysis-runs/${encodeURIComponent(runId)}/review-gate2`);
+        renderWholeDocumentGate2(progress, audit);
+      } catch (error) {
+        renderWholeDocumentGate2(progress);
+      }
+      try {
+        const recovery = await request(`/narrative-analysis-runs/${encodeURIComponent(runId)}/recovery`);
+        $("wholeDocumentRecovery").textContent = pretty(recovery);
+      } catch (error) {
+        $("wholeDocumentRecovery").textContent = pretty({ state: "NOT_STARTED" });
+      }
     }
 
     function renderWholeDocumentWindows(items) {
@@ -1275,8 +1316,10 @@
 
     function clearWholeDocumentResult() {
       state.wholeDocumentResult = null;
+      state.wholeDocumentGate2 = null;
       state.wholeDocumentWindows = [];
       $("wholeDocumentSummary").textContent = "{}";
+      $("wholeDocumentGate2").textContent = '{"state":"NOT_READY"}';
       $("wholeDocumentFullProposal").textContent = "{}";
       $("wholeDocumentProposalList").innerHTML = `<span class="muted">暂无数据。</span>`;
       $("wholeDocumentProposalDetail").textContent = "Select a proposal detail button from the list.";
@@ -1429,6 +1472,7 @@
       stopWholeDocumentProgressPoll();
       const result = await request(`/narrative-analysis-runs/${encodeURIComponent(runId)}/result`);
       renderWholeDocumentResult(result);
+      await loadWholeDocumentGate2(progress);
     }
 
     async function startWholeDocumentAnalysis() {

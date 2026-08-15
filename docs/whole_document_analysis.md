@@ -285,25 +285,31 @@ analysis is unaffected: the evaluation Console records a sanitized run failure,
 keeps its `case_id`, and includes it in the report. It does not fabricate an empty
 Batch, write a canonical fact, or silently remove the case from totals.
 
-## Future Review Gate 2 adapter boundary
+## Automatic Review Gate 2 routing boundary
 
-Review Gate 2 is not wired into the whole-document worker in this phase. A future adapter must
-construct `ReviewGate2InputV1` from the existing six Proposal sources only: Event, Entity,
-Claim, Knowledge State, State Change, and Relationship Signal. For every item it must preserve
-the original Proposal, mode/schema, AgentRun ids, aggregated EvidenceRef values, project/document/
-analysis-run identity, and the explicitly permitted SourceChunk ids. It must not use a whole
-database scan, raw provider response, text similarity, embedding, or automatic canonical link.
+After a whole-document Narrative Analyst run is `SUCCEEDED`, all leaf windows are successful,
+and its aggregate result is persisted, `NarrativeAnalysisReviewCoordinator` builds one
+`ReviewGate2InputV1` from the six aggregate lists: Event, Entity, Claim, Knowledge State, State
+Change, and Relationship Signal. It preserves original Proposal values, mode/schema, AgentRun
+ids, aggregated EvidenceRef values, project/document/analysis-run identity, and only the
+Gate 1-approved SourceChunks actually used by the run. It does not scan a database for context,
+use raw provider responses, text similarity, embedding, or automatic canonical links.
 
-A future completed review can expose only the `ApprovedProposalBundleV1` from
-`ReviewGate2ResultV1` to downstream continuity/timeline and StoryBible-curation stages. Empty
-input and a completed empty approved bundle are valid. Partially reviewed or failed results have
-no approved bundle; unresolved references are not silently upgraded. This repository currently
-implements the pure deterministic `ReviewGate2Service` and the Schema/JSON contract. It is not
-wired into the worker, total-control state machine, API, or Console. There is still no Review
-Agent, semantic LLM reviewer, automatic linker, Timeline, StoryBible Curator, CommitService,
-database persistence, or migration.
+The typed `ReviewGate2ResultV1` and `NarrativeAnalysisReviewRouteV1` are persisted inside the
+existing analysis-run JSON payload. Empty input produces a valid empty APPROVED bundle. An
+APPROVED route alone exposes the readonly `ApprovedProposalBundleV1` endpoint; rejected routes
+keep only safe diagnostics, human-review routes keep held Proposal ids, and failed reviews expose
+no bundle. Gate 2 failures do not change the completed Narrative Analyst status. Resume/re-entry
+does not rerun a persisted valid Gate 2 audit. There is no Review Agent, semantic LLM reviewer,
+automatic remediation, total-control state machine, Timeline, StoryBible Curator, or CommitService.
+Stage B recovery is separate and bounded: it may rerun only the original
+mode and leaf window with the same ordered Gate 1-approved SourceChunk scope, policy budget, and
+AgentRun provenance. Each rerun is reviewed by fresh Gate 2; it never overwrites old Proposal,
+AgentRun, or Gate 2 artifacts, writes canonical StoryBible data, or calls CommitService. Recovery
+attempts are non-canonical audits in `narrative_analysis_recovery_attempts`, created by Alembic
+migration `0005_narrative_analysis_recovery_attempts`.
 
-When a future adapter invokes Gate 2, its SourceChunk and AgentRun context must be bounded and
+The automatic coordinator invokes Gate 2 with a SourceChunk and AgentRun context bounded and
 complete for that review only. Duplicate context chunk ids, context chunks outside the declared
 allowed scope, and AgentRun-analysis mappings outside the known AgentRun set fail the entire
 review with a sanitized execution issue and no bundle. Missing context for Evidence that is still

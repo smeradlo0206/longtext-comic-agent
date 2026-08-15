@@ -5,8 +5,10 @@ from comic_agent.schemas import (
     ApprovedProposalItemV1,
     ApprovedSourceChunkBundleV1,
     EvidenceReviewItemV1,
+    NarrativeAnalysisReviewRouteV1,
     NarrativeAnalysisWindowPlanV1,
     NarrativeAnalysisWindowV1,
+    ProposalRecoveryDiagnosticV1,
     ProposalReviewDecision,
     ProposalReviewDecisionV1,
     ReferenceResolutionBasis,
@@ -47,6 +49,7 @@ from comic_agent.schemas import (
     ReviewGate2InputV1,
     ReviewGate2PolicyV1,
     ReviewGate2ResultV1,
+    ReviewGate2RoutingDecision,
     ReviewGate2RunStatus,
     ReviewIssueCategory,
     ReviewIssueCode,
@@ -101,6 +104,8 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     assert (output_dir / "ReviewGate2InputV1.json").exists()
     assert (output_dir / "ReviewGate2PolicyV1.json").exists()
     assert (output_dir / "ReviewGate2ResultV1.json").exists()
+    assert (output_dir / "NarrativeAnalysisReviewRouteV1.json").exists()
+    assert (output_dir / "ProposalRecoveryDiagnosticV1.json").exists()
     assert (output_dir / "ReviewIssueV1.json").exists()
     assert (output_dir / "ReferenceResolutionDecisionV1.json").exists()
     assert (output_dir / "ReviewableProposalEnvelopeV1.json").exists()
@@ -302,6 +307,9 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     assert ReviewGate2PolicyV1.__name__ == "ReviewGate2PolicyV1"
     assert ReviewGate2ResultV1.__name__ == "ReviewGate2ResultV1"
     assert ReviewGate2RunStatus.COMPLETED == "COMPLETED"
+    assert ReviewGate2RoutingDecision.APPROVED == "APPROVED"
+    assert NarrativeAnalysisReviewRouteV1.__name__ == "NarrativeAnalysisReviewRouteV1"
+    assert ProposalRecoveryDiagnosticV1.__name__ == "ProposalRecoveryDiagnosticV1"
     assert ReviewIssueCategory.PROVENANCE == "PROVENANCE"
     assert ReviewIssueCode.EVIDENCE_QUOTE_NOT_FOUND == "EVIDENCE_QUOTE_NOT_FOUND"
     assert ReviewIssueSeverity.BLOCKING == "BLOCKING"

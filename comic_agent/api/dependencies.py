@@ -7,6 +7,9 @@ from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 
 from comic_agent.repositories.agent_run_repository import AgentRunRepository
+from comic_agent.repositories.narrative_analysis_recovery_repository import (
+    NarrativeAnalysisRecoveryRepository,
+)
 from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
 from comic_agent.repositories.source_repository import SourceRepository
 
@@ -41,3 +44,11 @@ def get_narrative_analysis_repository(session: SessionDep) -> NarrativeAnalysisR
     """Return whole-document analysis persistence bound to the request session."""
 
     return NarrativeAnalysisRepository(session)
+
+
+def get_narrative_analysis_recovery_repository(
+    session: SessionDep,
+) -> NarrativeAnalysisRecoveryRepository:
+    """Return append-only Stage B recovery persistence bound to the request session."""
+
+    return NarrativeAnalysisRecoveryRepository(session)
