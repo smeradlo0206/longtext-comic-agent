@@ -10,6 +10,7 @@ from typing import Any, Protocol, TypeVar
 import httpx
 from pydantic import BaseModel, SecretStr, ValidationError
 
+from comic_agent.config import Settings
 from comic_agent.providers.llm import OutputModelT as ProviderOutputModelT
 
 
@@ -67,8 +68,6 @@ class OpenAICompatibleProvider:
         if not isinstance(content, str):
             raise ValueError("provider message content must be a JSON string")
         return content
-
-from comic_agent.config import Settings
 
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
 ProviderDiagnostics = dict[str, object]

@@ -41,7 +41,11 @@ class AgentContext:
 class ContextBuilder:
     """Build bounded agent context from repository queries."""
 
-    def __init__(self, source_repository: SourceChunkLookup, max_chunks: int = 8) -> None:
+    def __init__(
+        self,
+        source_repository: SourceChunkLookup | None = None,
+        max_chunks: int = 8,
+    ) -> None:
         self._source_repository = source_repository
         self._max_chunks = max_chunks
 
@@ -50,6 +54,8 @@ class ContextBuilder:
 
         if len(chunk_ids) > self._max_chunks:
             raise ValueError(f"ContextBuilder accepts at most {self._max_chunks} chunks")
+        if self._source_repository is None:
+            raise ValueError("ContextBuilder requires a source repository for chunk lookup")
 
         chunks: list[SourceChunkV1] = []
         for chunk_id in chunk_ids:

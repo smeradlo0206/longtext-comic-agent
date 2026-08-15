@@ -2,14 +2,31 @@ import json
 import os
 import socket
 import ssl
-from typing import Literal
+from typing import Any, Literal
 
 import httpx
 import pytest
 from pydantic import BaseModel, SecretStr, ValidationError
 
 from comic_agent.config import Settings
-from comic_agent.providers.openai_compatible import OpenAICompatibleProvider
+from comic_agent.providers.openai_compatible import (
+    OpenAICompatibleLLMProvider,
+    OpenAICompatibleProvider,
+    ProviderHttpError,
+    ProviderNetworkError,
+    ProviderResponseError,
+    ProviderTimeoutError,
+)
+from comic_agent.schemas.base import EvidenceRefV1, RealityLayer
+from comic_agent.schemas.narrative import (
+    ClaimProposalBatchV1,
+    EntityProposalBatchV1,
+    EventProposalBatchV1,
+    EventProposalV1,
+    KnowledgeStateProposalBatchV1,
+    RelationshipSignalProposalBatchV1,
+    StateChangeProposalBatchV1,
+)
 
 
 class OutputModel(BaseModel):
@@ -191,28 +208,6 @@ def test_live_openai_compatible_connectivity_when_explicitly_enabled() -> None:
     )
 
     assert result.status == "ok"
-from typing import Any
-
-import httpx
-import pytest
-
-from comic_agent.providers.openai_compatible import (
-    OpenAICompatibleLLMProvider,
-    ProviderHttpError,
-    ProviderNetworkError,
-    ProviderResponseError,
-    ProviderTimeoutError,
-)
-from comic_agent.schemas.base import EvidenceRefV1, RealityLayer
-from comic_agent.schemas.narrative import (
-    ClaimProposalBatchV1,
-    EntityProposalBatchV1,
-    EventProposalBatchV1,
-    EventProposalV1,
-    KnowledgeStateProposalBatchV1,
-    RelationshipSignalProposalBatchV1,
-    StateChangeProposalBatchV1,
-)
 
 
 class FakeResponse:

@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from pydantic import Field, SecretStr
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,18 +21,18 @@ class Settings(BaseSettings):
     minio_access_key: str = Field(default="minioadmin", validation_alias="MINIO_ACCESS_KEY")
     minio_secret_key: str = Field(default="minioadmin", validation_alias="MINIO_SECRET_KEY")
     llm_base_url: str = Field(
-        default="https://api.deepseek.com/v1",
+        default="https://api.llm.ustc.edu.cn/v1",
         validation_alias="LLM_BASE_URL",
     )
-    llm_api_key: SecretStr = Field(
-        default=SecretStr(""),
-        validation_alias="LLM_API_KEY",
+    llm_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("LLM_API_KEY", "OPENAI_API_KEY"),
     )
     storybible_model: str = Field(
         default="deepseek-v4-pro",
         validation_alias="STORYBIBLE_MODEL",
     )
-    llm_timeout_seconds: float = Field(
+    llm_timeout_seconds: int = Field(
         default=60,
         gt=0,
         validation_alias="LLM_TIMEOUT_SECONDS",

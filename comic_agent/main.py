@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pydantic import SecretStr
 
 from comic_agent.agents.storybible_curator import StoryBibleCurator
 from comic_agent.api.agent_runs import router as agent_runs_router
@@ -39,16 +40,16 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.state.storybible_curator = StoryBibleCurator(
         OpenAICompatibleProvider(
             base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key,
+            api_key=settings.llm_api_key or SecretStr(""),
             model=settings.storybible_model,
             timeout_seconds=settings.llm_timeout_seconds,
         )
     )
     app.include_router(health_router)
     app.include_router(projects_router)
+    app.include_router(agent_runs_router)
     app.include_router(documents_router)
     app.include_router(storybible_router)
-    app.include_router(agent_runs_router)
     app.include_router(settings_router)
     app.include_router(demo_router)
     app.include_router(knowledge_state_evaluation_router)

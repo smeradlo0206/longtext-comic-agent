@@ -146,8 +146,12 @@ def extract_mock_event(
             project_id=chunk.project_id,
             source_chunk_id=chunk.chunk_id,
             agent_id=MockEventAgent.spec.agent_id,
+            agent_name=MockEventAgent.spec.agent_id,
+            input_chunk_ids=[chunk.chunk_id],
             status=AgentRunStatus.SUCCEEDED,
             output_proposal_id=stored_proposal.proposal_id,
+            output_proposal_ids=[stored_proposal.proposal_id],
+            output_schema="EventProposalV1",
         )
     )
     return stored_proposal

@@ -781,6 +781,8 @@ def _agent_run_summary(run: AgentRunV1) -> dict[str, Any]:
 
 
 def _agent_run_detail(run: AgentRunV1) -> dict[str, Any]:
+    if run.source_chunk_id is not None and not run.payload and run.provider_result is None:
+        return run.model_dump(mode="json")
     return {
         "agent_run_id": run.agent_run_id,
         "project_id": run.project_id,

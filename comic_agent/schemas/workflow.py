@@ -463,6 +463,13 @@ class AgentRunV1(StrictBaseModel):
     agent_run_id: str = Field(description="Agent run id.")
     project_id: str = Field(description="Project id.")
     agent_name: str = Field(description="Agent implementation name.")
+    source_chunk_id: str | None = Field(default=None, description="Legacy single input chunk id.")
+    agent_id: str | None = Field(default=None, description="Legacy agent implementation id.")
+    output_proposal_id: str | None = Field(
+        default=None,
+        description="Legacy single output proposal id.",
+    )
+    workflow_run_id: str | None = Field(default=None, description="Legacy parent workflow id.")
     input_chunk_ids: list[str] = Field(
         default_factory=list,
         description="SourceChunk ids included in the agent context.",
@@ -493,6 +500,31 @@ class AgentRunV1(StrictBaseModel):
     completed_at: datetime | None = Field(default=None, description="Completion timestamp.")
     error_message: str | None = Field(default=None, description="Failure message if any.")
     payload: dict[str, Any] = Field(default_factory=dict, description="Additional audit payload.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_agent_run(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        source_chunk_id = value.get("source_chunk_id")
+        agent_id = value.get("agent_id")
+        output_proposal_id = value.get("output_proposal_id")
+        return {
+            **value,
+            "agent_name": value.get("agent_name") or agent_id,
+            "agent_id": agent_id or value.get("agent_name"),
+            "input_chunk_ids": value.get("input_chunk_ids")
+            or ([source_chunk_id] if source_chunk_id else []),
+            "output_proposal_ids": value.get("output_proposal_ids")
+            or ([output_proposal_id] if output_proposal_id else []),
+            "output_schema": value.get("output_schema") or "EventProposalV1",
+        }
+
+    @property
+    def created_at(self) -> datetime:
+        """Expose the pre-v1 workflow timestamp used by the source repository."""
+
+        return self.started_at
 
     @model_validator(mode="after")
     def validate_status_consistency(self) -> "AgentRunV1":
