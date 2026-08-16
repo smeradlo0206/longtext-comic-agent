@@ -12,6 +12,7 @@ from comic_agent.repositories.storybible_repository import StoryBibleRepository
 from comic_agent.schemas.base import EvidenceRefV1
 from comic_agent.schemas.narrative import EntityProposalV1
 from comic_agent.schemas.source import SourceChunkV1
+from comic_agent.schemas.storybible import EventOrderAnchorV1
 from comic_agent.services.context_builder import ContextBuilder
 
 
@@ -91,3 +92,42 @@ def test_context_rejects_foreign_project_source_chunks(
             source_chunks=[chunk("chunk-other", project_id="project-b")],
             repository=storybible_repository,
         )
+
+
+def test_event_orders_are_passed_through_the_context(
+    storybible_repository: StoryBibleRepository,
+) -> None:
+    context = ContextBuilder().storybible_context(
+        project_id="project-a",
+        profile_ids=[],
+        source_chunks=[chunk("chunk-1")],
+        repository=storybible_repository,
+        event_orders=[
+            EventOrderAnchorV1(event_id="event-1", order=0),
+            EventOrderAnchorV1(event_id="event-2", order=1),
+        ],
+    )
+
+    assert context.event_orders == [
+        EventOrderAnchorV1(event_id="event-1", order=0),
+        EventOrderAnchorV1(event_id="event-2", order=1),
+    ]
+
+
+def test_event_orders_are_bounded_to_sixty_four(
+    storybible_repository: StoryBibleRepository,
+) -> None:
+    context = ContextBuilder().storybible_context(
+        project_id="project-a",
+        profile_ids=[],
+        source_chunks=[chunk("chunk-1")],
+        repository=storybible_repository,
+        event_orders=[
+            EventOrderAnchorV1(event_id=f"event-{index}", order=index)
+            for index in range(80)
+        ],
+    )
+
+    assert len(context.event_orders) == 64
+    assert context.event_orders[0].event_id == "event-0"
+    assert context.event_orders[-1].event_id == "event-63"

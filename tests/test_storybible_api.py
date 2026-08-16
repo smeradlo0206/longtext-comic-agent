@@ -476,3 +476,48 @@ def test_profile_states_are_project_scoped_and_filter_by_event_id(
     assert [state["state_id"] for state in at_event.json()] == ["state-a"]
     assert at_other_event.json() == []
     assert other_project.status_code == 404
+
+
+def test_state_at_returns_inherited_world_state_across_chapters(
+    storybible_client: TestClient,
+) -> None:
+    """A state established at order 0 must still apply at much later moments."""
+
+    response = storybible_client.post(
+        "/projects/project-a/storybible/curate",
+        json={
+            "project_id": "project-a",
+            "source_chunk_ids": ["chunk-a"],
+            "event_orders": [{"event_id": "event-a", "order": 0}],
+        },
+    )
+    assert response.status_code == 200
+    approve(storybible_client)
+
+    at_order_zero = storybible_client.get(
+        "/projects/project-a/storybible/state-at", params={"event_order": 0}
+    )
+    much_later = storybible_client.get(
+        "/projects/project-a/storybible/state-at", params={"event_order": 40}
+    )
+
+    assert at_order_zero.status_code == 200
+    snapshot = at_order_zero.json()
+    assert [character["profile_id"] for character in snapshot["characters"]] == ["profile-a"]
+    assert snapshot["characters"][0]["state"]["location"] == "market"
+    assert much_later.json()["characters"] == snapshot["characters"]
+
+
+def test_state_at_is_project_scoped(storybible_client: TestClient) -> None:
+    curate(storybible_client)
+    approve(storybible_client)
+
+    response = storybible_client.get(
+        "/projects/project-b/storybible/state-at", params={"event_order": 0}
+    )
+
+    assert response.status_code == 200
+    snapshot = response.json()
+    assert snapshot["characters"] == []
+    assert snapshot["locations"] == []
+    assert snapshot["relationships"] == []

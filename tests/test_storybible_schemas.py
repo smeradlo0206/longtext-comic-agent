@@ -10,7 +10,10 @@ from comic_agent.schemas import EvidenceRefV1
 from comic_agent.schemas.storybible import (
     CommitPlanV1,
     ConflictV1,
+    EventOrderAnchorV1,
     ProfileUpdateProposalV1,
+    StoryBibleContextV1,
+    StoryBibleSnapshotV1,
     StoryEntityProfileV1,
     StoryEntityStateV1,
     StoryRelationshipV1,
@@ -239,3 +242,40 @@ def test_json_schema_export_includes_storybible_update_union(
     schema_path = tmp_path / "schema_exports" / "StoryBibleUpdateV1.json"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     assert len(schema["anyOf"]) == 4
+
+
+def test_event_order_anchor_rejects_blank_or_negative_values() -> None:
+    with pytest.raises(ValidationError, match="blank"):
+        EventOrderAnchorV1(event_id="   ", order=0)
+    with pytest.raises(ValidationError, match="greater than or equal to 0"):
+        EventOrderAnchorV1(event_id="event-1", order=-1)
+
+
+def test_context_rejects_duplicate_event_order_anchors() -> None:
+    with pytest.raises(ValidationError, match="at most once"):
+        StoryBibleContextV1(
+            project_id="project-1",
+            event_orders=[
+                EventOrderAnchorV1(event_id="event-1", order=0),
+                EventOrderAnchorV1(event_id="event-1", order=5),
+            ],
+        )
+
+
+def test_snapshot_model_carries_resolved_profiles_by_kind() -> None:
+    snapshot = StoryBibleSnapshotV1(
+        project_id="project-1",
+        event_order=3,
+        characters=[
+            {
+                "profile_id": "p-1",
+                "project_id": "project-1",
+                "canonical_name": "Lin Xia",
+                "entity_kind": "PERSON",
+                "state": {"appearance.clothing": "黑金外套"},
+            }
+        ],
+    )
+    assert snapshot.characters[0].state["appearance.clothing"] == "黑金外套"
+    assert snapshot.locations == []
+    assert snapshot.organizations == []

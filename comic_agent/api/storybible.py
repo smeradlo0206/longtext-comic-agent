@@ -17,12 +17,14 @@ from comic_agent.schemas.storybible import (
     CommitPlanV1,
     StoryBibleContextV1,
     StoryBibleCuratorProposalV1,
+    StoryBibleSnapshotV1,
     StoryEntityProfileV1,
     StoryEntityStateV1,
 )
 from comic_agent.services.commit_service import CommitService
 from comic_agent.services.context_builder import ContextBuilder
 from comic_agent.services.storybible_content_hash import with_computed_content_hash
+from comic_agent.services.storybible_snapshot import build_state_snapshot
 from comic_agent.services.storybible_validator import StoryBibleValidator
 
 router = APIRouter()
@@ -52,6 +54,7 @@ SourceRepositoryDep = Annotated[SourceRepository, Depends(get_repository)]
 StoryBibleCuratorDep = Annotated[StoryBibleCurator, Depends(get_storybible_curator)]
 ApprovalStatusBody = Annotated[RecordStatus, Body(embed=True, alias="status")]
 EventIdQuery = Annotated[str | None, Query(min_length=1)]
+EventOrderQuery = Annotated[int, Query(ge=0)]
 
 
 def _require_project_context(
@@ -126,6 +129,7 @@ def _build_project_context(
                 event_proposals=requested_context.event_proposals,
                 state_change_proposals=requested_context.state_change_proposals,
                 temporal_relation_proposals=requested_context.temporal_relation_proposals,
+                event_orders=requested_context.event_orders,
                 world_rules=repository.list_world_rules(project_id),
             ),
             chunk_texts,
@@ -272,3 +276,23 @@ def list_profile_states(
             state.valid_until_event_id,
         }
     ]
+
+
+@router.get(
+    "/projects/{project_id}/storybible/state-at",
+    response_model=StoryBibleSnapshotV1,
+)
+def get_state_snapshot(
+    project_id: str,
+    event_order: EventOrderQuery,
+    repository: StoryBibleRepositoryDep,
+) -> StoryBibleSnapshotV1:
+    """Return the resolved world state at one timeline event order.
+
+    States established in earlier chapters remain in effect here even when the
+    current chapter never mentions them, so a downstream storyboard agent always
+    receives the full inherited state of characters, locations, organizations,
+    active relationships, and world rules for the requested story moment.
+    """
+
+    return build_state_snapshot(repository, project_id, event_order)

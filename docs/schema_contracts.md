@@ -89,10 +89,9 @@ is required.
 - The curator maintains the state library only: profile, state, relationship, and
   world-rule updates consolidated from the reviewed upstream narrative-analysis
   proposals. States and relationships are anchored to events by id
-  (`triggering_event_id`, `valid_from_event_id`, `valid_until_event_id`); the curator
-  leaves `valid_from_order` / `valid_until_order` unset. Story-time ordering is owned
-  by the parallel timeline agent, which keeps the two responsibilities from
-  conflicting over event order.
+  (`triggering_event_id`, `valid_from_event_id`, `valid_until_event_id`). Story-time
+  ordering is owned by the parallel timeline agent, which keeps the two
+  responsibilities from conflicting over event order.
 - Drafts whose `confidence` is below the curator's `confidence_threshold` (0.7) are
   returned with an added blocking `LOW_CONFIDENCE` conflict; they remain CANDIDATE and
   still require explicit approval before any canonical write.
@@ -104,3 +103,22 @@ is required.
   upstream proposal lists (entity, event, state-change, temporal-relation) may carry
   up to 20 records each so the curator sees a whole analysis batch instead of three
   arbitrarily truncated proposals.
+
+### Effective-from states and world-state snapshots (pre-release V1)
+
+The StoryBible is now an effective-from state library joined with the timeline agent:
+
+- `StoryBibleContextV1` gained `event_orders: list[EventOrderAnchorV1]` — the timeline
+  agent's story order per event id. The curator CONSUMES these anchors to stamp
+  `valid_from_order` / `valid_until_order` on state and relationship updates
+  (`valid_until_order` = until event order minus one, guarded against inversion). It
+  never derives ordering from temporal relations.
+- Every state is effective from its from-event onward and persists across chapter
+  imports: a chapter that never mentions an established fact does not erase it.
+- `StoryBibleSnapshotV1` / `ResolvedProfileStateV1` are derived read models (never
+  canonical). `GET /projects/{project_id}/storybible/state-at?event_order=N` folds all
+  in-effect state intervals into one merged attribute map per profile, grouped by
+  entity kind, plus active relationships and world rules. States whose story order is
+  unknown are treated as timeless and flagged in `unresolved_state_ids`.
+- No new Alembic revision: the new models are read projections and the event-order
+  anchors exist only inside the versioned context payload.

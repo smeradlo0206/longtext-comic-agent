@@ -4,8 +4,7 @@ from typing import Any, TypeVar
 from pydantic import BaseModel
 
 from comic_agent.agents.storybible_curator import StoryBibleCurator
-from comic_agent.schemas.base import EvidenceRefV1, RecordStatus
-from comic_agent.schemas.narrative import TemporalRelation, TemporalRelationProposalV1
+from comic_agent.schemas.base import RecordStatus
 from comic_agent.schemas.storybible import (
     StateUpdateProposalV1,
     StoryBibleContextV1,
@@ -138,8 +137,8 @@ def test_identical_drafts_receive_identical_hashes() -> None:
     assert first.commit_plan.content_hash == second.commit_plan.content_hash
 
 
-def test_curator_preserves_event_anchors_and_leaves_orders_to_the_timeline_agent() -> None:
-    """The state library anchors states to events but never derives event order."""
+def test_curator_stamps_state_orders_from_timeline_provided_event_orders() -> None:
+    """The curator consumes timeline ordering; it never derives it itself."""
 
     evidence = {"chunk_id": "chunk-1"}
     payload = _candidate_payload()
@@ -164,15 +163,9 @@ def test_curator_preserves_event_anchors_and_leaves_orders_to_the_timeline_agent
     curator = StoryBibleCurator(provider)
     context = StoryBibleContextV1(
         project_id="project-1",
-        temporal_relation_proposals=[
-            TemporalRelationProposalV1(
-                proposal_id="rel-1",
-                source_event_id="project-1:event-1",
-                target_event_id="project-1:event-2",
-                relation=TemporalRelation.BEFORE,
-                evidence_refs=[EvidenceRefV1(chunk_id="chunk-1")],
-                confidence=0.9,
-            ),
+        event_orders=[
+            {"event_id": "project-1:event-2", "order": 1},
+            {"event_id": "project-1:event-4", "order": 3},
         ],
     )
 
@@ -185,9 +178,41 @@ def test_curator_preserves_event_anchors_and_leaves_orders_to_the_timeline_agent
     ]
     assert len(state_updates) == 1
     assert state_updates[0].state.valid_from_event_id == "project-1:event-2"
-    assert state_updates[0].state.valid_until_event_id == "project-1:event-4"
+    assert state_updates[0].state.valid_from_order == 1
+    assert state_updates[0].state.valid_until_order == 2
+
+
+def test_curator_keeps_order_fields_null_without_timeline_input() -> None:
+    evidence = {"chunk_id": "chunk-1"}
+    payload = _candidate_payload()
+    state = {
+        "state_id": "project-1:state-a",
+        "project_id": "project-1",
+        "profile_id": "project-1:profile-a",
+        "state": {"location": "market"},
+        "valid_from_event_id": "project-1:event-2",
+        "evidence_refs": [evidence],
+    }
+    payload["commit_plan"]["updates"].append(
+        {
+            "update_id": "project-1:update-state",
+            "project_id": "project-1",
+            "state": state,
+            "evidence_refs": [evidence],
+        }
+    )
+    provider = RecordingProvider(payload)
+    curator = StoryBibleCurator(provider)
+
+    proposal = curator.run(StoryBibleContextV1(project_id="project-1"))
+
+    state_updates = [
+        update
+        for update in proposal.commit_plan.updates
+        if isinstance(update, StateUpdateProposalV1)
+    ]
+    assert len(state_updates) == 1
     assert state_updates[0].state.valid_from_order is None
-    assert state_updates[0].state.valid_until_order is None
 
 
 def test_low_confidence_draft_gains_a_blocking_review_conflict() -> None:
@@ -225,7 +250,7 @@ def test_output_schema_supports_all_update_kinds_and_conflicts() -> None:
     assert "conflict" in schema["definitions"]
 
 
-def test_system_prompt_consolidates_reviewed_proposals_and_anchors_states() -> None:
+def test_system_prompt_consolidates_reviewed_proposals_and_effective_from_states() -> None:
     provider = RecordingProvider(_candidate_payload())
     curator = StoryBibleCurator(provider)
     curator.run(StoryBibleContextV1(project_id="project-1"))
@@ -233,8 +258,7 @@ def test_system_prompt_consolidates_reviewed_proposals_and_anchors_states() -> N
     system_content = str(provider.request["messages"][0]["content"])
     assert "CONSOLIDATE" in system_content
     assert "state_change_proposals" in system_content
-    assert "temporal_relation_proposals" in system_content
+    assert "event_orders" in system_content
     assert "CHARACTER -> PERSON" in system_content
-    assert "EVENT ANCHORING, NOT ORDERING" in system_content
-    assert "timeline agent" in system_content
+    assert "EFFECTIVE-FROM STATES" in system_content
 

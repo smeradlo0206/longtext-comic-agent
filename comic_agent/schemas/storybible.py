@@ -248,6 +248,23 @@ class CommitPlanV1(StrictBaseModel):
         return value
 
 
+class EventOrderAnchorV1(StrictBaseModel):
+    """Timeline-provided story order for one event id.
+
+    The parallel timeline agent owns event ordering. The StoryBible pipeline consumes
+    these anchors (it never derives them) to stamp state intervals with
+    ``valid_from_order`` / ``valid_until_order`` and to resolve world-state snapshots.
+    """
+
+    event_id: StoryBibleId
+    order: int = Field(ge=0, description="Timeline sequence number for the event.")
+
+    @field_validator("event_id")
+    @classmethod
+    def event_id_is_not_blank(cls, value: str) -> str:
+        return _reject_blank(value)
+
+
 class StoryBibleContextV1(StrictBaseModel):
     """Bounded context supplied to the proposal-only StoryBible curator."""
 
@@ -257,11 +274,68 @@ class StoryBibleContextV1(StrictBaseModel):
     event_proposals: list[EventProposalV1] = Field(default_factory=list)
     state_change_proposals: list[StateChangeProposalV1] = Field(default_factory=list)
     temporal_relation_proposals: list[TemporalRelationProposalV1] = Field(default_factory=list)
+    event_orders: list[EventOrderAnchorV1] = Field(default_factory=list)
     profiles: list[StoryEntityProfileV1] = Field(default_factory=list)
     states: list[StoryEntityStateV1] = Field(default_factory=list)
     relationships: list[StoryRelationshipV1] = Field(default_factory=list)
     world_rules: list[WorldRuleV1] = Field(default_factory=list)
     source_chunk_ids: list[StoryBibleId] = Field(default_factory=list, max_length=3)
+
+    @field_validator("project_id")
+    @classmethod
+    def project_id_is_not_blank(cls, value: str) -> str:
+        return _reject_blank(value)
+
+    @model_validator(mode="after")
+    def event_orders_reference_each_event_at_most_once(self) -> "StoryBibleContextV1":
+        event_ids = [anchor.event_id for anchor in self.event_orders]
+        if len(set(event_ids)) != len(event_ids):
+            raise ValueError("event_orders must reference each event id at most once")
+        return self
+
+
+class ResolvedProfileStateV1(StrictBaseModel):
+    """Merged state of one profile at a specific story moment.
+
+    This is a derived read model, never canonical data. It folds every state interval
+    that is in effect at the requested moment into one attribute map, so facts
+    established in earlier chapters remain visible even when the current chapter never
+    mentions them.
+    """
+
+    profile_id: StoryBibleId
+    project_id: StoryBibleId
+    canonical_name: StoryBibleName
+    entity_kind: StoryEntityKind
+    state: dict[str, Any] = Field(default_factory=dict)
+    state_ids: list[StoryBibleId] = Field(default_factory=list)
+    unresolved_state_ids: list[StoryBibleId] = Field(
+        default_factory=list,
+        description="Contributing states whose story order is unknown to the timeline.",
+    )
+
+
+class StoryBibleSnapshotV1(StrictBaseModel):
+    """Deterministic snapshot of the world state at one story moment.
+
+    Addressed by the timeline's event order; the same moment always yields the same
+    snapshot. It carries resolved profiles grouped by kind, active relationships,
+    and world rules so a downstream storyboard agent can render the scene without
+    re-reading the state library.
+    """
+
+    schema_version: Literal["1.0"] = "1.0"
+    project_id: StoryBibleId
+    event_order: int = Field(ge=0, description="Timeline sequence number of the moment.")
+    characters: list[ResolvedProfileStateV1] = Field(default_factory=list)
+    locations: list[ResolvedProfileStateV1] = Field(default_factory=list)
+    organizations: list[ResolvedProfileStateV1] = Field(default_factory=list)
+    relationships: list[StoryRelationshipV1] = Field(default_factory=list)
+    world_rules: list[WorldRuleV1] = Field(default_factory=list)
+    unresolved_state_ids: list[StoryBibleId] = Field(
+        default_factory=list,
+        description="State ids whose story order is unknown and are treated as timeless.",
+    )
 
     @field_validator("project_id")
     @classmethod

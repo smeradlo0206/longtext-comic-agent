@@ -367,6 +367,16 @@ class StoryBibleRepository:
         ]
         return [*states, *relationships]
 
+    def list_relationships(self, project_id: str) -> list[StoryRelationshipV1]:
+        """Return all canonical relationships owned by one project in stable id order."""
+
+        rows = self._session.scalars(
+            select(StoryRelationshipModel)
+            .where(StoryRelationshipModel.project_id == project_id)
+            .order_by(StoryRelationshipModel.relationship_id)
+        ).all()
+        return [StoryRelationshipV1.model_validate(row.payload) for row in rows]
+
     def list_world_rules(self, project_id: str) -> list[WorldRuleV1]:
         """Return canonical world rules owned by one project."""
 

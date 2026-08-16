@@ -12,6 +12,7 @@ from comic_agent.schemas.narrative import (
 )
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.storybible import (
+    EventOrderAnchorV1,
     StoryBibleContextV1,
     StoryEntityStateV1,
     StoryRelationshipV1,
@@ -20,6 +21,7 @@ from comic_agent.schemas.storybible import (
 
 MAX_STORYBIBLE_CONTEXT_ITEMS = 3
 MAX_STORYBIBLE_CONTEXT_PROPOSALS = 20
+MAX_STORYBIBLE_CONTEXT_EVENT_ORDERS = 64
 MAX_STORYBIBLE_SOURCE_CHUNKS = 3
 
 
@@ -50,6 +52,7 @@ class ContextBuilder:
         event_proposals: Iterable[EventProposalV1] = (),
         state_change_proposals: Iterable[StateChangeProposalV1] = (),
         temporal_relation_proposals: Iterable[TemporalRelationProposalV1] = (),
+        event_orders: Iterable[EventOrderAnchorV1] = (),
         world_rules: Iterable[WorldRuleV1] = (),
     ) -> StoryBibleContextV1:
         """Build project-scoped context around caller-selected profiles and chunks."""
@@ -113,6 +116,7 @@ class ContextBuilder:
             temporal_relation_proposals=list(temporal_relation_proposals)[
                 :MAX_STORYBIBLE_CONTEXT_PROPOSALS
             ],
+            event_orders=list(event_orders)[:MAX_STORYBIBLE_CONTEXT_EVENT_ORDERS],
             profiles=profiles,
             states=states,
             relationships=relationships,

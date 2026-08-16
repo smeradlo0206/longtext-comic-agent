@@ -94,6 +94,32 @@ Closed the remaining gaps between the curator implementation and the design cont
 - No new Alembic revision: stored resource shapes are unchanged and the candidate-plan
   column already stores the computed hash.
 
+### Effective-from states and world-state snapshots
+
+Turned the StoryBible into an effective-from state library joined with the timeline
+agent, per the revised pipeline split (narrative-analysis records what happened,
+timeline records event order, StoryBible records what the world is like at each
+moment).
+
+- `StoryBibleContextV1.event_orders` carries the timeline agent's event order as
+  `EventOrderAnchorV1` entries. The curator consumes them to stamp
+  `valid_from_order` / `valid_until_order` on state and relationship updates; it never
+  derives ordering itself. `valid_until_order` uses the until event's order minus one
+  so consecutive states share no boundary moment.
+- States are effective from their from-event onward and persist across chapter
+  imports; the curator prompt now forbids re-asserting inherited canonical states
+  unless the batch changes them.
+- Added `StoryBibleSnapshotV1` / `ResolvedProfileStateV1` read models and the
+  deterministic `GET /projects/{project_id}/storybible/state-at?event_order=N`
+  endpoint: it merges every in-effect state interval into one attribute map per
+  profile (characters, locations, organizations), plus active relationships and world
+  rules. States with unknown story order are treated as timeless and flagged in
+  `unresolved_state_ids`. This is the join point for the downstream storyboard agent.
+- Added `StoryBibleRepository.list_relationships(project_id)` for project-scoped
+  relationship snapshots.
+- No new Alembic revision: all additions are read projections or context-payload
+  fields.
+
 ### Test Policy
 
 Normal unit and regression tests use deterministic fakes or `httpx.MockTransport`; they
