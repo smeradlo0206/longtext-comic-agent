@@ -138,7 +138,9 @@ def test_identical_drafts_receive_identical_hashes() -> None:
     assert first.commit_plan.content_hash == second.commit_plan.content_hash
 
 
-def _state_change_draft() -> dict[str, Any]:
+def test_curator_preserves_event_anchors_and_leaves_orders_to_the_timeline_agent() -> None:
+    """The state library anchors states to events but never derives event order."""
+
     evidence = {"chunk_id": "chunk-1"}
     payload = _candidate_payload()
     state = {
@@ -158,29 +160,19 @@ def _state_change_draft() -> dict[str, Any]:
             "evidence_refs": [evidence],
         }
     )
-    return payload
-
-
-def _relation(source: str, target: str) -> TemporalRelationProposalV1:
-    return TemporalRelationProposalV1(
-        proposal_id=f"rel-{source}-{target}",
-        source_event_id=source,
-        target_event_id=target,
-        relation=TemporalRelation.BEFORE,
-        evidence_refs=[EvidenceRefV1(chunk_id="chunk-1")],
-        confidence=0.9,
-    )
-
-
-def test_curator_enriches_state_orders_from_temporal_relations() -> None:
-    provider = RecordingProvider(_state_change_draft())
+    provider = RecordingProvider(payload)
     curator = StoryBibleCurator(provider)
     context = StoryBibleContextV1(
         project_id="project-1",
         temporal_relation_proposals=[
-            _relation("project-1:event-1", "project-1:event-2"),
-            _relation("project-1:event-2", "project-1:event-3"),
-            _relation("project-1:event-3", "project-1:event-4"),
+            TemporalRelationProposalV1(
+                proposal_id="rel-1",
+                source_event_id="project-1:event-1",
+                target_event_id="project-1:event-2",
+                relation=TemporalRelation.BEFORE,
+                evidence_refs=[EvidenceRefV1(chunk_id="chunk-1")],
+                confidence=0.9,
+            ),
         ],
     )
 
@@ -192,8 +184,10 @@ def test_curator_enriches_state_orders_from_temporal_relations() -> None:
         if isinstance(update, StateUpdateProposalV1)
     ]
     assert len(state_updates) == 1
-    assert state_updates[0].state.valid_from_order == 1
-    assert state_updates[0].state.valid_until_order == 2
+    assert state_updates[0].state.valid_from_event_id == "project-1:event-2"
+    assert state_updates[0].state.valid_until_event_id == "project-1:event-4"
+    assert state_updates[0].state.valid_from_order is None
+    assert state_updates[0].state.valid_until_order is None
 
 
 def test_low_confidence_draft_gains_a_blocking_review_conflict() -> None:
@@ -231,7 +225,7 @@ def test_output_schema_supports_all_update_kinds_and_conflicts() -> None:
     assert "conflict" in schema["definitions"]
 
 
-def test_system_prompt_consolidates_reviewed_proposals_and_orders_states() -> None:
+def test_system_prompt_consolidates_reviewed_proposals_and_anchors_states() -> None:
     provider = RecordingProvider(_candidate_payload())
     curator = StoryBibleCurator(provider)
     curator.run(StoryBibleContextV1(project_id="project-1"))
@@ -241,4 +235,6 @@ def test_system_prompt_consolidates_reviewed_proposals_and_orders_states() -> No
     assert "state_change_proposals" in system_content
     assert "temporal_relation_proposals" in system_content
     assert "CHARACTER -> PERSON" in system_content
+    assert "EVENT ANCHORING, NOT ORDERING" in system_content
+    assert "timeline agent" in system_content
 

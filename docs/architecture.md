@@ -26,13 +26,18 @@ story data. Its default configured model is `deepseek-v4-pro`, accessed only thr
 provider interface.
 
 Provider output is only a draft. The curator then applies deterministic post-processing
-before returning the candidate: it derives story orders for state and relationship
-intervals from the confirmed temporal relations in the context, replaces any
-provider-chosen commit-plan content hash with a deterministic SHA-256 content hash, and
-adds a blocking `LOW_CONFIDENCE` conflict when the draft confidence is below the
-curator's threshold. The plan-identity fields (`commit_plan_id`,
-`source_proposal_id`) are excluded from the content hash, so an identical-content replay
-reuses the stored candidate plan instead of duplicating it.
+before returning the candidate: it replaces any provider-chosen commit-plan content
+hash with a deterministic SHA-256 content hash and adds a blocking `LOW_CONFIDENCE`
+conflict when the draft confidence is below the curator's threshold. The plan-identity
+fields (`commit_plan_id`, `source_proposal_id`) are excluded from the content hash, so
+an identical-content replay reuses the stored candidate plan instead of duplicating it.
+
+StoryBible curation is scoped to the state library: the curator consolidates the
+reviewed upstream narrative-analysis proposals (entity, event, state-change) into
+profile, state, relationship, and world-rule updates and anchors states to events by
+event id. It deliberately does not derive story-time ordering from temporal relations;
+a parallel timeline agent owns event ordering, and downstream consumers join the two
+by event id.
 
 `ContextBuilder` is the agent read boundary. It creates bounded, project-scoped context
 from selected source proposals and existing StoryBible resources; it does not expose a

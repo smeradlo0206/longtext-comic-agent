@@ -12,20 +12,18 @@ from comic_agent.schemas.storybible import (
     StoryBibleCuratorProposalV1,
 )
 from comic_agent.services.storybible_content_hash import with_computed_content_hash
-from comic_agent.services.storybible_event_order import (
-    apply_event_orders_to_plan,
-    assign_event_orders,
-)
 
 
 class StoryBibleCurator:
     """Turn bounded StoryBible context into a schema-validated candidate proposal.
 
-    The provider output is only a draft: this class then deterministically fills
-    state/relationship story orders from the confirmed temporal relations in the
-    context, replaces any provider-chosen commit-plan content hash with a
-    deterministic SHA-256 content hash, and downgrades low-confidence drafts into
-    blocking review conflicts. The result is still a CANDIDATE proposal only; the
+    The curator maintains the story state library (profiles, states, relationships,
+    world rules) from the reviewed upstream narrative-analysis proposals. Provider
+    output is only a draft: this class then replaces any provider-chosen commit-plan
+    content hash with a deterministic SHA-256 content hash and downgrades
+    low-confidence drafts into blocking review conflicts. Event ordering is NOT
+    curated here: a parallel timeline agent owns story-time ordering, and states are
+    anchored to events by id only. The result is still a CANDIDATE proposal; the
     curator never writes canonical data.
     """
 
@@ -55,27 +53,18 @@ class StoryBibleCurator:
             self._request(context, chunk_texts or {}),
             StoryBibleCuratorProposalV1,
         )
-        proposal = self._finalize(response, context)
+        proposal = self._finalize(response)
         return proposal.model_copy(update={"status": RecordStatus.CANDIDATE})
 
-    def _finalize(
-        self,
-        draft: StoryBibleCuratorProposalV1,
-        context: StoryBibleContextV1,
-    ) -> StoryBibleCuratorProposalV1:
+    def _finalize(self, draft: StoryBibleCuratorProposalV1) -> StoryBibleCuratorProposalV1:
         """Apply deterministic post-processing before the candidate is returned."""
 
-        event_ids = [event.proposal_id for event in context.event_proposals]
-        event_orders = assign_event_orders(context.temporal_relation_proposals, event_ids)
-        ordered_plan = apply_event_orders_to_plan(draft.commit_plan, event_orders)
-        hashed_plan = with_computed_content_hash(ordered_plan)
+        hashed_plan = with_computed_content_hash(draft.commit_plan)
 
         conflicts = list(draft.conflicts)
         if draft.confidence < self.spec.confidence_threshold:
             conflicts.append(self._low_confidence_conflict(draft, hashed_plan))
-        return draft.model_copy(
-            update={"commit_plan": hashed_plan, "conflicts": conflicts}
-        )
+        return draft.model_copy(update={"commit_plan": hashed_plan, "conflicts": conflicts})
 
     def _low_confidence_conflict(
         self,
@@ -344,14 +333,15 @@ class StoryBibleCurator:
         "2. STATES FROM STATE CHANGES. For each state_change_proposal emit a "
         "StateUpdateProposalV1: profile_id resolves the change target; state.state "
         "is {\"<attribute_path>\": <new_value>}; triggering_event_id and "
-        "valid_from_event_id take the change's event id. Leave valid_from_order and "
-        "valid_until_order null; the system assigns them from temporal relations. "
-        "For non-persistent changes also set valid_until_event_id when the "
-        "follow-up event is known. Never create two states for the same "
-        "profile+attribute with overlapping intervals.\n"
-        "3. TEMPORAL ORDERING. Read temporal_relation_proposals BEFORE/AFTER chains "
-        "to decide which event precedes which; never invent an order the relations "
-        "do not support.\n"
+        "valid_from_event_id take the change's event id. For non-persistent changes "
+        "also set valid_until_event_id when the follow-up event is known. Never "
+        "create two states for the same profile+attribute anchored to the same "
+        "event interval.\n"
+        "3. EVENT ANCHORING, NOT ORDERING. Anchor states and relationships to events "
+        "by event id only. Leave valid_from_order and valid_until_order null: "
+        "story-time ordering is owned by a parallel timeline agent, not this "
+        "curator. temporal_relation_proposals are provided for reference only; do "
+        "not derive event order from them.\n"
         "4. RELATIONSHIPS. For durable, chunk-supported connections between people "
         "and organizations (family, alliance, enmity, membership, location-of) emit "
         "a RelationshipUpdateProposalV1 whose source/target profile ids exist in the "

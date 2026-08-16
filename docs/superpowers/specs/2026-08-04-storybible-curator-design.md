@@ -115,3 +115,14 @@ pass Ruff, mypy, and pytest.
 
 The change adds new V1 schemas and tables; existing source-import and mock-event APIs stay
 compatible. Schema version and migration notes must accompany the implementation.
+
+## Boundary Revision: Story-Time Ordering Owned by the Timeline Agent
+
+Original scope listed "use confirmed temporal relations to order state changes" as a
+curator responsibility. That responsibility was later moved to a parallel timeline
+agent: the StoryBible Curator now anchors states and relationships to events by event
+id (`triggering_event_id` / `valid_from_event_id` / `valid_until_event_id`) and leaves
+`valid_from_order` / `valid_until_order` unset. The curator neither derives event order
+from temporal relations nor validates event ordering; it maintains the state library
+only. Downstream consumers join StoryBible state entries with the timeline agent's
+event ordering by event id.

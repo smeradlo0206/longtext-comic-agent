@@ -83,10 +83,10 @@ Closed the remaining gaps between the curator implementation and the design cont
   now covers all four update kinds (profile, state, relationship, world rule) plus
   structured `ConflictV1` entries; previously only profile and state updates could be
   emitted.
-- State and relationship story orders are derived deterministically from confirmed
-  BEFORE/AFTER temporal relations and applied to missing `valid_from_order` /
-  `valid_until_order` fields before the candidate plan is returned, satisfying the
-  "use confirmed temporal relations to order state changes" design requirement.
+- StoryBible curation is scoped to the state library. States and relationships are
+  anchored to events by event id (`triggering_event_id` / `valid_from_event_id` /
+  `valid_until_event_id`); `valid_from_order` / `valid_until_order` stay unset because
+  story-time ordering is owned by the parallel timeline agent, not by this curator.
 - Drafts below the 0.7 confidence threshold are returned with a blocking
   `LOW_CONFIDENCE` conflict instead of passing silently.
 - Bounded context caps were separated: up to 20 reviewed proposals per kind while

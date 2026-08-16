@@ -86,12 +86,13 @@ is required.
   duplicate, and a provider-chosen key can no longer collide or be forged. The
   `(project_id, content_hash)` unique constraint from `0004_storybible_resources` is
   unchanged.
-- The curator deterministically derives story orders from the confirmed
-  `TemporalRelationProposalV1` BEFORE/AFTER chains in `StoryBibleContextV1` and fills
-  missing `valid_from_order` / `valid_until_order` on state and relationship updates
-  before the candidate plan is returned. `valid_until_order` uses the until event's
-  order minus one so consecutively anchored states do not overlap on the shared
-  boundary. Cyclic or unordered events keep their order fields unset.
+- The curator maintains the state library only: profile, state, relationship, and
+  world-rule updates consolidated from the reviewed upstream narrative-analysis
+  proposals. States and relationships are anchored to events by id
+  (`triggering_event_id`, `valid_from_event_id`, `valid_until_event_id`); the curator
+  leaves `valid_from_order` / `valid_until_order` unset. Story-time ordering is owned
+  by the parallel timeline agent, which keeps the two responsibilities from
+  conflicting over event order.
 - Drafts whose `confidence` is below the curator's `confidence_threshold` (0.7) are
   returned with an added blocking `LOW_CONFIDENCE` conflict; they remain CANDIDATE and
   still require explicit approval before any canonical write.
