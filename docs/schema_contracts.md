@@ -108,6 +108,13 @@ is required.
 
 The StoryBible is now an effective-from state library joined with the timeline agent:
 
+- The upstream narrative-analysis proposals are first-class curator inputs through
+  `StoryBibleContextV1`: `entity_proposals`, `event_proposals`, `claim_proposals`, and
+  `state_change_proposals`. Claims may become world rules only when they are
+  narrator-level factual assertions about the setting; character beliefs and
+  predictions never become canonical rules. Relationship-signal and knowledge-state
+  proposals will join the context once the narrative-analysis branch merges those
+  contracts.
 - The timeline agent's actual output — pairwise `TemporalRelationProposalV1` records —
   is consumed through the existing `StoryBibleContextV1.temporal_relation_proposals`
   field. The curator derives deterministic sequence stamps only from real

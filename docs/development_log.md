@@ -119,6 +119,13 @@ moment).
   `unresolved_state_ids`. This is the join point for the downstream storyboard agent.
 - Added `StoryBibleRepository.list_relationships(project_id)` for project-scoped
   relationship snapshots.
+- `comic_agent/schemas/narrative.py` was synced to the shared `origin/main` baseline
+  (`ClaimProposalV1`, `TemporalRelationProposalV1` v1.1), and `claim_proposals`
+  joined `StoryBibleContextV1` as a first-class narrative-analysis input. The curator
+  promotes a claim into a world rule only for narrator-level factual assertions about
+  the setting; character beliefs, predictions, and opinions never become canonical
+  rules. Relationship-signal and knowledge-state proposals join the context once the
+  narrative-analysis branch merges those contracts.
 - No new Alembic revision: all additions are read projections or context-payload
   fields.
 

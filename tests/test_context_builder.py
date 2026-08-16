@@ -11,6 +11,7 @@ from comic_agent.database.base import Base
 from comic_agent.repositories.storybible_repository import StoryBibleRepository
 from comic_agent.schemas.base import EvidenceRefV1
 from comic_agent.schemas.narrative import (
+    ClaimProposalV1,
     EntityProposalV1,
     TemporalRelation,
     TemporalRelationProposalV1,
@@ -122,3 +123,32 @@ def test_temporal_relations_are_bounded_to_sixty_four(
     assert len(context.temporal_relation_proposals) == 64
     assert context.temporal_relation_proposals[0].source_event_id == "event-0"
     assert context.temporal_relation_proposals[-1].source_event_id == "event-63"
+
+
+def test_claim_proposals_are_passed_through_and_capped(
+    storybible_repository: StoryBibleRepository,
+) -> None:
+    claims = [
+        ClaimProposalV1(
+            claim_id=f"claim-{index}",
+            subject_id="location-1",
+            predicate="setting",
+            object_value=f"value-{index}",
+            evidence_refs=[EvidenceRefV1(chunk_id="chunk-1")],
+            confidence=0.9,
+            reality_layer="PRIMARY",
+        )
+        for index in range(25)
+    ]
+    context = ContextBuilder().storybible_context(
+        project_id="project-a",
+        profile_ids=[],
+        source_chunks=[chunk("chunk-1")],
+        repository=storybible_repository,
+        claim_proposals=claims,
+    )
+
+    assert len(context.claim_proposals) == 20
+    assert [claim.claim_id for claim in context.claim_proposals] == [
+        f"claim-{index}" for index in range(20)
+    ]

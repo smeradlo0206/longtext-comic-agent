@@ -7,6 +7,7 @@ from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from comic_agent.schemas.base import EvidenceRefV1, RecordStatus, StrictBaseModel
 from comic_agent.schemas.narrative import (
+    ClaimProposalV1,
     EntityProposalV1,
     EventProposalV1,
     StateChangeProposalV1,
@@ -251,15 +252,17 @@ class CommitPlanV1(StrictBaseModel):
 class StoryBibleContextV1(StrictBaseModel):
     """Bounded context supplied to the proposal-only StoryBible curator.
 
-    ``temporal_relation_proposals`` carries the parallel timeline agent's output
-    (pairwise BEFORE/AFTER/… event relations). The curator consumes them only to
-    stamp state intervals; it never derives story order from raw text.
+    The upstream narrative-analysis proposals (entity, event, claim, state-change) and
+    the parallel timeline agent's pairwise ``temporal_relation_proposals`` are the
+    curator's inputs. The curator consumes the timeline relations only to stamp state
+    intervals; it never derives story order from raw text.
     """
 
     schema_version: Literal["1.0"] = "1.0"
     project_id: StoryBibleId
     entity_proposals: list[EntityProposalV1] = Field(default_factory=list)
     event_proposals: list[EventProposalV1] = Field(default_factory=list)
+    claim_proposals: list[ClaimProposalV1] = Field(default_factory=list)
     state_change_proposals: list[StateChangeProposalV1] = Field(default_factory=list)
     temporal_relation_proposals: list[TemporalRelationProposalV1] = Field(default_factory=list)
     profiles: list[StoryEntityProfileV1] = Field(default_factory=list)

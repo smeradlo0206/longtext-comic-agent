@@ -11,6 +11,7 @@ from pydantic import BaseModel, TypeAdapter
 from comic_agent.schemas import (
     AgentRunV1,
     CharacterStateV1,
+    ClaimProposalV1,
     CommitPlanV1,
     ConflictV1,
     EntityProposalV1,
@@ -51,6 +52,7 @@ SCHEMAS: list[type[BaseModel]] = [
     SourceChunkV1,
     EntityProposalV1,
     EventProposalV1,
+    ClaimProposalV1,
     TemporalRelationProposalV1,
     StateChangeProposalV1,
     CharacterStateV1,

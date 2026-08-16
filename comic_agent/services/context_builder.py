@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from comic_agent.repositories.storybible_repository import StoryBibleRepository
 from comic_agent.schemas.narrative import (
+    ClaimProposalV1,
     EntityProposalV1,
     EventProposalV1,
     StateChangeProposalV1,
@@ -49,6 +50,7 @@ class ContextBuilder:
         repository: StoryBibleRepository,
         entity_proposals: Iterable[EntityProposalV1] = (),
         event_proposals: Iterable[EventProposalV1] = (),
+        claim_proposals: Iterable[ClaimProposalV1] = (),
         state_change_proposals: Iterable[StateChangeProposalV1] = (),
         temporal_relation_proposals: Iterable[TemporalRelationProposalV1] = (),
         world_rules: Iterable[WorldRuleV1] = (),
@@ -108,6 +110,7 @@ class ContextBuilder:
             project_id=project_id,
             entity_proposals=list(entity_proposals)[:MAX_STORYBIBLE_CONTEXT_PROPOSALS],
             event_proposals=list(event_proposals)[:MAX_STORYBIBLE_CONTEXT_PROPOSALS],
+            claim_proposals=list(claim_proposals)[:MAX_STORYBIBLE_CONTEXT_PROPOSALS],
             state_change_proposals=list(state_change_proposals)[
                 :MAX_STORYBIBLE_CONTEXT_PROPOSALS
             ],

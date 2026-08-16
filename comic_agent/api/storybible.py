@@ -87,6 +87,7 @@ def _require_project_context(
     evidence_groups = [
         *(proposal.evidence_refs for proposal in context.entity_proposals),
         *(proposal.evidence_refs for proposal in context.event_proposals),
+        *(proposal.evidence_refs for proposal in context.claim_proposals),
         *(proposal.evidence_refs for proposal in context.state_change_proposals),
         *(proposal.evidence_refs for proposal in context.temporal_relation_proposals),
         *(profile.evidence_refs for profile in context.profiles),
@@ -127,6 +128,7 @@ def _build_project_context(
                 repository=repository,
                 entity_proposals=requested_context.entity_proposals,
                 event_proposals=requested_context.event_proposals,
+                claim_proposals=requested_context.claim_proposals,
                 state_change_proposals=requested_context.state_change_proposals,
                 temporal_relation_proposals=requested_context.temporal_relation_proposals,
                 world_rules=repository.list_world_rules(project_id),

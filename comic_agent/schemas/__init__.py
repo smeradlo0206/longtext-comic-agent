@@ -3,6 +3,7 @@
 from comic_agent.schemas.base import EvidenceRefV1, RealityLayer, RecordStatus
 from comic_agent.schemas.continuity import CharacterStateV1
 from comic_agent.schemas.narrative import (
+    ClaimProposalV1,
     EntityProposalV1,
     EventProposalV1,
     StateChangeProposalV1,
@@ -41,6 +42,7 @@ __all__ = [
     "AgentRunStatus",
     "AgentRunV1",
     "CharacterStateV1",
+    "ClaimProposalV1",
     "CommitPlanV1",
     "ConflictV1",
     "EntityProposalV1",

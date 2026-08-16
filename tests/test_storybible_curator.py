@@ -320,6 +320,7 @@ def test_system_prompt_consolidates_reviewed_proposals_and_effective_from_states
     system_content = str(provider.request["messages"][0]["content"])
     assert "CONSOLIDATE" in system_content
     assert "state_change_proposals" in system_content
+    assert "claim_proposals" in system_content
     assert "temporal_relation_proposals" in system_content
     assert "CHARACTER -> PERSON" in system_content
     assert "EFFECTIVE-FROM STATES" in system_content

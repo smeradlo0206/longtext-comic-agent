@@ -185,6 +185,34 @@ def test_curation_persists_only_a_candidate_plan(storybible_client: TestClient) 
     )
 
 
+def test_curation_accepts_claim_proposals_from_narrative_analysis(
+    storybible_client: TestClient,
+) -> None:
+    """Claim proposals are first-class narrative-analysis inputs to curation."""
+
+    response = storybible_client.post(
+        "/projects/project-a/storybible/curate",
+        json={
+            "project_id": "project-a",
+            "source_chunk_ids": ["chunk-a"],
+            "claim_proposals": [
+                {
+                    "claim_id": "claim-a",
+                    "subject_id": "location-a",
+                    "predicate": "setting",
+                    "object_value": "灵气充盈",
+                    "evidence_refs": [{"chunk_id": "chunk-a"}],
+                    "confidence": 0.9,
+                    "reality_layer": "PRIMARY",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "CANDIDATE"
+
+
 def test_curation_rebuilds_canonical_context_from_project_scoped_storage(
     storybible_client: TestClient,
 ) -> None:
@@ -362,6 +390,19 @@ def test_curation_rejects_context_for_another_project(
                     "canonical_name": "Outsider",
                     "evidence_refs": [{"chunk_id": "chunk-b"}],
                     "confidence": 0.8,
+                }
+            ]
+        },
+        {
+            "claim_proposals": [
+                {
+                    "claim_id": "claim-b",
+                    "subject_id": "world",
+                    "predicate": "setting",
+                    "object_value": "outsider fact",
+                    "evidence_refs": [{"chunk_id": "chunk-b"}],
+                    "confidence": 0.8,
+                    "reality_layer": "PRIMARY",
                 }
             ]
         },
