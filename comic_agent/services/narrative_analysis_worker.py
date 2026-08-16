@@ -6,6 +6,9 @@ from typing import Any, Protocol
 from comic_agent.config import Settings
 from comic_agent.providers.llm import LLMProvider
 from comic_agent.repositories.agent_run_repository import AgentRunRepository
+from comic_agent.repositories.narrative_analysis_recovery_repository import (
+    NarrativeAnalysisRecoveryRepository,
+)
 from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
 from comic_agent.repositories.source_repository import SourceRepository
 from comic_agent.schemas.workflow import (
@@ -18,6 +21,10 @@ from comic_agent.schemas.workflow import (
 )
 from comic_agent.services.narrative_analysis_aggregation import aggregate_narrative_analysis
 from comic_agent.services.narrative_analysis_proposal_sources import proposal_sources_for_window
+from comic_agent.services.narrative_analysis_recovery_coordinator import (
+    NarrativeAnalysisRecoveryCoordinator,
+    default_recovery_policy,
+)
 from comic_agent.services.narrative_analysis_review_coordinator import (
     NarrativeAnalysisReviewCoordinator,
 )
@@ -55,12 +62,14 @@ class NarrativeAnalysisWorker:
         source_repository: SourceRepository,
         agent_run_repository: AgentRunRepository | _AgentRunStore,
         analysis_repository: NarrativeAnalysisRepository,
+        recovery_repository: NarrativeAnalysisRecoveryRepository | None = None,
         provider: LLMProvider | None = None,
     ) -> None:
         self._settings = settings
         self._source_repository = source_repository
         self._agent_run_repository = agent_run_repository
         self._analysis_repository = analysis_repository
+        self._recovery_repository = recovery_repository
         self._provider = provider
 
     def run_pending(
@@ -359,6 +368,31 @@ class NarrativeAnalysisWorker:
                 source_repository=self._source_repository,
                 analysis_repository=self._analysis_repository,
             ).review_if_ready(saved.analysis_run_id)
+            if self._recovery_repository is not None:
+                def rerun(directive, attempt_id):  # type: ignore[no-untyped-def]
+                    result = workflow.run(
+                        project_id=directive.project_id,
+                        mode=directive.mode,
+                        chunk_ids=directive.ordered_source_chunk_ids,
+                        chunk_limit=len(directive.ordered_source_chunk_ids),
+                        max_chars_per_chunk=directive.max_chars_per_chunk,
+                        execution_nonce=attempt_id,
+                        real_llm_requested=real_llm_requested,
+                    )
+                    return result.agent_run
+
+                get_agent_run = getattr(self._agent_run_repository, "get_agent_run", None)
+                if callable(get_agent_run):
+                    NarrativeAnalysisRecoveryCoordinator(
+                        source_repository=self._source_repository,
+                        analysis_repository=self._analysis_repository,
+                        recovery_repository=self._recovery_repository,
+                        policy=default_recovery_policy(),
+                        rerun_window=rerun,
+                        get_agent_run=get_agent_run,
+                    ).recover_if_eligible(
+                        reviewed.analysis_run_id, real_llm_requested=real_llm_requested
+                    )
             return reviewed
         return saved
 

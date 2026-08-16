@@ -302,6 +302,12 @@ keep only safe diagnostics, human-review routes keep held Proposal ids, and fail
 no bundle. Gate 2 failures do not change the completed Narrative Analyst status. Resume/re-entry
 does not rerun a persisted valid Gate 2 audit. There is no Review Agent, semantic LLM reviewer,
 automatic remediation, total-control state machine, Timeline, StoryBible Curator, or CommitService.
+Stage B recovery is separate and bounded: it may rerun only the original
+mode and leaf window with the same ordered Gate 1-approved SourceChunk scope, policy budget, and
+AgentRun provenance. Each rerun is reviewed by fresh Gate 2; it never overwrites old Proposal,
+AgentRun, or Gate 2 artifacts, writes canonical StoryBible data, or calls CommitService. Recovery
+attempts are non-canonical audits in `narrative_analysis_recovery_attempts`, created by Alembic
+migration `0006_narrative_analysis_recovery_attempts` after the Timeline migration.
 The automatic coordinator invokes Gate 2 with a SourceChunk and AgentRun context bounded and
 complete for that review only. Duplicate context chunk ids, context chunks outside the declared
 allowed scope, and AgentRun-analysis mappings outside the known AgentRun set fail the entire
