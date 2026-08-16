@@ -74,8 +74,19 @@ class DuplicateCandidateV1(StrictBaseModel):
 class TimelineAnalysisInputV1(StrictBaseModel):
     """Whole-text candidate records supplied to the Timeline Agent."""
 
-    schema_version: Literal["1.0", "1.1"] = Field(default="1.1", description="Schema version.")
+    schema_version: Literal["1.0", "1.1", "1.2"] = Field(
+        default="1.1", description="Schema version."
+    )
     project_id: str = Field(description="Owning project id.")
+    source_approved_bundle_id: str | None = Field(
+        default=None, description="Approved Gate 2 bundle id when built by the campus adapter."
+    )
+    source_review_run_id: str | None = Field(
+        default=None, description="Gate 2 review run id when built by the campus adapter."
+    )
+    source_content_profile_id: str | None = Field(
+        default=None, description="Approved campus profile id when built by the campus adapter."
+    )
     mode: TimelineAnalysisMode = Field(
         default=TimelineAnalysisMode.RULES_ONLY,
         description="RULES_ONLY preserves V1 behavior; LLM infers selected event pairs.",
@@ -86,6 +97,18 @@ class TimelineAnalysisInputV1(StrictBaseModel):
 
     @model_validator(mode="after")
     def has_source_candidates(self) -> "TimelineAnalysisInputV1":
+        provenance_ids = (
+            self.source_approved_bundle_id,
+            self.source_review_run_id,
+            self.source_content_profile_id,
+        )
+        if self.schema_version == "1.2":
+            if any(not isinstance(value, str) or not value.strip() for value in provenance_ids):
+                raise ValueError(
+                    "schema_version=1.2 requires approved bundle, review, and profile ids"
+                )
+        elif any(value is not None for value in provenance_ids):
+            raise ValueError("Timeline provenance ids require schema_version=1.2")
         if not (self.event_proposals or self.claim_proposals or self.state_change_proposals):
             raise ValueError("timeline analysis requires at least one proposal")
         has_evidence = any(proposal.evidence_refs for proposal in self.event_proposals)

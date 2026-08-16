@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from comic_agent.agents.base import BaseAgent
+from comic_agent.agents.campus_content_profile import CampusContentProfileAgent
 from comic_agent.agents.claim_extraction import ClaimExtractionAgent
 from comic_agent.agents.entity_extraction import EntityExtractionAgent
 from comic_agent.agents.event_extraction import EventExtractionAgent
@@ -15,6 +16,7 @@ from comic_agent.agents.relationship_signal_extraction import RelationshipSignal
 from comic_agent.agents.state_change_extraction import StateChangeExtractionAgent
 from comic_agent.providers.llm import LLMProvider
 from comic_agent.schemas.narrative import (
+    CampusContentProfileProposalV1,
     ClaimProposalBatchV1,
     EntityProposalBatchV1,
     EventProposalBatchV1,
@@ -88,6 +90,10 @@ def _create_claim_agent(provider: LLMProvider) -> BaseAgent[Proposal]:
     return ClaimExtractionAgent(provider)
 
 
+def _create_campus_content_profile_agent(provider: LLMProvider) -> BaseAgent[Proposal]:
+    return CampusContentProfileAgent(provider)
+
+
 def _create_knowledge_state_agent(provider: LLMProvider) -> BaseAgent[Proposal]:
     return KnowledgeStateExtractionAgent(provider)
 
@@ -133,6 +139,17 @@ NARRATIVE_ANALYST_MODE_REGISTRY: dict[str, NarrativeAnalystModeSpec] = {
         requires_evidence=ClaimExtractionAgent.spec.requires_evidence,
         proposal_only=not ClaimExtractionAgent.spec.can_write_canonical_data,
         agent_factory=_create_claim_agent,
+    ),
+    "campus_content_profile": NarrativeAnalystModeSpec(
+        mode="campus_content_profile",
+        description_zh="校园文稿内容画像候选",
+        status="implemented",
+        output_schema=CampusContentProfileAgent.spec.output_schema,
+        schema_class=CampusContentProfileProposalV1,
+        max_context_chunks=CampusContentProfileAgent.spec.max_context_chunks,
+        requires_evidence=CampusContentProfileAgent.spec.requires_evidence,
+        proposal_only=not CampusContentProfileAgent.spec.can_write_canonical_data,
+        agent_factory=_create_campus_content_profile_agent,
     ),
     "knowledge_state_extraction": NarrativeAnalystModeSpec(
         mode="knowledge_state_extraction",

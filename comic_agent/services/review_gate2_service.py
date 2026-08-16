@@ -11,6 +11,7 @@ from typing import Any
 from comic_agent.schemas import (
     ApprovedProposalBundleV1,
     ApprovedProposalItemV1,
+    CampusContentProfileProposalV1,
     ClaimProposalV1,
     EntityProposalV1,
     EventProposalV1,
@@ -78,6 +79,11 @@ _PROPOSAL_METADATA: tuple[tuple[str, type[Any], ReviewableProposalMode], ...] = 
         RelationshipSignalProposalV1,
         ReviewableProposalMode.RELATIONSHIP_SIGNAL_EXTRACTION,
     ),
+    (
+        "campus_content_profiles",
+        CampusContentProfileProposalV1,
+        ReviewableProposalMode.CAMPUS_CONTENT_PROFILE,
+    ),
 )
 
 _SCHEMA_BY_TYPE: dict[type[Any], str] = {
@@ -87,6 +93,7 @@ _SCHEMA_BY_TYPE: dict[type[Any], str] = {
     KnowledgeStateProposalV1: "KnowledgeStateProposalV1",
     StateChangeProposalV1: "StateChangeProposalV1",
     RelationshipSignalProposalV1: "RelationshipSignalProposalV1",
+    CampusContentProfileProposalV1: "CampusContentProfileProposalV1",
 }
 
 _MODE_BY_TYPE: dict[type[Any], ReviewableProposalMode] = {
@@ -96,6 +103,7 @@ _MODE_BY_TYPE: dict[type[Any], ReviewableProposalMode] = {
     KnowledgeStateProposalV1: ReviewableProposalMode.KNOWLEDGE_STATE_EXTRACTION,
     StateChangeProposalV1: ReviewableProposalMode.STATE_CHANGE_EXTRACTION,
     RelationshipSignalProposalV1: ReviewableProposalMode.RELATIONSHIP_SIGNAL_EXTRACTION,
+    CampusContentProfileProposalV1: ReviewableProposalMode.CAMPUS_CONTENT_PROFILE,
 }
 
 _REFERENCE_CODES: dict[ReviewIssueCode, ReviewIssueCategory] = {

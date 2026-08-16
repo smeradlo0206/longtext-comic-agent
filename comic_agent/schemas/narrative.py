@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from comic_agent.schemas.base import EvidenceRefV1, RealityLayer, StrictBaseModel
+from comic_agent.schemas.base import EvidenceRefV1, RealityLayer, RecordStatus, StrictBaseModel
 
 
 class TemporalRelation(StrEnum):
@@ -788,6 +788,134 @@ class ClaimProposalBatchV1(StrictBaseModel):
             )
         if self.schema_version == "1.0" and claim_versions != {"1.0"}:
             raise ValueError("schema_version=1.0 batch requires all claims to be v1.0")
+        return self
+
+
+class CampusContentType(StrEnum):
+    """Supported campus-publication source categories."""
+
+    CAMPUS_NEWS = "campus_news"
+    EVENT_PROMOTION = "event_promotion"
+    RECRUITMENT = "recruitment"
+    PUBLIC_SERVICE = "public_service"
+
+
+class CampusAudience(StrEnum):
+    """Intended audience categories for a campus publication candidate."""
+
+    STUDENT = "student"
+    PARENT = "parent"
+    TEACHER = "teacher"
+    PUBLIC = "public"
+
+
+class CampusComicTone(StrEnum):
+    """Restricted presentation tones; these are not image-provider settings."""
+
+    FORMAL = "formal"
+    LIVELY = "lively"
+    YOUTHFUL = "youthful"
+
+
+class ComicBeatPurpose(StrEnum):
+    """Narrative purpose of a future comic beat candidate."""
+
+    INTRO = "INTRO"
+    CONTEXT = "CONTEXT"
+    ACTIVITY = "ACTIVITY"
+    HIGHLIGHT = "HIGHLIGHT"
+    CALL_TO_ACTION = "CALL_TO_ACTION"
+
+
+class CampusContentProfileProposalV1(StrictBaseModel):
+    """Candidate campus-content adaptation profile; it is never canonical data."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0", description="Schema version.")
+    proposal_id: str = Field(min_length=1, description="Candidate proposal id.")
+    project_id: str = Field(min_length=1, description="Owning project id.")
+    status: RecordStatus = Field(default=RecordStatus.CANDIDATE)
+    content_type: CampusContentType
+    audience: list[CampusAudience] = Field(min_length=1)
+    must_preserve_fact_ids: list[str] = Field(
+        min_length=1,
+        description="Evidence-backed factual ClaimProposalV1.claim_id values only.",
+    )
+    tone: CampusComicTone
+    page_budget: int = Field(ge=1, le=24, description="First-phase page budget.")
+    evidence_refs: list[EvidenceRefV1] = Field(min_length=1)
+    confidence: float = Field(ge=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_candidate_only(self) -> "CampusContentProfileProposalV1":
+        if self.status != RecordStatus.CANDIDATE:
+            raise ValueError("CampusContentProfileProposalV1 status must be CANDIDATE")
+        return self
+
+    @field_validator("proposal_id", "project_id")
+    @classmethod
+    def validate_nonblank_identifier(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("identifier must not be blank")
+        return value
+
+    @field_validator("audience")
+    @classmethod
+    def validate_unique_audience(cls, value: list[CampusAudience]) -> list[CampusAudience]:
+        if len(value) != len(set(value)):
+            raise ValueError("audience must contain unique values")
+        return value
+
+    @field_validator("must_preserve_fact_ids")
+    @classmethod
+    def validate_fact_ids(cls, value: list[str]) -> list[str]:
+        if any(not fact_id.strip() for fact_id in value):
+            raise ValueError("must_preserve_fact_ids items must not be blank")
+        if len(value) != len(set(value)):
+            raise ValueError("must_preserve_fact_ids must contain unique values")
+        return value
+
+
+class ComicBeatProposalV1(StrictBaseModel):
+    """Future comic narrative-beat candidate; it is not a panel or provider prompt."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0", description="Schema version.")
+    proposal_id: str = Field(min_length=1)
+    project_id: str = Field(min_length=1)
+    status: RecordStatus = Field(default=RecordStatus.CANDIDATE)
+    content_profile_id: str = Field(min_length=1)
+    beat_index: int = Field(ge=1)
+    purpose: ComicBeatPurpose
+    source_fact_ids: list[str] = Field(min_length=1)
+    event_ids: list[str] = Field(default_factory=list)
+    visual_intent: str = Field(min_length=1, max_length=240)
+    narration_hint: str | None = Field(default=None, min_length=1, max_length=240)
+    must_show: list[str] = Field(default_factory=list)
+    must_not_show: list[str] = Field(default_factory=list)
+    evidence_refs: list[EvidenceRefV1] = Field(min_length=1)
+    confidence: float = Field(ge=0, le=1)
+
+    @field_validator("proposal_id", "project_id", "content_profile_id", "visual_intent")
+    @classmethod
+    def validate_beat_nonblank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("ComicBeatProposalV1 text fields must not be blank")
+        return value
+
+    @field_validator("source_fact_ids", "event_ids", "must_show", "must_not_show")
+    @classmethod
+    def validate_unique_nonblank_values(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() for item in value):
+            raise ValueError("ComicBeatProposalV1 list items must not be blank")
+        if len(value) != len(set(value)):
+            raise ValueError("ComicBeatProposalV1 list values must be unique")
+        return value
+
+    @model_validator(mode="after")
+    def validate_visible_constraints_do_not_conflict(self) -> "ComicBeatProposalV1":
+        if self.status != RecordStatus.CANDIDATE:
+            raise ValueError("ComicBeatProposalV1 status must be CANDIDATE")
+        if set(self.must_show) & set(self.must_not_show):
+            raise ValueError("must_show and must_not_show must not overlap")
         return self
 
 

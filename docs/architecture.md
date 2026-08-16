@@ -50,6 +50,16 @@ later constraint or persistence failure rolls the entire promotion back. Migrati
 `0004_storybible_resources` persists canonical profiles, states, relationships, world
 rules, and candidate commit plans.
 
+## Campus Profile to Timeline boundary
+
+The optional `campus_content_profile` Narrative mode emits only an evidence-backed candidate
+`CampusContentProfileProposalV1` from supplied factual Claim proposals. It cannot create comic
+beats, panels, images, StoryBible facts, or Timeline output. After Gate 2, the pure
+`NarrativeTimelineInputAdapter` can explicitly convert an APPROVED bundle containing that Profile
+into bounded `TimelineAnalysisInputV1` records. It validates bundle/profile/run identity and
+SourceChunk evidence without Provider calls, repository scans, or writes. This is not a complete
+manuscript-to-comic pipeline and requires no database migration.
+
 ## Startup Phase Boundary
 
 This phase implements the source evidence chain, schema contracts, mock providers, API shell, database shell, docs, and tests. Full story compilation, image generation, QA repair loops, and frontend workflows are planned but not implemented.

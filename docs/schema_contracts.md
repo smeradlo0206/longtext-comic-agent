@@ -13,6 +13,8 @@ All V1 schemas use `schema_version = "1.0"` and live in `comic_agent/schemas`.
 | EntityProposalV1 | Candidate entity. | proposal_id, type, name, evidence_refs, confidence | Required | Merge services | Entity agents | CommitService later |
 | EventProposalV1 | Candidate event. | proposal_id, type, non-empty summary, non-empty evidence_refs, confidence | At least one reference required; persisted with CANDIDATE status | Temporal/state agents | Event agent | CommitService later |
 | ClaimProposalV1 | Candidate assertion, separate from confirmed events. | claim_id, subject, predicate, value, evidence_refs, confidence | At least one reference required | Timeline/StoryBible agents | Claim agent | CommitService later |
+| CampusContentProfileProposalV1 | Candidate campus-publication adaptation profile. | project_id, content type, audience, factual claim ids, tone, page budget, evidence | Required | Gate 2 and explicit Timeline adapter | Campus Profile Agent | Never in this phase |
+| ComicBeatProposalV1 | Candidate future comic narrative beat, not a panel. | profile id, beat index, purpose, fact ids, visual constraints, evidence | Required | Future Gate 3 only | Not produced in this phase | Never in this phase |
 | TemporalRelationProposalV1 | Candidate event relation. | proposal_id, source, target, relation, confidence | Required unless UNKNOWN | Temporal solver | Temporal agent | CommitService later |
 | TimelineAnalysisInputV1 | Whole-text timeline analysis input. | project_id plus event, claim, or state-change proposals | At least one input evidence reference | Timeline agent | Context builder | N/A |
 | TimelineAnalysisProposalV1 | Candidate time relations, conflicts, and duplicates. | proposal_id, project_id, evidence_refs, confidence | Never canonical; derived evidence only | StoryBible review | Timeline agent | CommitService later |
@@ -82,6 +84,20 @@ shape changed.
 the prior `"1.0"` payloads. V2 adds the optional input `mode` (`RULES_ONLY` remains the
 default) and an optional short `reasoning_summary` on a temporal-relation candidate.
 LLM mode emits only reviewable candidate relations, never canonical StoryBible data.
+
+### Campus content Profile and approved Timeline adapter
+
+`CampusContentProfileProposalV1` and `ComicBeatProposalV1` are new exported v1.0 Proposal
+contracts. A Profile has a 1–24 page budget and unique factual `ClaimProposalV1.claim_id` values.
+ComicBeat is only a future narrative-beat contract: it is neither a panel nor an image/provider prompt.
+
+`NarrativeAnalysisResultV1` v1.5 adds compatible `campus_content_profiles`; v1.0–v1.4 remain
+readable with that list empty. `TimelineAnalysisInputV1` v1.2 records the approved bundle, review
+run, and Profile ids when built by the explicit adapter; v1.0/v1.1 inputs remain readable. The
+adapter accepts only an APPROVED Gate 2 bundle, validates bounded SourceChunk evidence, retains
+Profile-required factual Claims, and never accepts a raw aggregate, calls a Provider, writes
+canonical data, or automatically runs Timeline. No database migration is required. This phase does
+not implement SceneContext, beat generation, panels, images, materials, Gate 3/4, or full conversion.
 
 ### Narrative Analyst automatic Gate 2
 

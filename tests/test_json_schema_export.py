@@ -4,6 +4,8 @@ from comic_agent.schemas import (
     ApprovedProposalBundleV1,
     ApprovedProposalItemV1,
     ApprovedSourceChunkBundleV1,
+    CampusContentProfileProposalV1,
+    ComicBeatProposalV1,
     EvidenceReviewItemV1,
     NarrativeAnalysisReviewRouteV1,
     NarrativeAnalysisWindowPlanV1,
@@ -82,6 +84,8 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     assert (output_dir / "EntityProposalBatchV1.json").exists()
     assert (output_dir / "ClaimProposalBatchV1.json").exists()
     assert (output_dir / "ClaimProposalV1.json").exists()
+    assert (output_dir / "CampusContentProfileProposalV1.json").exists()
+    assert (output_dir / "ComicBeatProposalV1.json").exists()
     assert (output_dir / "KnowledgeStateProposalV1.json").exists()
     assert (output_dir / "KnowledgeStateProposalBatchV1.json").exists()
     assert (output_dir / "KnowledgeStateEvaluationReportV1.json").exists()
@@ -215,6 +219,7 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
         "1.2",
         "1.3",
         "1.4",
+        "1.5",
     ]
     assert "state_changes" in result_schema["properties"]
     assert "relationship_signals" in result_schema["properties"]
@@ -294,6 +299,8 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     assert "allow_llm_reference_resolution" in policy_text
     assert "provider_response" not in policy_text
     assert ApprovedProposalBundleV1.__name__ == "ApprovedProposalBundleV1"
+    assert CampusContentProfileProposalV1.__name__ == "CampusContentProfileProposalV1"
+    assert ComicBeatProposalV1.__name__ == "ComicBeatProposalV1"
     assert ApprovedProposalItemV1.__name__ == "ApprovedProposalItemV1"
     assert EvidenceReviewItemV1.__name__ == "EvidenceReviewItemV1"
     assert ProposalReviewDecision.APPROVED == "APPROVED"

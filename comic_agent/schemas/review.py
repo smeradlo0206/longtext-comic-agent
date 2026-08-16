@@ -13,6 +13,7 @@ from pydantic import Field, field_validator, model_validator
 
 from comic_agent.schemas.base import EvidenceRefV1, StrictBaseModel
 from comic_agent.schemas.narrative import (
+    CampusContentProfileProposalV1,
     ClaimProposalV1,
     EntityProposalV1,
     EventProposalV1,
@@ -101,6 +102,7 @@ class ReviewableProposalMode(StrEnum):
     KNOWLEDGE_STATE_EXTRACTION = "knowledge_state_extraction"
     STATE_CHANGE_EXTRACTION = "state_change_extraction"
     RELATIONSHIP_SIGNAL_EXTRACTION = "relationship_signal_extraction"
+    CAMPUS_CONTENT_PROFILE = "campus_content_profile"
 
 
 class ReviewIssueCode(StrEnum):
@@ -145,6 +147,7 @@ type ProposalSchemaName = Literal[
     "KnowledgeStateProposalV1",
     "StateChangeProposalV1",
     "RelationshipSignalProposalV1",
+    "CampusContentProfileProposalV1",
 ]
 type ReferenceTargetSchemaName = Literal["EntityProposalV1", "EventProposalV1", "ClaimProposalV1"]
 type ReviewableProposal = (
@@ -154,6 +157,7 @@ type ReviewableProposal = (
     | KnowledgeStateProposalV1
     | StateChangeProposalV1
     | RelationshipSignalProposalV1
+    | CampusContentProfileProposalV1
 )
 
 _PROPOSAL_METADATA: dict[type[StrictBaseModel], tuple[str, str]] = {
@@ -171,6 +175,10 @@ _PROPOSAL_METADATA: dict[type[StrictBaseModel], tuple[str, str]] = {
     RelationshipSignalProposalV1: (
         "RelationshipSignalProposalV1",
         ReviewableProposalMode.RELATIONSHIP_SIGNAL_EXTRACTION.value,
+    ),
+    CampusContentProfileProposalV1: (
+        "CampusContentProfileProposalV1",
+        ReviewableProposalMode.CAMPUS_CONTENT_PROFILE.value,
     ),
 }
 
