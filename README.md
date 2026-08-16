@@ -2,6 +2,9 @@
 
 长文本多 Agent 连续漫画生成系统。StoryBible Curator 是系统的核心 Agent，负责从源文本中提取人物、组织、地点和状态，生成候选提案（Proposal），经人工审批后写入正式 StoryBible。
 
+> **Agent 完整文档**:见 [`docs/storybible_curator.md`](docs/storybible_curator.md) ——
+> 职责分工、输入/输出契约、时刻快照、给其他模块的调用手册、修改与测试指南。
+
 ## 环境要求
 
 - Python 3.12+
@@ -76,6 +79,7 @@ uv run uvicorn comic_agent.main:app --reload
 | `GET` | `/projects/{project_id}/storybible/profiles/{profile_id}` | 查询单个 profile |
 | `GET` | `/projects/{project_id}/storybible/profiles/{profile_id}/states` | 查询 profile 的状态历史 |
 | `GET` | `/projects/{project_id}/storybible/profiles/{profile_id}/states?event_id=X` | 按事件筛选状态 |
+| `GET` | `/projects/{project_id}/storybible/state-at?event_order=N` | 某一时刻人物/地点/关系/世界规则的合并快照(分镜 agent 用) |
 
 ## StoryBible Curator 工作流
 
