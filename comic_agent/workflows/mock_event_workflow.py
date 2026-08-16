@@ -55,7 +55,7 @@ class MockEventWorkflow:
             chunk_ids=chunk_ids,
         )
         input_context = self._input_context_payload(context)
-        agent = MockEventAgent(self._provider)
+        agent = MockEventAgent()
 
         proposal: EventProposalV1 | None = None
         provider_result: ProviderResultV1
@@ -63,7 +63,9 @@ class MockEventWorkflow:
         error_message: str | None = None
 
         try:
-            proposal = agent.run(input_context)
+            if not context.chunks:
+                raise ValueError("Mock event workflow requires at least one source chunk")
+            proposal = agent.run(context.chunks[0])
             provider_result = self._provider_result(
                 project_id=project_id,
                 chunk_ids=chunk_ids,

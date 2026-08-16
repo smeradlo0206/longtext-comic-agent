@@ -37,11 +37,6 @@ class Settings(BaseSettings):
         validation_alias="TIMELINE_MODEL",
         description="Optional TimelineAgent model; defaults to STORYBIBLE_MODEL.",
     )
-    timeline_model: str | None = Field(
-        default=None,
-        validation_alias="TIMELINE_MODEL",
-        description="Optional TimelineAgent model; defaults to STORYBIBLE_MODEL.",
-    )
     llm_timeout_seconds: int = Field(
         default=60,
         gt=0,

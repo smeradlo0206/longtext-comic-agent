@@ -238,7 +238,6 @@ class NarrativeAnalysisRunModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
-
 class NarrativeAnalysisWindowModel(Base):
     """Persistent state for one mode over one planned source window."""
 
@@ -258,21 +257,6 @@ class NarrativeAnalysisWindowModel(Base):
     window_index: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(64), nullable=False)
     agent_run_id: Mapped[str | None] = mapped_column(String(128), index=True, nullable=True)
-    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class NarrativeAnalysisRecoveryAttemptModel(Base):
-    """Append-only, noncanonical recovery attempt audit record."""
-
-    __tablename__ = "narrative_analysis_recovery_attempts"
-    __table_args__ = (UniqueConstraint("idempotency_key", name="uq_recovery_attempt_key"),)
-
-    attempt_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    root_analysis_run_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
-    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

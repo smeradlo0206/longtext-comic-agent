@@ -1,4 +1,4 @@
-import json
+﻿import json
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -20,13 +20,13 @@ from comic_agent.schemas.narrative import (
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
 
 PROJECT_PAYLOAD = {"project_id": "demo-project", "name": "Demo Project"}
-SAMPLE_TEXT = """??? ??
+SAMPLE_TEXT = """第一章 开端
 
-??????
+林夏推开门。
 
-?????????
+陈野把伞递给林夏。
 
-????????
+钟声从楼上传来。
 """
 
 SUMMARY_FIELDS = (
@@ -116,7 +116,7 @@ class FakeNarrativeProvider:
                         {
                             "proposal_id": "event-console-1",
                             "event_type": "demo_event",
-                            "summary": "??",
+                            "summary": "开门",
                             "participant_ids": [],
                             "actor_resolution_status": "UNKNOWN",
                             "location_id": None,
@@ -134,7 +134,7 @@ class FakeNarrativeProvider:
                         {
                             "proposal_id": "event-console-2",
                             "event_type": "second_event",
-                            "summary": "????",
+                            "summary": "门后异响",
                             "participant_ids": [],
                             "actor_resolution_status": "UNKNOWN",
                             "location_id": None,
@@ -161,15 +161,15 @@ class FakeNarrativeProvider:
                         {
                             "proposal_id": "entity-console-1",
                             "entity_type": "CHARACTER",
-                            "canonical_name": "??",
-                            "aliases": ["????"],
+                            "canonical_name": "林夏",
+                            "aliases": ["秘密别名"],
                             "evidence_refs": [{"chunk_id": chunk_id, "quote_text": quote}],
                             "confidence": 0.78,
                         },
                         {
                             "proposal_id": "entity-console-2",
                             "entity_type": "ORGANIZATION",
-                            "canonical_name": "???",
+                            "canonical_name": "旧馆社",
                             "aliases": [],
                             "evidence_refs": [{"chunk_id": chunk_id, "quote_text": quote[1:]}],
                             "confidence": 0.72,
@@ -186,7 +186,7 @@ class FakeNarrativeProvider:
                         {
                             "proposal_id": "claim-console-1",
                             "claim_type": "FACTUAL_ASSERTION",
-                            "claim_text": "??????",
+                            "claim_text": "林夏推开门。",
                             "source_type": "NARRATOR",
                             "source_id": None,
                             "target_event_id": None,
@@ -199,7 +199,7 @@ class FakeNarrativeProvider:
                         {
                             "proposal_id": "claim-console-2",
                             "claim_type": "INTERPRETATION",
-                            "claim_text": "??????",
+                            "claim_text": "门后有异响。",
                             "source_type": "NARRATOR",
                             "source_id": None,
                             "target_event_id": None,
@@ -222,13 +222,13 @@ class FakeNarrativeProvider:
                             "schema_version": "1.1",
                             "proposal_id": "knowledge-console-1",
                             "subject": {
-                                "mention_text": "??",
+                                "mention_text": "林夏",
                                 "entity_proposal_id": None,
                                 "resolution_status": "UNRESOLVED",
                             },
                             "target": {
                                 "target_kind": "WORLD_FACT",
-                                "target_text": "????",
+                                "target_text": "门后有路",
                                 "proposal_id": None,
                                 "proposal_schema": None,
                                 "resolution_status": "UNRESOLVED",
@@ -243,13 +243,13 @@ class FakeNarrativeProvider:
                             "schema_version": "1.1",
                             "proposal_id": "knowledge-console-2",
                             "subject": {
-                                "mention_text": "??",
+                                "mention_text": "陈野",
                                 "entity_proposal_id": None,
                                 "resolution_status": "UNRESOLVED",
                             },
                             "target": {
                                 "target_kind": "WORLD_FACT",
-                                "target_text": "??????",
+                                "target_text": "钟声来自楼上",
                                 "proposal_id": None,
                                 "proposal_schema": None,
                                 "resolution_status": "UNRESOLVED",
@@ -274,13 +274,13 @@ class FakeNarrativeProvider:
                             "schema_version": "1.2",
                             "proposal_id": "state-change-console-1",
                             "event": {
-                                "event_summary": "?????",
+                                "event_summary": "林夏推开门",
                                 "event_proposal_id": None,
                                 "proposal_schema": None,
                                 "resolution_status": "UNRESOLVED",
                             },
                             "target": {
-                                "mention_text": "?",
+                                "mention_text": "门",
                                 "target_kind": "OBJECT",
                                 "entity_proposal_id": None,
                                 "proposal_schema": None,
@@ -288,7 +288,7 @@ class FakeNarrativeProvider:
                             },
                             "attribute_path": "accessibility",
                             "old_value": None,
-                            "new_value": "??",
+                            "new_value": "开启",
                             "persistent": False,
                             "reality_layer": "PRIMARY",
                             "evidence_refs": [{"chunk_id": chunk_id, "quote_text": quote}],
@@ -442,7 +442,7 @@ def test_narrative_analyst_api_supports_implemented_modes(
         assert payload["events_count"] == 2
         assert payload["event_proposal_ids"] == ["event-console-1", "event-console-2"]
         assert payload["primary_event_type"] == "demo_event"
-        assert payload["primary_event_summary"] == "??"
+        assert payload["primary_event_summary"] == "开门"
         assert payload["event_evidence_results"] == [
             {
                 "proposal_id": "event-console-1",
@@ -621,12 +621,12 @@ def test_narrative_analyst_api_event_batch_quote_mismatch_is_classified(
                             {
                                 "proposal_id": "event-ok",
                                 "event_type": "demo_event",
-                                "summary": "??",
+                                "summary": "开门",
                                 "participant_ids": [],
                                 "actor_resolution_status": "UNKNOWN",
                                 "location_id": None,
                                 "evidence_refs": [
-                                    {"chunk_id": source_chunk["chunk_id"], "quote_text": "??"}
+                                    {"chunk_id": source_chunk["chunk_id"], "quote_text": "林夏"}
                                 ],
                                 "confidence": 0.7,
                                 "reality_layer": "PRIMARY",
@@ -634,7 +634,7 @@ def test_narrative_analyst_api_event_batch_quote_mismatch_is_classified(
                             {
                                 "proposal_id": "event-bad",
                                 "event_type": "bad_event",
-                                "summary": "?????",
+                                "summary": "不存在事件",
                                 "participant_ids": [],
                                 "actor_resolution_status": "UNKNOWN",
                                 "location_id": None,
@@ -699,15 +699,15 @@ def test_narrative_analyst_api_event_batch_quote_mismatch_is_classified(
                     {
                         "proposal_id": "entity-ok",
                         "entity_type": "CHARACTER",
-                        "canonical_name": "??",
+                        "canonical_name": "林夏",
                         "aliases": [],
-                        "evidence_refs": [{"chunk_id": "chunk-id", "quote_text": "??"}],
+                        "evidence_refs": [{"chunk_id": "chunk-id", "quote_text": "林夏"}],
                         "confidence": 0.7,
                     },
                     {
                         "proposal_id": "entity-bad",
                         "entity_type": "LOCATION",
-                        "canonical_name": "?????",
+                        "canonical_name": "不存在地点",
                         "aliases": [],
                         "evidence_refs": [
                             {"chunk_id": "chunk-id", "quote_text": "not present in visible input"}
@@ -728,12 +728,12 @@ def test_narrative_analyst_api_event_batch_quote_mismatch_is_classified(
                     {
                         "proposal_id": "claim-ok",
                         "claim_type": "FACTUAL_ASSERTION",
-                        "claim_text": "??????",
+                        "claim_text": "林夏推开门。",
                         "source_type": "NARRATOR",
                         "source_id": None,
                         "target_event_id": None,
                         "verification_status": "UNVERIFIED",
-                        "evidence_refs": [{"chunk_id": "chunk-id", "quote_text": "??"}],
+                        "evidence_refs": [{"chunk_id": "chunk-id", "quote_text": "林夏"}],
                         "confidence": 0.7,
                         "reality_layer": "PRIMARY",
                         "temporal_scope": "PRESENT",
@@ -741,7 +741,7 @@ def test_narrative_analyst_api_event_batch_quote_mismatch_is_classified(
                     {
                         "proposal_id": "claim-bad",
                         "claim_type": "DENIAL",
-                        "claim_text": "??????",
+                        "claim_text": "不存在主张。",
                         "source_type": "NARRATOR",
                         "source_id": None,
                         "target_event_id": None,
@@ -854,11 +854,11 @@ def test_narrative_analyst_api_claim_summary_is_sanitized_but_proposal_is_availa
     assert response.status_code == 201
     assert "claim_text" not in {key for key in payload if key != "proposal"}
     assert payload["claims_count"] == 2
-    assert payload["proposal"]["claims"][0]["claim_text"] == "??????"
+    assert payload["proposal"]["claims"][0]["claim_text"] == "林夏推开门。"
     assert "platform-secret-key" not in serialized
     assert "message.content" not in serialized
     assert "raw provider" not in serialized
-    assert "??????\n\n?????????" not in serialized
+    assert "林夏推开门。\n\n陈野把伞递给林夏。" not in serialized
 
 
 def test_narrative_analyst_api_normalizes_unique_claim_evidence_across_three_chunks(
@@ -985,7 +985,7 @@ def test_narrative_analyst_api_entity_summary_counts_aliases_without_listing_the
     assert response.status_code == 201
     assert payload["entities_count"] == 2
     assert "aliases" not in {key for key in payload if key != "proposal"}
-    assert payload["proposal"]["entities"][0]["aliases"] == ["????"]
+    assert payload["proposal"]["entities"][0]["aliases"] == ["秘密别名"]
 
 
 def test_narrative_analyst_api_respects_explicit_chunk_ids_after_multiple_imports(

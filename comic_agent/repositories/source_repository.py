@@ -22,8 +22,8 @@ from comic_agent.schemas.source import (
     SourceChunkV1,
     SourceDocumentV1,
 )
-from comic_agent.schemas.workflow import AgentRunV1
 from comic_agent.schemas.timeline import TimelineAnalysisProposalV1
+from comic_agent.schemas.workflow import AgentRunV1
 from comic_agent.services.document_parser import ParsedDocument
 
 
@@ -461,6 +461,16 @@ class SourceRepository:
             select(AgentRunModel)
             .where(AgentRunModel.source_chunk_id == chunk_id)
             .order_by(AgentRunModel.created_at)
+        ).all()
+        return [AgentRunV1.model_validate(row.payload) for row in rows]
+
+    def list_agent_runs_for_project(self, project_id: str) -> list[AgentRunV1]:
+        """Return all auditable agent executions owned by one project."""
+
+        rows = self._session.scalars(
+            select(AgentRunModel)
+            .where(AgentRunModel.project_id == project_id)
+            .order_by(AgentRunModel.created_at, AgentRunModel.agent_run_id)
         ).all()
         return [AgentRunV1.model_validate(row.payload) for row in rows]
 

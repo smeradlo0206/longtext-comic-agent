@@ -1,4 +1,4 @@
-"""End-to-end automatic import and Gate 1 routing tests."""
+﻿"""End-to-end automatic import and Gate 1 routing tests."""
 
 from pathlib import Path
 
@@ -23,7 +23,7 @@ PROJECT_PAYLOAD = {
     "budget_limit": 100,
 }
 
-TEXT = "??? ??\n\n???????\n\n??? ??\n\n???????\n"
+TEXT = "第一章 开始\n\n林夏走进门边。\n\n第二章 转折\n\n陈野打开了门。\n"
 
 
 def _client(tmp_path: Path) -> TestClient:
@@ -59,7 +59,7 @@ def test_import_runs_gate1_before_persisting_and_returns_selection_data(tmp_path
 
 
 def test_gate1_rejection_does_not_persist_document_or_expose_source_text(tmp_path: Path) -> None:
-    bad_text = "???\n\n?????\ufffd\n"
+    bad_text = "第一章\n\n正常段落。\ufffd\n"
     with _client(tmp_path) as client:
         assert client.post("/projects", json=PROJECT_PAYLOAD).status_code == 201
         response = client.post(
@@ -93,7 +93,7 @@ def test_same_approved_revision_import_is_idempotent(tmp_path: Path) -> None:
 
 
 def test_excessive_whitespace_import_is_review_blocked(tmp_path: Path) -> None:
-    abnormal = "??? ??" + ("\n" * 5) + "???\n"
+    abnormal = "第一章 开始" + ("\n" * 5) + "正文。\n"
     with _client(tmp_path) as client:
         assert client.post("/projects", json=PROJECT_PAYLOAD).status_code == 201
         response = client.post(

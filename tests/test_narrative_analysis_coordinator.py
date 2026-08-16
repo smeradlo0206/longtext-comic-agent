@@ -1,4 +1,4 @@
-"""Chapter-scoped, Gate 1-authorized Narrative Analyst coordination tests."""
+﻿"""Chapter-scoped, Gate 1-authorized Narrative Analyst coordination tests."""
 
 from pathlib import Path
 
@@ -23,7 +23,7 @@ PROJECT = {
     "budget_limit": 100,
 }
 
-TEXT = "??? ?\n\n????\n\n??? ?\n\n????\n"
+TEXT = "第一章 甲\n\n甲段落。\n\n第二章 乙\n\n乙段落。\n"
 ALL_MODES = {
     "entity_extraction",
     "event_extraction",

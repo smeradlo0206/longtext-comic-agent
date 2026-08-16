@@ -1,4 +1,4 @@
-"""Regression tests for resumable whole-document narrative analysis."""
+﻿"""Regression tests for resumable whole-document narrative analysis."""
 
 import json
 from datetime import UTC, datetime
@@ -67,8 +67,8 @@ def _long_chunk(order: int) -> SourceChunkV1:
 def _relationship_signal(
     proposal_id: str,
     *,
-    subject: str = "?",
-    counterpart: str = "?",
+    subject: str = "甲",
+    counterpart: str = "乙",
     directionality: str = "DIRECTED",
     relationship_kind: str = "TRUSTS",
     relationship_domain: str = "TRUST",
@@ -109,7 +109,7 @@ def _relationship_signal(
                 "proposal_schema": None,
             },
             "reality_layer": "PRIMARY",
-            "evidence_refs": [{"chunk_id": evidence_chunk_id, "quote_text": "????"}],
+            "evidence_refs": [{"chunk_id": evidence_chunk_id, "quote_text": "关系证据"}],
             "confidence": 0.8,
         }
     )
@@ -118,7 +118,7 @@ def _relationship_signal(
 def test_relationship_signal_aggregation_is_exact_and_symmetric_only_in_its_key() -> None:
     directed = _relationship_signal("relationship-1")
     directed_duplicate = _relationship_signal("relationship-2", evidence_chunk_id="chunk-1")
-    reverse = _relationship_signal("relationship-3", subject="?", counterpart="?")
+    reverse = _relationship_signal("relationship-3", subject="乙", counterpart="甲")
     sibling = _relationship_signal(
         "relationship-4",
         directionality="SYMMETRIC",
@@ -127,8 +127,8 @@ def test_relationship_signal_aggregation_is_exact_and_symmetric_only_in_its_key(
     )
     reversed_sibling = _relationship_signal(
         "relationship-5",
-        subject="?",
-        counterpart="?",
+        subject="乙",
+        counterpart="甲",
         directionality="SYMMETRIC",
         relationship_kind="SIBLING_OF",
         relationship_domain="KINSHIP",
@@ -773,14 +773,14 @@ class _RelationshipSignalWindowProvider:
                 {
                     "proposal_id": f"relationship-{chunk_ids[0]}",
                     "subject": {
-                        "mention_text": "?",
+                        "mention_text": "甲",
                         "participant_kind": "CHARACTER",
                         "resolution_status": "UNRESOLVED",
                         "entity_proposal_id": None,
                         "proposal_schema": None,
                     },
                     "counterpart": {
-                        "mention_text": "?",
+                        "mention_text": "乙",
                         "participant_kind": "CHARACTER",
                         "resolution_status": "UNRESOLVED",
                         "entity_proposal_id": None,
@@ -804,7 +804,7 @@ class _RelationshipSignalWindowProvider:
                         "proposal_schema": None,
                     },
                     "reality_layer": "PRIMARY",
-                    "evidence_refs": [{"chunk_id": chunk_ids[0], "quote_text": "?????"}],
+                    "evidence_refs": [{"chunk_id": chunk_ids[0], "quote_text": "甲信任乙。"}],
                     "confidence": 0.8,
                 }
             ]
@@ -844,7 +844,7 @@ class _StateChangeQuantityRecoveryProvider:
                 "resolution_status": "UNRESOLVED",
             },
             "target": {
-                "mention_text": "??" if path == "possession.holder" else "??",
+                "mention_text": "卷轴" if path == "possession.holder" else "药瓶",
                 "target_kind": "OBJECT",
                 "entity_proposal_id": None,
                 "proposal_schema": None,
@@ -868,31 +868,31 @@ class _StateChangeQuantityRecoveryProvider:
             "changes": [
                 self._change(
                     proposal_id="scroll-1",
-                    target="??",
-                    old_value="??",
-                    new_value="??",
-                    quote="?????????",
+                    target="周砚",
+                    old_value="阿葵",
+                    new_value="周砚",
+                    quote="阿葵把卷轴交给周砚",
                 ),
                 self._change(
                     proposal_id="scroll-2",
-                    target="??",
-                    old_value="??",
-                    new_value="??",
-                    quote="??????????",
+                    target="沈策",
+                    old_value="周砚",
+                    new_value="沈策",
+                    quote="周砚又把卷轴交给沈策",
                 ),
                 self._change(
                     proposal_id="scroll-3",
-                    target="??",
-                    old_value="??",
-                    new_value="??",
-                    quote="???????",
+                    target="陆衡",
+                    old_value="沈策",
+                    new_value="陆衡",
+                    quote="沈策再交给陆衡",
                 ),
                 self._change(
                     proposal_id="medicine-quantity",
-                    target="??",
+                    target="药瓶",
                     old_value=6 if not invalid_quantity else "6",
                     new_value=4 if not invalid_quantity else "4",
-                    quote="?????????",
+                    quote="药瓶数量从六变为四",
                     path="quantity",
                 ),
             ],
@@ -1061,7 +1061,7 @@ def test_relationship_signal_worker_treats_owned_or_empty_batches_as_success(
     empty: bool,
 ) -> None:
     chunks = [
-        _chunk(index).model_copy(update={"text": "?????"}) for index in range(5)
+        _chunk(index).model_copy(update={"text": "甲信任乙。"}) for index in range(5)
     ]
     source_repository = _FakeSourceRepository(chunks)
     analysis_repository = _repository(tmp_path)
@@ -1104,7 +1104,7 @@ def test_relationship_signal_worker_treats_owned_or_empty_batches_as_success(
 
 def test_relationship_signal_worker_reuses_schema_recovery_and_resume(tmp_path: Path) -> None:
     chunks = [
-        _chunk(index).model_copy(update={"text": "?????"}) for index in range(3)
+        _chunk(index).model_copy(update={"text": "甲信任乙。"}) for index in range(3)
     ]
     source_repository = _FakeSourceRepository(chunks)
     analysis_repository = _repository(tmp_path)
@@ -1146,7 +1146,7 @@ def test_relationship_signal_worker_reuses_schema_recovery_and_resume(tmp_path: 
 
 def test_relationship_signal_worker_splits_length_failure_by_owned_chunks(tmp_path: Path) -> None:
     chunks = [
-        _chunk(index).model_copy(update={"text": "?????"}) for index in range(3)
+        _chunk(index).model_copy(update={"text": "甲信任乙。"}) for index in range(3)
     ]
     source_repository = _FakeSourceRepository(chunks)
     analysis_repository = _repository(tmp_path)
@@ -1896,7 +1896,7 @@ def test_worker_state_change_quantity_schema_recovery_preserves_all_changes(
 ) -> None:
     source = _chunk(0).model_copy(
         update={
-            "text": "???????????????????????????????????????"
+            "text": "阿葵把卷轴交给周砚，周砚又把卷轴交给沈策，沈策再交给陆衡；药瓶数量从六变为四。"
         }
     )
     source_repository = _FakeSourceRepository([source])
@@ -1977,7 +1977,7 @@ def test_worker_does_not_convert_source_only_state_change_rejection_to_success(
 
 
 def test_rockery_cross_window_event_wording_stays_separate_for_manual_review() -> None:
-    quote = "?????????"
+    quote = "假山直接崩塌下来。"
 
     def proposal(proposal_id: str, event_summary: str, chunk_id: str) -> StateChangeProposalV1:
         return StateChangeProposalV1.model_validate(
@@ -1991,7 +1991,7 @@ def test_rockery_cross_window_event_wording_stays_separate_for_manual_review() -
                     "resolution_status": "UNRESOLVED",
                 },
                 "target": {
-                    "mention_text": "??",
+                    "mention_text": "假山",
                     "target_kind": "OBJECT",
                     "entity_proposal_id": None,
                     "proposal_schema": None,
@@ -1999,7 +1999,7 @@ def test_rockery_cross_window_event_wording_stays_separate_for_manual_review() -
                 },
                 "attribute_path": "physical.condition",
                 "old_value": None,
-                "new_value": "??",
+                "new_value": "崩塌",
                 "persistent": False,
                 "reality_layer": "PRIMARY",
                 "evidence_refs": [{"chunk_id": chunk_id, "quote_text": quote}],
@@ -2014,20 +2014,20 @@ def test_rockery_cross_window_event_wording_stays_separate_for_manual_review() -
             NarrativeAnalysisProposalSourceV1(
                 mode="state_change_extraction",
                 agent_run_id="rockery-run-1",
-                proposal=proposal("rockery-proposal-1", "??????", "rockery-chunk-1"),
+                proposal=proposal("rockery-proposal-1", "周元重拍假山", "rockery-chunk-1"),
             ),
             NarrativeAnalysisProposalSourceV1(
                 mode="state_change_extraction",
                 agent_run_id="rockery-run-2",
-                proposal=proposal("rockery-proposal-2", "????????", "rockery-chunk-2"),
+                proposal=proposal("rockery-proposal-2", "拳头重拍在假山上", "rockery-chunk-2"),
             ),
         ]
     )
 
     assert len(result.state_changes) == 2
     assert [item.proposal.event.event_summary for item in result.state_changes] == [
-        "??????",
-        "????????",
+        "周元重拍假山",
+        "拳头重拍在假山上",
     ]
     assert [item.agent_run_ids for item in result.state_changes] == [
         ["rockery-run-1"],
@@ -2041,13 +2041,13 @@ def test_aggregate_state_changes_merges_only_exact_v12_semantics() -> None:
             "schema_version": "1.2",
             "proposal_id": "state-change-1",
             "event": {
-                "event_summary": "???",
+                "event_summary": "门关闭",
                 "event_proposal_id": None,
                 "proposal_schema": None,
                 "resolution_status": "UNRESOLVED",
             },
             "target": {
-                "mention_text": "???",
+                "mention_text": "青铜门",
                 "target_kind": "OBJECT",
                 "entity_proposal_id": None,
                 "proposal_schema": None,
@@ -2055,10 +2055,10 @@ def test_aggregate_state_changes_merges_only_exact_v12_semantics() -> None:
             },
             "attribute_path": "accessibility",
             "old_value": None,
-            "new_value": "??",
+            "new_value": "关闭",
             "persistent": False,
             "reality_layer": "PRIMARY",
-            "evidence_refs": [{"chunk_id": "chunk-1", "quote_text": "?????"}],
+            "evidence_refs": [{"chunk_id": "chunk-1", "quote_text": "青铜门关闭"}],
             "new_value_evidence_indexes": [0],
             "persistence_evidence_indexes": [],
             "confidence": 0.8,
@@ -2067,22 +2067,22 @@ def test_aggregate_state_changes_merges_only_exact_v12_semantics() -> None:
     same = base.model_copy(
         update={
             "proposal_id": "state-change-2",
-            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-2", quote_text="?????")],
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-2", quote_text="青铜门关闭")],
         }
     )
     changed_value = base.model_copy(
         update={
             "proposal_id": "state-change-3",
-            "new_value": "??",
-            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-3", quote_text="?????")],
+            "new_value": "开启",
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-3", quote_text="青铜门开启")],
         }
     )
     changed_path = base.model_copy(
         update={
             "proposal_id": "state-change-4",
             "attribute_path": "physical.condition",
-            "new_value": "??",
-            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-4", quote_text="???")],
+            "new_value": "损坏",
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-4", quote_text="门损坏")],
         }
     )
     changed_persistence = base.model_copy(
@@ -2090,7 +2090,7 @@ def test_aggregate_state_changes_merges_only_exact_v12_semantics() -> None:
             "proposal_id": "state-change-5",
             "persistent": True,
             "persistence_evidence_indexes": [0],
-            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-5", quote_text="?????")],
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-5", quote_text="门永久关闭")],
         }
     )
     resolved = StateChangeProposalV1.model_validate(
@@ -2098,19 +2098,19 @@ def test_aggregate_state_changes_merges_only_exact_v12_semantics() -> None:
             **base.model_dump(mode="json"),
             "proposal_id": "state-change-6",
             "event": {
-                "event_summary": "???",
+                "event_summary": "门关闭",
                 "event_proposal_id": "event-proposal-1",
                 "proposal_schema": "EventProposalV1",
                 "resolution_status": "RESOLVED",
             },
             "target": {
-                "mention_text": "???",
+                "mention_text": "青铜门",
                 "target_kind": "OBJECT",
                 "entity_proposal_id": "entity-proposal-1",
                 "proposal_schema": "EntityProposalV1",
                 "resolution_status": "RESOLVED",
             },
-            "evidence_refs": [{"chunk_id": "chunk-6", "quote_text": "?????"}],
+            "evidence_refs": [{"chunk_id": "chunk-6", "quote_text": "青铜门关闭"}],
         }
     )
     numeric_legacy_value = StateChangeProposalV1.model_validate(
@@ -2118,13 +2118,13 @@ def test_aggregate_state_changes_merges_only_exact_v12_semantics() -> None:
             "schema_version": "1.1",
             "proposal_id": "state-change-7",
             "event": {
-                "event_summary": "????",
+                "event_summary": "库存更新",
                 "event_proposal_id": None,
                 "proposal_schema": None,
                 "resolution_status": "UNRESOLVED",
             },
             "target": {
-                "mention_text": "??",
+                "mention_text": "仓库",
                 "entity_proposal_id": None,
                 "proposal_schema": None,
                 "resolution_status": "UNRESOLVED",
@@ -2134,7 +2134,7 @@ def test_aggregate_state_changes_merges_only_exact_v12_semantics() -> None:
             "new_value": 1,
             "persistent": False,
             "reality_layer": "PRIMARY",
-            "evidence_refs": [{"chunk_id": "chunk-7", "quote_text": "????"}],
+            "evidence_refs": [{"chunk_id": "chunk-7", "quote_text": "库存更新"}],
             "confidence": 0.8,
         }
     )
@@ -2143,14 +2143,14 @@ def test_aggregate_state_changes_merges_only_exact_v12_semantics() -> None:
             **numeric_legacy_value.model_dump(mode="json"),
             "proposal_id": "state-change-8",
             "new_value": "1",
-            "evidence_refs": [{"chunk_id": "chunk-8", "quote_text": "????"}],
+            "evidence_refs": [{"chunk_id": "chunk-8", "quote_text": "库存更新"}],
         }
     )
     same_id_different_semantics = base.model_copy(
         update={
             "proposal_id": "state-change-1",
-            "new_value": "??",
-            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-9", quote_text="?????")],
+            "new_value": "半开",
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-9", quote_text="青铜门半开")],
         }
     )
 
@@ -2198,14 +2198,14 @@ def test_aggregate_state_changes_merges_only_exact_v12_semantics() -> None:
     assert result.state_changes[0].agent_run_ids == ["run-1", "run-2"]
     assert len(result.state_changes[0].evidence_refs) == 2
     assert [item.proposal.new_value for item in result.state_changes] == [
-        "??",
-        "??",
-        "??",
-        "??",
-        "??",
+        "关闭",
+        "开启",
+        "损坏",
+        "关闭",
+        "关闭",
         1,
         "1",
-        "??",
+        "半开",
     ]
 
 
@@ -2215,24 +2215,24 @@ def test_aggregate_state_changes_merges_exact_v13_appearance_candidates() -> Non
             "schema_version": "1.3",
             "proposal_id": "state-change-v13-1",
             "event": {
-                "event_summary": "????",
+                "event_summary": "换上灰衣",
                 "event_proposal_id": None,
                 "proposal_schema": None,
                 "resolution_status": "UNRESOLVED",
             },
             "target": {
-                "mention_text": "??",
+                "mention_text": "周砚",
                 "target_kind": "CHARACTER",
                 "entity_proposal_id": None,
                 "proposal_schema": None,
                 "resolution_status": "UNRESOLVED",
             },
             "attribute_path": "appearance.clothing",
-            "old_value": "???",
-            "new_value": "??",
+            "old_value": "湿外袍",
+            "new_value": "灰衣",
             "persistent": False,
             "reality_layer": "PRIMARY",
-            "evidence_refs": [{"chunk_id": "chunk-v13-1", "quote_text": "????"}],
+            "evidence_refs": [{"chunk_id": "chunk-v13-1", "quote_text": "换上灰衣"}],
             "new_value_evidence_indexes": [0],
             "persistence_evidence_indexes": [],
             "confidence": 0.9,
@@ -2241,7 +2241,7 @@ def test_aggregate_state_changes_merges_exact_v13_appearance_candidates() -> Non
     same = base.model_copy(
         update={
             "proposal_id": "state-change-v13-2",
-            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-v13-2", quote_text="????")],
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-v13-2", quote_text="换上灰衣")],
         }
     )
 
@@ -2369,13 +2369,13 @@ def test_aggregate_knowledge_states_merges_only_identical_resolution_aware_keys(
         {
             "proposal_id": "knowledge-1",
             "subject": {
-                "mention_text": "??",
+                "mention_text": "沈策",
                 "entity_proposal_id": "entity-shence",
                 "resolution_status": "RESOLVED",
             },
             "target": {
                 "target_kind": "WORLD_FACT",
-                "target_text": "????",
+                "target_text": "出口存在",
                 "proposal_id": None,
                 "proposal_schema": None,
                 "resolution_status": "UNRESOLVED",
@@ -2395,7 +2395,7 @@ def test_aggregate_knowledge_states_merges_only_identical_resolution_aware_keys(
         | {
             "proposal_id": "knowledge-3",
             "subject": {
-                "mention_text": "??",
+                "mention_text": "沈策",
                 "entity_proposal_id": None,
                 "resolution_status": "UNRESOLVED",
             },
@@ -2427,13 +2427,13 @@ def test_aggregate_knowledge_states_never_merges_same_id_when_target_text_or_bas
         {
             "proposal_id": "ksp-shared",
             "subject": {
-                "mention_text": "?",
+                "mention_text": "甲",
                 "entity_proposal_id": "entity-a",
                 "resolution_status": "RESOLVED",
             },
             "target": {
                 "target_kind": "WORLD_FACT",
-                "target_text": "????",
+                "target_text": "出口存在",
                 "proposal_id": None,
                 "proposal_schema": None,
                 "resolution_status": "UNRESOLVED",
@@ -2447,7 +2447,7 @@ def test_aggregate_knowledge_states_never_merges_same_id_when_target_text_or_bas
     )
     changed_target = base.model_copy(
         update={
-            "target": base.target.model_copy(update={"target_text": "?????"}),
+            "target": base.target.model_copy(update={"target_text": "出口不存在"}),
             "evidence_refs": [EvidenceRefV1(chunk_id="chunk-2")],
         }
     )
@@ -2460,7 +2460,7 @@ def test_aggregate_knowledge_states_never_merges_same_id_when_target_text_or_bas
     changed_anchor = base.model_copy(
         update={
             "valid_from": KnowledgeTemporalAnchorV1(
-                anchor_text="?????",
+                anchor_text="门关闭之后",
                 event_proposal_id=None,
                 resolution_status="UNRESOLVED",
             ),
@@ -2499,13 +2499,13 @@ def test_aggregate_knowledge_states_preserves_cross_window_target_kind_and_text_
         {
             "proposal_id": "knowledge-world-1",
             "subject": {
-                "mention_text": "??",
+                "mention_text": "林舟",
                 "entity_proposal_id": None,
                 "resolution_status": "UNRESOLVED",
             },
             "target": {
                 "target_kind": "WORLD_FACT",
-                "target_text": "????????????",
+                "target_text": "守卫故意隐瞒了山路的位置",
                 "proposal_id": None,
                 "proposal_schema": None,
                 "resolution_status": "UNRESOLVED",
@@ -2536,7 +2536,7 @@ def test_aggregate_knowledge_states_preserves_cross_window_target_kind_and_text_
     core_target = base.model_copy(
         update={
             "proposal_id": "knowledge-core-1",
-            "target": base.target.model_copy(update={"target_text": "????"}),
+            "target": base.target.model_copy(update={"target_text": "山中有鬼"}),
             "evidence_refs": [EvidenceRefV1(chunk_id="chunk-4")],
         }
     )
@@ -2544,7 +2544,7 @@ def test_aggregate_knowledge_states_preserves_cross_window_target_kind_and_text_
         update={
             "proposal_id": "knowledge-rumor-1",
             "target": base.target.model_copy(
-                update={"target_text": "???????"}
+                update={"target_text": "山中有鬼的传言"}
             ),
             "evidence_refs": [EvidenceRefV1(chunk_id="chunk-5")],
         }
@@ -2566,7 +2566,7 @@ def test_aggregate_knowledge_states_preserves_cross_window_target_kind_and_text_
     changed_subject = base.model_copy(
         update={
             "proposal_id": "knowledge-subject-1",
-            "subject": base.subject.model_copy(update={"mention_text": "??"}),
+            "subject": base.subject.model_copy(update={"mention_text": "苏岚"}),
             "evidence_refs": [EvidenceRefV1(chunk_id="chunk-8")],
         }
     )
@@ -2581,7 +2581,7 @@ def test_aggregate_knowledge_states_preserves_cross_window_target_kind_and_text_
         update={
             "proposal_id": "knowledge-anchor-1",
             "valid_until": KnowledgeTemporalAnchorV1(
-                anchor_text="??????",
+                anchor_text="离开小镇之后",
                 event_proposal_id=None,
                 resolution_status="UNRESOLVED",
             ),
@@ -2638,7 +2638,7 @@ def test_aggregate_knowledge_states_preserves_cross_window_target_kind_and_text_
         "WORLD_FACT",
     }
     assert {item.proposal.target.target_text for item in result.knowledge_states} >= {
-        "????????????",
-        "????",
-        "???????",
+        "守卫故意隐瞒了山路的位置",
+        "山中有鬼",
+        "山中有鬼的传言",
     }

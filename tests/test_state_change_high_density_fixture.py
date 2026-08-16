@@ -1,4 +1,4 @@
-import json
+﻿import json
 from pathlib import Path
 from typing import TypeVar
 
@@ -128,7 +128,7 @@ def test_high_density_state_change_fixture_is_original_and_structured() -> None:
     assert set(source_ids) == {f"hd-{index:02d}" for index in range(1, len(source_ids) + 1)}
     assert not any(
         marker in text
-        for marker in ("????", "?????????", "????????", "??????")
+        for marker in ("当前合同", "明确完成的发型转换", "记录者把每个对象", "这些话不构成")
     )
 
     text_by_id = {case["source_chunk_id"]: case["text"] for case in fixture["cases"]}

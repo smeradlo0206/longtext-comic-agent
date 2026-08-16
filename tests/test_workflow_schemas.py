@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+﻿from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -215,7 +215,7 @@ def test_mock_provider_result_records_mock_event_output() -> None:
         structured_output={
             "proposal_id": "proposal-1",
             "event_type": "handoff",
-            "summary": "?????????",
+            "summary": "陈野把伞递给林夏。",
             "evidence_refs": [{"chunk_id": "chunk-1"}],
             "confidence": 0.9,
             "reality_layer": "PRIMARY",

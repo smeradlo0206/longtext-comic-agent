@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 
 
 def test_web_console_static_html_exposes_demo_controls_without_local_secrets() -> None:
@@ -11,7 +11,7 @@ def test_web_console_static_html_exposes_demo_controls_without_local_secrets() -
     assert "Access Not Required" in html
     assert 'id="runMock"' in html
     assert 'id="runRealEvent"' in html
-    assert "Real Event Agent ? event only" in html
+    assert "Real Event Agent · event only" in html
     assert 'id="narrativeMode"' in html
     assert 'id="narrativeChunkIds"' in html
     assert 'id="narrativeChunkLimit"' in html
@@ -27,14 +27,14 @@ def test_web_console_static_html_exposes_demo_controls_without_local_secrets() -
     assert 'id="manualReviewChecklist"' in html
     assert 'id="narrativeSelectedChunks"' in html
     assert "Selected input chunks" in html
-    assert "???? chunks" in html
+    assert "本次输入 chunks" in html
     assert "event_extraction" in html
-    assert "event_extraction ? EventProposalBatchV1" in html
-    assert "entity_extraction ? EntityProposalBatchV1" in html
-    assert "claim_extraction ? ClaimProposalBatchV1" in html
-    assert "knowledge_state_extraction ? KnowledgeStateProposalBatchV1" in html
-    assert "state_change_extraction ? StateChangeProposalBatchV1" in html
-    assert "relationship_signal_extraction ? RelationshipSignalProposalBatchV1" in html
+    assert "event_extraction · EventProposalBatchV1" in html
+    assert "entity_extraction · EntityProposalBatchV1" in html
+    assert "claim_extraction · ClaimProposalBatchV1" in html
+    assert "knowledge_state_extraction · KnowledgeStateProposalBatchV1" in html
+    assert "state_change_extraction · StateChangeProposalBatchV1" in html
+    assert "relationship_signal_extraction · RelationshipSignalProposalBatchV1" in html
     assert "Proposal List" in html
     assert "renderProposalList" in html
     assert "proposalItems" in html
@@ -49,17 +49,17 @@ def test_web_console_static_html_exposes_demo_controls_without_local_secrets() -
     assert "renderKnowledgeStateProposalList" in html
     assert "renderStateChangeProposalList" in html
     assert "buildStateChangePossibleDuplicateReview" in html
-    assert "???????????" in html
-    assert "????????????" in html
+    assert "可能重复：事件表达不同" in html
+    assert "仅供人工审核；未自动合并" in html
     assert "stateChangePossibleDuplicateMarkup" in html
     assert "result.state_changes" in html
     assert "Attribute path" in html
     assert "Old value" in html
     assert "New value" in html
     assert "Persistent" in html
-    assert "??????????" in html
+    assert "未发现可审计状态变化" in html
     assert "Relationship Signal audit" in html
-    assert "??????????" in html
+    assert "未发现可审计关系信号" in html
     assert "Relationship domain" in html
     assert "Relationship kind" in html
     assert "Directionality" in html
@@ -76,15 +76,15 @@ def test_web_console_static_html_exposes_demo_controls_without_local_secrets() -
     assert "Valid from" in html
     assert "Valid until" in html
     assert "Evidence status" in html
-    assert "???" in html
-    assert "????" in html
+    assert "未声明" in html
+    assert "未解析：" in html
     assert "data-evidence-run" in html
     assert '"resolution / temporal"' not in html
     assert "expandableTargetSummary" in html
-    assert "????" in html
+    assert "查看完整" in html
     assert "target-summary" in html
-    assert "????????????" in html
-    assert "???????????" in html
+    assert "可能重复：目标类型不一致" in html
+    assert "可能重复：目标表达不同" in html
     assert "buildKnowledgePossibleDuplicateReview" in html
     assert "normalizeKnowledgeDuplicateTarget" in html
     assert "data-evidence-run" in html
@@ -116,7 +116,7 @@ def test_web_console_static_html_exposes_demo_controls_without_local_secrets() -
     assert "/agent-runs/narrative-analyst" in html
     assert "clearSelectedChunks" in html
     assert "clearSelectedChunks();" in html
-    assert "???? 1-3 ? chunks???????????" in html
+    assert "请先选择 1-3 个 chunks，避免误用旧项目文本。" in html
     assert "body.chunk_ids = chunkIds;" in html
     assert 'const requestedMode = $("narrativeMode").value;' in html
     assert "assertNarrativeModeMatches" in html
@@ -204,7 +204,7 @@ def test_web_console_gives_window_execution_details_a_dedicated_scroll_viewport(
 def test_web_console_manual_review_empty_values_are_explained_in_chinese() -> None:
     html = Path("web_console/index.html").read_text(encoding="utf-8")
 
-    assert "?????" in html
+    assert "待人工填写" in html
     assert '? "manual"' not in html
 
 
@@ -307,17 +307,17 @@ def test_web_console_exposes_a_separate_offline_knowledge_state_evaluation_area(
     assert 'id="buildKnowledgeEvaluationReport"' in html
     assert 'id="knowledgeEvaluationReportStatus"' in html
     assert 'id="knowledgeEvaluationReport"' in html
-    assert "???????" in html
+    assert "已收集评测结果" in html
     assert 'id="runKnowledgeStateCase"' in html
     assert 'id="knowledgeEvaluationReviewNotes"' in html
     assert 'id="exportKnowledgeEvaluation"' in html
     assert "/knowledge-state-evaluation/cases" in html
-    assert "???????? Provider" in html
+    assert "不会在加载时调用 Provider" in html
     assert "real_llm_requested: true" in html
     assert "evaluation_result" in html
     assert "actual_structured_batch" in html
     assert "run_failures" in html
-    assert "target_kind ??" in html
+    assert "target_kind 错误" in html
 
 
 def test_knowledge_state_evaluation_requires_case_selection_before_running() -> None:
@@ -335,9 +335,9 @@ def test_knowledge_state_real_llm_evaluation_exposes_running_and_failure_feedbac
     assert 'id="knowledgeEvaluationRunStatus"' in html
     assert "knowledgeEvaluationRunInProgress" in html
     assert "const hasSelectedCase = Boolean(caseId);" in html
-    assert "?? LLM ??????" in html
-    assert "?? LLM ????" in html
-    assert "????????" in html
+    assert "真实 LLM 评测正在运行" in html
+    assert "真实 LLM 评测失败" in html
+    assert "运行失败，未评测" in html
     assert "acceptance_eligible" in html
     assert "finally" in html
     assert "reviewed_at" in html

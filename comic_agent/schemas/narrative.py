@@ -655,6 +655,14 @@ class ClaimProposalV1(StrictBaseModel):
         description="Schema version.",
     )
     proposal_id: str = Field(description="Proposal id.")
+    # Legacy v1.0 identifiers retained for Timeline compatibility.
+    claim_id: str | None = Field(default=None, description="Legacy claim id alias.")
+    subject_id: str | None = Field(default=None, description="Legacy subject id.")
+    predicate: str | None = Field(default=None, description="Legacy claim predicate.")
+    object_value: str | None = Field(default=None, description="Legacy claim object value.")
+    asserted_by_entity_id: str | None = Field(
+        default=None, description="Legacy asserting entity id."
+    )
     claim_type: ClaimType = Field(description="Claim type.")
     claim_text: str = Field(description="Exact or faithful claim text.")
     temporal_scope: ClaimTemporalScope | None = Field(
@@ -679,6 +687,24 @@ class ClaimProposalV1(StrictBaseModel):
     def default_legacy_payload_version(cls, value: Any) -> Any:
         """Read old claim payloads that omitted schema_version as v1.0."""
 
+        if isinstance(value, dict) and "proposal_id" not in value and "claim_id" in value:
+            legacy = dict(value)
+            claim_id = str(legacy.pop("claim_id"))
+            predicate = str(legacy.get("predicate", "claim"))
+            object_value = str(legacy.get("object_value", ""))
+            legacy.update(
+                {
+                    "proposal_id": claim_id,
+                    "claim_id": claim_id,
+                    "claim_type": "FACTUAL_ASSERTION",
+                    "claim_text": f"{predicate}: {object_value}".strip(),
+                    "source_type": "UNKNOWN",
+                    "verification_status": "UNVERIFIED",
+                    "temporal_scope": "PRESENT",
+                    "schema_version": "1.0",
+                }
+            )
+            return legacy
         if _looks_like_legacy_claim_payload(value):
             return {**value, "schema_version": "1.0"}
         return value

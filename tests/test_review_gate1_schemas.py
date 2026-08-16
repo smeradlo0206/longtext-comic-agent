@@ -1,4 +1,4 @@
-"""Review Gate 1 source/chunk quality contract tests."""
+﻿"""Review Gate 1 source/chunk quality contract tests."""
 
 from datetime import UTC, datetime
 
@@ -20,7 +20,7 @@ from comic_agent.services.document_parser import DocumentParser
 from comic_agent.services.id_service import checksum_text
 from comic_agent.services.review_gate1_service import ReviewGate1Service, build_review_gate1_input
 
-TEXT = "??? ??\n\n???????\n\n??????\n"
+TEXT = "第一章 开始\n\n林夏站在门边。\n\n她打开了门。\n"
 
 
 def _parsed():

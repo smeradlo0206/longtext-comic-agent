@@ -62,7 +62,9 @@ def analyze_timeline(
             AgentRunV1(
                 agent_run_id=f"agent-run-{uuid4().hex}",
                 project_id=project_id,
+                agent_name=TimelineAgent.spec.agent_id,
                 agent_id=TimelineAgent.spec.agent_id,
+                output_schema="TimelineAnalysisProposalV1",
                 status=AgentRunStatus.FAILED,
                 error_message=str(exc),
             )

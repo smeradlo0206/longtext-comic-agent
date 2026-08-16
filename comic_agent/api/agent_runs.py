@@ -46,11 +46,11 @@ NarrativeAnalysisRepositoryDep = Annotated[
 def list_project_agent_runs(
     project_id: str,
     repository: AgentRunRepositoryDep,
-) -> dict[str, list[dict[str, Any]]]:
+) -> list[dict[str, Any]]:
     """List sanitized agent runs for a project."""
 
     runs = repository.list_agent_runs(project_id)
-    return {"items": [_agent_run_summary(run) for run in runs]}
+    return [_agent_run_summary(run) for run in runs]
 
 
 @router.post(
@@ -693,7 +693,11 @@ def _agent_run_summary(run: AgentRunV1) -> dict[str, Any]:
     return {
         "agent_run_id": run.agent_run_id,
         "project_id": run.project_id,
+        "agent_id": run.agent_id or run.agent_name,
         "agent_name": run.agent_name,
+        "source_chunk_id": run.source_chunk_id,
+        "output_proposal_id": run.output_proposal_id
+        or (run.output_proposal_ids[0] if run.output_proposal_ids else None),
         "status": run.status,
         "output_schema": run.output_schema,
         "input_chunk_ids": run.input_chunk_ids,

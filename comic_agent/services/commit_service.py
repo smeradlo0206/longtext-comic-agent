@@ -2,7 +2,11 @@
 
 from comic_agent.repositories.storybible_repository import StoryBibleRepository
 from comic_agent.schemas.base import EvidenceRefV1
-from comic_agent.schemas.narrative import EventProposalV1, TemporalRelation, TemporalRelationProposalV1
+from comic_agent.schemas.narrative import (
+    EventProposalV1,
+    TemporalRelation,
+    TemporalRelationProposalV1,
+)
 from comic_agent.schemas.source import SourceChapterV1, SourceChunkV1, SourceDocumentV1
 from comic_agent.schemas.storybible import CommitPlanV1
 from comic_agent.services.storybible_validator import EvidenceLookup, StoryBibleValidator

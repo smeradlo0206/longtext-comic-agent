@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from pydantic import ValidationError
 
 from comic_agent.schemas.base import EvidenceRefV1, RealityLayer
@@ -37,7 +37,7 @@ def event_payload() -> dict[str, object]:
     return {
         "proposal_id": "proposal-event-1",
         "event_type": "handoff",
-        "summary": "?????????",
+        "summary": "陈野把伞递给林夏。",
         "participant_ids": ["char-chen", "char-lin"],
         "location_id": "loc-playground",
         "evidence_refs": [EvidenceRefV1(chunk_id="chunk-1")],
@@ -50,9 +50,9 @@ def entity_payload() -> dict[str, object]:
     return {
         "proposal_id": "entity-1",
         "entity_type": "CHARACTER",
-        "canonical_name": "??",
-        "aliases": ["??"],
-        "evidence_refs": [EvidenceRefV1(chunk_id="chunk-entity", quote_text="??")],
+        "canonical_name": "林夏",
+        "aliases": ["小夏"],
+        "evidence_refs": [EvidenceRefV1(chunk_id="chunk-entity", quote_text="林夏")],
         "confidence": 0.81,
     }
 
@@ -68,7 +68,7 @@ def test_entity_proposal_batch_minimal_valid_example() -> None:
                     | {
                         "proposal_id": "entity-2",
                         "entity_type": "ORGANIZATION",
-                        "canonical_name": "???",
+                        "canonical_name": "旧馆社",
                         "aliases": [],
                     }
                 )
@@ -403,17 +403,17 @@ def test_state_change_proposal_minimal_valid_example() -> None:
     state_change = StateChangeProposalV1(
         proposal_id="proposal-state-1",
         event={
-            "event_summary": "???????",
+            "event_summary": "林夏剪短头发。",
             "resolution_status": "UNRESOLVED",
         },
         target={
-            "mention_text": "??",
+            "mention_text": "林夏",
             "target_kind": "CHARACTER",
             "resolution_status": "UNRESOLVED",
         },
         attribute_path="health.injury",
         old_value=None,
-        new_value="??",
+        new_value="受伤",
         persistent=True,
         reality_layer=RealityLayer.PRIMARY,
         evidence_refs=[EvidenceRefV1(chunk_id="chunk-1")],
@@ -423,8 +423,8 @@ def test_state_change_proposal_minimal_valid_example() -> None:
     )
 
     assert state_change.schema_version == "1.3"
-    assert state_change.event.event_summary == "???????"
-    assert state_change.target.mention_text == "??"
+    assert state_change.event.event_summary == "林夏剪短头发。"
+    assert state_change.target.mention_text == "林夏"
     assert state_change.evidence_refs[0].chunk_id == "chunk-1"
 
 
@@ -433,11 +433,11 @@ def _state_change_v11_payload() -> dict[str, object]:
         "schema_version": "1.1",
         "proposal_id": "proposal-state-1",
         "event": {
-            "event_summary": "???????",
+            "event_summary": "林夏剪短头发。",
             "resolution_status": "UNRESOLVED",
         },
         "target": {
-            "mention_text": "??",
+            "mention_text": "林夏",
             "resolution_status": "UNRESOLVED",
         },
         "attribute_path": "appearance.hair",
@@ -445,7 +445,7 @@ def _state_change_v11_payload() -> dict[str, object]:
         "new_value": "short",
         "persistent": True,
         "reality_layer": RealityLayer.PRIMARY,
-        "evidence_refs": [EvidenceRefV1(chunk_id="chunk-1", quote_text="???????")],
+        "evidence_refs": [EvidenceRefV1(chunk_id="chunk-1", quote_text="林夏剪短头发。")],
         "confidence": 0.87,
     }
 
@@ -455,20 +455,20 @@ def _state_change_v12_payload() -> dict[str, object]:
         "schema_version": "1.2",
         "proposal_id": "proposal-state-v12-1",
         "event": {
-            "event_summary": "???????",
+            "event_summary": "林夏被箭射伤。",
             "resolution_status": "UNRESOLVED",
         },
         "target": {
-            "mention_text": "??",
+            "mention_text": "林夏",
             "target_kind": "CHARACTER",
             "resolution_status": "UNRESOLVED",
         },
         "attribute_path": "health.injury",
         "old_value": None,
-        "new_value": "??",
+        "new_value": "受伤",
         "persistent": False,
         "reality_layer": RealityLayer.PRIMARY,
-        "evidence_refs": [EvidenceRefV1(chunk_id="chunk-1", quote_text="???????")],
+        "evidence_refs": [EvidenceRefV1(chunk_id="chunk-1", quote_text="林夏被箭射伤。")],
         "new_value_evidence_indexes": [0],
         "persistence_evidence_indexes": [],
         "confidence": 0.87,
@@ -486,7 +486,7 @@ def _state_change_v10_payload() -> dict[str, object]:
         "new_value": "short",
         "persistent": True,
         "reality_layer": RealityLayer.PRIMARY,
-        "evidence_refs": [EvidenceRefV1(chunk_id="chunk-1", quote_text="???????")],
+        "evidence_refs": [EvidenceRefV1(chunk_id="chunk-1", quote_text="林夏剪短头发。")],
         "confidence": 0.87,
     }
 
@@ -510,13 +510,13 @@ def test_state_change_v11_resolved_references_require_candidate_schema_types() -
         _state_change_v11_payload()
         | {
             "event": {
-                "event_summary": "???????",
+                "event_summary": "林夏剪短头发。",
                 "event_proposal_id": "event-proposal-1",
                 "proposal_schema": "EventProposalV1",
                 "resolution_status": "RESOLVED",
             },
             "target": {
-                "mention_text": "??",
+                "mention_text": "林夏",
                 "entity_proposal_id": "entity-proposal-1",
                 "proposal_schema": "EntityProposalV1",
                 "resolution_status": "RESOLVED",
@@ -534,7 +534,7 @@ def test_state_change_v11_resolved_references_require_candidate_schema_types() -
         (
             StateChangeEventRefV1,
             {
-                "event_summary": "?????",
+                "event_summary": "门被打开。",
                 "event_proposal_id": "event-proposal-1",
                 "resolution_status": "UNRESOLVED",
             },
@@ -542,14 +542,14 @@ def test_state_change_v11_resolved_references_require_candidate_schema_types() -
         (
             StateChangeEventRefV1,
             {
-                "event_summary": "?????",
+                "event_summary": "门被打开。",
                 "resolution_status": "RESOLVED",
             },
         ),
         (
             StateChangeEventRefV1,
             {
-                "event_summary": "?????",
+                "event_summary": "门被打开。",
                 "event_proposal_id": "event-proposal-1",
                 "proposal_schema": "ClaimProposalV1",
                 "resolution_status": "RESOLVED",
@@ -558,7 +558,7 @@ def test_state_change_v11_resolved_references_require_candidate_schema_types() -
         (
             StateChangeTargetRefV1,
             {
-                "mention_text": "??",
+                "mention_text": "城门",
                 "entity_proposal_id": "entity-proposal-1",
                 "resolution_status": "UNRESOLVED",
             },
@@ -566,14 +566,14 @@ def test_state_change_v11_resolved_references_require_candidate_schema_types() -
         (
             StateChangeTargetRefV1,
             {
-                "mention_text": "??",
+                "mention_text": "城门",
                 "resolution_status": "RESOLVED",
             },
         ),
         (
             StateChangeTargetRefV1,
             {
-                "mention_text": "??",
+                "mention_text": "城门",
                 "entity_proposal_id": "entity-proposal-1",
                 "proposal_schema": "EventProposalV1",
                 "resolution_status": "RESOLVED",
@@ -648,7 +648,7 @@ def test_state_change_batch_rejects_legacy_and_duplicate_changes() -> None:
         _state_change_v11_payload()
         | {
             "proposal_id": "proposal-state-target-2",
-            "target": {"mention_text": "??", "resolution_status": "UNRESOLVED"},
+            "target": {"mention_text": "城门", "resolution_status": "UNRESOLVED"},
         },
         _state_change_v11_payload()
         | {"proposal_id": "proposal-state-old-2", "old_value": "braided"},
@@ -662,7 +662,7 @@ def test_state_change_batch_rejects_legacy_and_duplicate_changes() -> None:
         | {
             "proposal_id": "proposal-state-resolved-2",
             "target": {
-                "mention_text": "??",
+                "mention_text": "林夏",
                 "entity_proposal_id": "entity-proposal-1",
                 "proposal_schema": "EntityProposalV1",
                 "resolution_status": "RESOLVED",
@@ -688,11 +688,11 @@ def test_state_change_batch_preserves_distinct_semantic_candidates(
 @pytest.mark.parametrize(
     ("target_kind", "attribute_path", "new_value"),
     [
-        ("CHARACTER", "health.injury", "??"),
-        ("CHARACTER", "location", "??"),
-        ("OBJECT", "possession.holder", "??"),
-        ("LOCATION", "accessibility", "??"),
-        ("ORGANIZATION", "availability", "??"),
+        ("CHARACTER", "health.injury", "受伤"),
+        ("CHARACTER", "location", "山门"),
+        ("OBJECT", "possession.holder", "林夏"),
+        ("LOCATION", "accessibility", "封死"),
+        ("ORGANIZATION", "availability", "停业"),
     ],
 )
 def test_state_change_v12_accepts_target_path_compatibility_matrix(
@@ -704,7 +704,7 @@ def test_state_change_v12_accepts_target_path_compatibility_matrix(
         _state_change_v12_payload()
         | {
             "target": {
-                "mention_text": "??",
+                "mention_text": "目标",
                 "target_kind": target_kind,
                 "resolution_status": "UNRESOLVED",
             },
@@ -734,7 +734,7 @@ def test_state_change_v12_rejects_incompatible_or_free_form_attribute_paths(
             _state_change_v12_payload()
             | {
                 "target": {
-                    "mention_text": "??",
+                    "mention_text": "目标",
                     "target_kind": target_kind,
                     "resolution_status": "UNRESOLVED",
                 },
@@ -749,7 +749,7 @@ def test_state_change_v12_rejects_event_or_missing_target_kind() -> None:
             _state_change_v12_payload()
             | {
                 "target": {
-                    "mention_text": "??????",
+                    "mention_text": "林夏剪短头发",
                     "target_kind": "EVENT",
                     "resolution_status": "UNRESOLVED",
                 }
@@ -758,11 +758,11 @@ def test_state_change_v12_rejects_event_or_missing_target_kind() -> None:
     with pytest.raises(ValidationError, match="target_kind"):
         StateChangeProposalV1.model_validate(
             _state_change_v12_payload()
-            | {"target": {"mention_text": "??", "resolution_status": "UNRESOLVED"}}
+            | {"target": {"mention_text": "林夏", "resolution_status": "UNRESOLVED"}}
         )
 
 
-@pytest.mark.parametrize("old_value", ["??", "??", "N/A", "???"])
+@pytest.mark.parametrize("old_value", ["未知", "不明", "N/A", "待确认"])
 def test_state_change_v12_rejects_placeholder_old_values(old_value: str) -> None:
     with pytest.raises(ValidationError, match="old_value"):
         StateChangeProposalV1.model_validate(
@@ -770,7 +770,7 @@ def test_state_change_v12_rejects_placeholder_old_values(old_value: str) -> None
         )
 
 
-@pytest.mark.parametrize("new_value", [None, {"state": "??"}, ["??"]])
+@pytest.mark.parametrize("new_value", [None, {"state": "受伤"}, ["受伤"]])
 def test_state_change_v12_rejects_missing_or_structured_new_values(new_value: object) -> None:
     with pytest.raises(ValidationError, match="new_value"):
         StateChangeProposalV1.model_validate(
@@ -785,7 +785,7 @@ def test_state_change_v12_rejects_missing_or_structured_new_values(new_value: ob
         _state_change_v12_payload()
         | {
             "target": {
-                "mention_text": "??",
+                "mention_text": "矿石",
                 "target_kind": "OBJECT",
                 "resolution_status": "UNRESOLVED",
             },
@@ -795,7 +795,7 @@ def test_state_change_v12_rejects_missing_or_structured_new_values(new_value: ob
         _state_change_v12_payload()
         | {
             "target": {
-                "mention_text": "????",
+                "mention_text": "矿洞入口",
                 "target_kind": "LOCATION",
                 "resolution_status": "UNRESOLVED",
             },
@@ -873,8 +873,8 @@ def test_state_change_v12_batch_rejects_semantic_duplicates_despite_evidence_or_
         _state_change_v12_payload()
         | {
             "evidence_refs": [
-                EvidenceRefV1(chunk_id="chunk-1", quote_text="???????"),
-                EvidenceRefV1(chunk_id="chunk-2", quote_text="???????"),
+                EvidenceRefV1(chunk_id="chunk-1", quote_text="林夏被箭射伤。"),
+                EvidenceRefV1(chunk_id="chunk-2", quote_text="伤势仍未痊愈。"),
             ],
             "new_value_evidence_indexes": [0],
             "confidence": 0.5,
@@ -885,8 +885,8 @@ def test_state_change_v12_batch_rejects_semantic_duplicates_despite_evidence_or_
         | {
             "proposal_id": "proposal-state-v12-2",
             "evidence_refs": [
-                EvidenceRefV1(chunk_id="chunk-2", quote_text="???????"),
-                EvidenceRefV1(chunk_id="chunk-1", quote_text="???????"),
+                EvidenceRefV1(chunk_id="chunk-2", quote_text="伤势仍未痊愈。"),
+                EvidenceRefV1(chunk_id="chunk-1", quote_text="林夏被箭射伤。"),
             ],
             "new_value_evidence_indexes": [1],
             "confidence": 0.9,
@@ -906,7 +906,7 @@ def test_state_change_v12_batch_allows_distinct_changes_using_the_same_evidence(
         | {
             "proposal_id": "proposal-state-v12-location",
             "attribute_path": "location",
-            "new_value": "????",
+            "new_value": "矿洞入口",
         }
     )
 
@@ -930,7 +930,7 @@ def test_state_change_v13_defaults_to_appearance_capable_contract() -> None:
         "proposal_id": "proposal-state-v13-clothing",
         "attribute_path": "appearance.clothing",
         "old_value": None,
-        "new_value": "??",
+        "new_value": "灰衣",
         "persistent": False,
         "persistence_evidence_indexes": [],
     }
@@ -951,7 +951,7 @@ def test_state_change_v13_appearance_paths_accept_character_only(
             "schema_version": "1.3",
             "proposal_id": f"proposal-state-v13-{attribute_path}",
             "attribute_path": attribute_path,
-            "new_value": "??" if attribute_path.endswith("clothing") else "????",
+            "new_value": "灰衣" if attribute_path.endswith("clothing") else "长发披下",
         }
     )
     assert proposal.target.target_kind == "CHARACTER"
@@ -963,9 +963,9 @@ def test_state_change_v13_appearance_paths_accept_character_only(
                 "schema_version": "1.3",
                 "proposal_id": f"proposal-state-v13-object-{attribute_path}",
                 "attribute_path": attribute_path,
-                "new_value": "??",
+                "new_value": "灰衣",
                 "target": {
-                    "mention_text": "??",
+                    "mention_text": "衣柜",
                     "target_kind": "OBJECT",
                     "resolution_status": "UNRESOLVED",
                 },
@@ -974,7 +974,7 @@ def test_state_change_v13_appearance_paths_accept_character_only(
 
 
 @pytest.mark.parametrize(
-    "bad_value", ["", "??", "??", "N/A", "???", {"value": "??"}, ["??"]]
+    "bad_value", ["", "未知", "不明", "N/A", "待确认", {"value": "灰衣"}, ["灰衣"]]
 )
 def test_state_change_v13_appearance_values_are_constrained(bad_value: object) -> None:
     with pytest.raises(ValidationError):
@@ -997,7 +997,7 @@ def test_state_change_v13_batch_accepts_only_v13_items_and_empty_output() -> Non
             "schema_version": "1.3",
             "proposal_id": "proposal-state-v13-batch",
             "attribute_path": "appearance.hairstyle",
-            "new_value": "????",
+            "new_value": "长发披下",
         }
     )
     v12_change = StateChangeProposalV1.model_validate(
@@ -1021,7 +1021,7 @@ def test_state_change_v12_does_not_accept_v13_appearance_paths() -> None:
             _state_change_v12_payload()
             | {
                 "attribute_path": "appearance.clothing",
-                "new_value": "??",
+                "new_value": "灰衣",
             }
         )
 
@@ -1030,7 +1030,7 @@ def claim_payload() -> dict[str, object]:
     return {
         "proposal_id": "claim-1",
         "claim_type": ClaimType.ACCUSATION,
-        "claim_text": "???????????",
+        "claim_text": "林祁说程放拿了门禁卡。",
         "source_type": ClaimSourceType.CHARACTER,
         "source_id": "char-linqi",
         "target_event_id": "event-card-taken",
@@ -1084,7 +1084,7 @@ def test_claim_proposal_v1_2_accepts_evaluation() -> None:
             | {
                 "schema_version": "1.2",
                 "claim_type": "EVALUATION",
-                "claim_text": "???????????",
+                "claim_text": "这门术法的杀伤力惊人。",
                 "temporal_scope": ClaimTemporalScope.PRESENT,
             }
         )
@@ -1178,7 +1178,7 @@ def test_claim_proposal_accusation_valid_example() -> None:
     claim = ClaimProposalV1(**claim_payload())
 
     assert claim.claim_type == ClaimType.ACCUSATION
-    assert claim.claim_text == "???????????"
+    assert claim.claim_text == "林祁说程放拿了门禁卡。"
     assert claim.temporal_scope == ClaimTemporalScope.PAST
     assert not isinstance(claim, EventProposalV1)
 
@@ -1194,7 +1194,7 @@ def test_claim_proposal_batch_minimal_valid_example() -> None:
                     | {
                         "proposal_id": "claim-2",
                         "claim_type": ClaimType.DENIAL,
-                        "claim_text": "????????????",
+                        "claim_text": "程放否认自己拿了门禁卡。",
                     }
                 )
             ),
@@ -1288,7 +1288,7 @@ def test_claim_proposal_denial_valid_example() -> None:
             | {
                 "proposal_id": "claim-denial-1",
                 "claim_type": ClaimType.DENIAL,
-                "claim_text": "????????????",
+                "claim_text": "程放否认自己拿了门禁卡。",
                 "source_id": "char-chengfang",
             }
         )
@@ -1439,13 +1439,13 @@ def knowledge_v11_payload() -> dict[str, object]:
     return {
         "proposal_id": "knowledge-v11-1",
         "subject": {
-            "mention_text": "??",
+            "mention_text": "沈策",
             "entity_proposal_id": "entity-shence",
             "resolution_status": "RESOLVED",
         },
         "target": {
             "target_kind": "CLAIM",
-            "target_text": "??????",
+            "target_text": "备用出口存在",
             "proposal_id": "claim-exit",
             "proposal_schema": "ClaimProposalV1",
             "resolution_status": "RESOLVED",
@@ -1453,7 +1453,7 @@ def knowledge_v11_payload() -> dict[str, object]:
         "epistemic_status": "KNOWS",
         "epistemic_basis": "OBSERVED",
         "valid_from": {
-            "anchor_text": "??????",
+            "anchor_text": "发现维修单后",
             "event_proposal_id": "event-work-order",
             "resolution_status": "RESOLVED",
         },
@@ -1496,19 +1496,19 @@ def test_knowledge_state_v11_accepts_unresolved_source_anchors_without_ids() -> 
         knowledge_v11_payload()
         | {
             "subject": {
-                "mention_text": "????",
+                "mention_text": "那名守卫",
                 "entity_proposal_id": None,
                 "resolution_status": "UNRESOLVED",
             },
             "target": {
                 "target_kind": "WORLD_FACT",
-                "target_text": "???????",
+                "target_text": "城门在午夜关闭",
                 "proposal_id": None,
                 "proposal_schema": None,
                 "resolution_status": "UNRESOLVED",
             },
             "valid_from": {
-                "anchor_text": "???",
+                "anchor_text": "午夜前",
                 "event_proposal_id": None,
                 "resolution_status": "UNRESOLVED",
             },
@@ -1524,9 +1524,9 @@ def test_knowledge_state_v11_accepts_unresolved_source_anchors_without_ids() -> 
     "payload",
     [
         {"mention_text": " ", "entity_proposal_id": None, "resolution_status": "UNRESOLVED"},
-        {"mention_text": "??", "entity_proposal_id": None, "resolution_status": "RESOLVED"},
+        {"mention_text": "沈策", "entity_proposal_id": None, "resolution_status": "RESOLVED"},
         {
-            "mention_text": "??",
+            "mention_text": "沈策",
             "entity_proposal_id": "entity-1",
             "resolution_status": "UNRESOLVED",
         },
@@ -1596,7 +1596,7 @@ def test_knowledge_state_v11_heard_requires_heard_basis_but_heard_basis_can_supp
             "epistemic_basis": "HEARD",
             "target": {
                 "target_kind": "WORLD_FACT",
-                "target_text": "??????",
+                "target_text": "备用出口存在",
                 "proposal_id": None,
                 "proposal_schema": None,
                 "resolution_status": "UNRESOLVED",
