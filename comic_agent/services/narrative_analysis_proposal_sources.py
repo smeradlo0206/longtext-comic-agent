@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 
 from comic_agent.schemas.narrative import (
+    CampusContentProfileProposalV1,
     ClaimProposalBatchV1,
     ClaimProposalV1,
     EntityProposalBatchV1,
@@ -40,6 +41,7 @@ def proposal_sources_for_window(
         | KnowledgeStateProposalV1
         | StateChangeProposalV1
         | RelationshipSignalProposalV1
+        | CampusContentProfileProposalV1
     ]
     if agent_run.output_schema == "EventProposalBatchV1":
         proposals = tuple(EventProposalBatchV1.model_validate(payload).events)
@@ -61,6 +63,8 @@ def proposal_sources_for_window(
             for proposal in RelationshipSignalProposalBatchV1.model_validate(payload).signals
             if _relationship_signal_is_owned(window, proposal)
         )
+    elif agent_run.output_schema == "CampusContentProfileProposalV1":
+        proposals = (CampusContentProfileProposalV1.model_validate(payload),)
     else:
         return []
 

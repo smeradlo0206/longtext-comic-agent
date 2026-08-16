@@ -2,6 +2,7 @@
 
 from comic_agent.schemas.base import EvidenceRefV1
 from comic_agent.schemas.narrative import (
+    CampusContentProfileProposalV1,
     ClaimProposalV1,
     EntityProposalV1,
     EventProposalV1,
@@ -13,6 +14,7 @@ from comic_agent.schemas.narrative import (
     StateChangeProposalV1,
 )
 from comic_agent.schemas.workflow import (
+    AggregatedCampusContentProfileProposalV1,
     AggregatedClaimProposalV1,
     AggregatedEntityProposalV1,
     AggregatedEventProposalV1,
@@ -37,6 +39,7 @@ def aggregate_narrative_analysis(
     knowledge_states: dict[tuple[object, ...], AggregatedKnowledgeStateProposalV1] = {}
     state_changes: dict[tuple[object, ...], AggregatedStateChangeProposalV1] = {}
     relationship_signals: dict[tuple[object, ...], AggregatedRelationshipSignalProposalV1] = {}
+    campus_content_profiles: dict[tuple[object, ...], AggregatedCampusContentProfileProposalV1] = {}
     for source in sources:
         proposal = source.proposal
         if isinstance(proposal, EventProposalV1):
@@ -165,6 +168,34 @@ def aggregate_narrative_analysis(
                         ),
                     }
                 )
+        elif isinstance(proposal, CampusContentProfileProposalV1):
+            profile_key = (
+                proposal.project_id,
+                proposal.content_type,
+                tuple(proposal.audience),
+                tuple(proposal.must_preserve_fact_ids),
+                proposal.tone,
+                proposal.page_budget,
+                _evidence_key(proposal.evidence_refs),
+            )
+            existing_profile = campus_content_profiles.get(profile_key)
+            if existing_profile is None:
+                campus_content_profiles[profile_key] = AggregatedCampusContentProfileProposalV1(
+                    proposal=proposal,
+                    agent_run_ids=[source.agent_run_id],
+                    evidence_refs=proposal.evidence_refs,
+                )
+            else:
+                campus_content_profiles[profile_key] = existing_profile.model_copy(
+                    update={
+                        "agent_run_ids": _append_unique(
+                            existing_profile.agent_run_ids, source.agent_run_id
+                        ),
+                        "evidence_refs": _merge_evidence(
+                            existing_profile.evidence_refs, proposal.evidence_refs
+                        ),
+                    }
+                )
     return NarrativeAnalysisResultV1(
         analysis_run_id=analysis_run_id,
         events=list(events.values()),
@@ -173,6 +204,7 @@ def aggregate_narrative_analysis(
         knowledge_states=list(knowledge_states.values()),
         state_changes=list(state_changes.values()),
         relationship_signals=list(relationship_signals.values()),
+        campus_content_profiles=list(campus_content_profiles.values()),
     )
 
 

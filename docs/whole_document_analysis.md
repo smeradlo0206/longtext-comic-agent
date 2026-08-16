@@ -317,6 +317,20 @@ does not read repositories or databases to fill it. The input builder does not a
 AgentRun parameter, and repeated identical input/context/policy calls are deterministic except for
 UTC audit timestamps.
 
+## Campus content Profile boundary
+
+`campus_content_profile` is an explicit Narrative Analyst mode for a bounded campus-publication
+Profile candidate. It receives caller-supplied, same-project factual Claim proposals and selected
+SourceChunks; it does not alter default extraction modes, produce ComicBeat proposals, call Timeline,
+scan a database, or write StoryBible data. Its result remains `CANDIDATE` until Gate 2.
+
+Only `NarrativeTimelineInputAdapter` may build a campus Timeline input, and only when an APPROVED
+route contains the Profile in its `ApprovedProposalBundleV1`. It retains Profile-required factual
+claims (such as date, place, organizer, or activity name) and verifies bounded SourceChunk provenance.
+Raw aggregates and REJECTED, NEEDS_HUMAN_REVIEW, or FAILED routes are refused. There is no automatic
+Timeline call, SceneContext, beat/panel generation, image generation, Gate 3/4, or canonical write;
+no database migration is required.
+
 ## Automatic import to analysis
 
 The normal console path is TXT import → Gate 1 review → chapter selection → one-click

@@ -159,7 +159,7 @@ def test_relationship_signal_aggregation_is_exact_and_symmetric_only_in_its_key(
         ]
     )
 
-    assert result.schema_version == "1.4"
+    assert result.schema_version == "1.5"
     assert len(result.relationship_signals) == 3
     assert result.relationship_signals[0].agent_run_ids == ["run-1", "run-2"]
     assert len(result.relationship_signals[0].evidence_refs) == 2
