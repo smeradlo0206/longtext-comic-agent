@@ -1,0 +1,346 @@
+{
+  "$defs": {
+    "AssetBindingV1": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "purpose": {
+          "enum": [
+            "identity",
+            "scene",
+            "style"
+          ],
+          "title": "Purpose",
+          "type": "string"
+        },
+        "target_character_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Character Id"
+        },
+        "image_index": {
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Image Index",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "asset_id",
+        "purpose",
+        "image_index"
+      ],
+      "title": "AssetBindingV1",
+      "type": "object"
+    },
+    "CharacterVisualStateV1": {
+      "additionalProperties": false,
+      "properties": {
+        "character_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Character Id",
+          "type": "string"
+        },
+        "placement": {
+          "enum": [
+            "left",
+            "center",
+            "right",
+            "background"
+          ],
+          "title": "Placement",
+          "type": "string"
+        },
+        "action": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Action",
+          "type": "string"
+        },
+        "expression": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Expression",
+          "type": "string"
+        },
+        "gaze": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Gaze",
+          "type": "string"
+        }
+      },
+      "required": [
+        "character_id",
+        "placement",
+        "action",
+        "expression",
+        "gaze"
+      ],
+      "title": "CharacterVisualStateV1",
+      "type": "object"
+    },
+    "PanelVisualPlanV1": {
+      "additionalProperties": false,
+      "properties": {
+        "panel_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Panel Id",
+          "type": "string"
+        },
+        "narrative_focus": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Narrative Focus",
+          "type": "string"
+        },
+        "emotional_target": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Emotional Target",
+          "type": "string"
+        },
+        "shot_size": {
+          "enum": [
+            "extreme_wide",
+            "wide",
+            "medium",
+            "close_up",
+            "extreme_close_up"
+          ],
+          "title": "Shot Size",
+          "type": "string"
+        },
+        "camera_angle": {
+          "enum": [
+            "eye_level",
+            "high",
+            "low",
+            "over_shoulder",
+            "top_down",
+            "dutch"
+          ],
+          "title": "Camera Angle",
+          "type": "string"
+        },
+        "camera_direction": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Camera Direction",
+          "type": "string"
+        },
+        "characters": {
+          "items": {
+            "$ref": "#/$defs/CharacterVisualStateV1"
+          },
+          "maxItems": 2,
+          "title": "Characters",
+          "type": "array"
+        },
+        "foreground": {
+          "items": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Foreground",
+          "type": "array"
+        },
+        "midground": {
+          "items": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Midground",
+          "type": "array"
+        },
+        "background": {
+          "items": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Background",
+          "type": "array"
+        },
+        "focal_point": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Focal Point",
+          "type": "string"
+        },
+        "environment": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Environment",
+          "type": "string"
+        },
+        "lighting": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Lighting",
+          "type": "string"
+        },
+        "atmosphere": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Atmosphere",
+          "type": "string"
+        },
+        "dialogue_safe_zones": {
+          "items": {
+            "$ref": "#/$defs/RegionV1"
+          },
+          "maxItems": 4,
+          "title": "Dialogue Safe Zones",
+          "type": "array"
+        },
+        "asset_bindings": {
+          "items": {
+            "$ref": "#/$defs/AssetBindingV1"
+          },
+          "maxItems": 3,
+          "title": "Asset Bindings",
+          "type": "array"
+        },
+        "required_elements": {
+          "items": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 16,
+          "title": "Required Elements",
+          "type": "array"
+        },
+        "forbidden_elements": {
+          "items": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 16,
+          "title": "Forbidden Elements",
+          "type": "array"
+        }
+      },
+      "required": [
+        "panel_id",
+        "narrative_focus",
+        "emotional_target",
+        "shot_size",
+        "camera_angle",
+        "camera_direction",
+        "focal_point",
+        "environment",
+        "lighting",
+        "atmosphere"
+      ],
+      "title": "PanelVisualPlanV1",
+      "type": "object"
+    },
+    "RegionV1": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Y",
+          "type": "number"
+        },
+        "width": {
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Width",
+          "type": "number"
+        },
+        "height": {
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Height",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "title": "RegionV1",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_name": {
+      "const": "VisualPlanV1",
+      "default": "VisualPlanV1",
+      "title": "Schema Name",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "request_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "planner_model_id": {
+      "title": "Planner Model Id",
+      "type": "string"
+    },
+    "panels": {
+      "items": {
+        "$ref": "#/$defs/PanelVisualPlanV1"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "title": "Panels",
+      "type": "array"
+    }
+  },
+  "required": [
+    "request_id",
+    "planner_model_id",
+    "panels"
+  ],
+  "title": "VisualPlanV1",
+  "type": "object"
+}

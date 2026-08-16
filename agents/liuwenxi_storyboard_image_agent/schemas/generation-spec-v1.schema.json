@@ -1,0 +1,217 @@
+{
+  "$defs": {
+    "ReferenceInputV1": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "purpose": {
+          "enum": [
+            "identity",
+            "scene",
+            "style"
+          ],
+          "title": "Purpose",
+          "type": "string"
+        },
+        "image_index": {
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Image Index",
+          "type": "integer"
+        },
+        "uri": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Uri",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "target_character_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Character Id"
+        }
+      },
+      "required": [
+        "asset_id",
+        "purpose",
+        "image_index",
+        "uri",
+        "sha256"
+      ],
+      "title": "ReferenceInputV1",
+      "type": "object"
+    },
+    "RenderProfile": {
+      "enum": [
+        "landscape",
+        "portrait",
+        "square"
+      ],
+      "title": "RenderProfile",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_name": {
+      "const": "GenerationSpecV1",
+      "default": "GenerationSpecV1",
+      "title": "Schema Name",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "request_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "panel_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Panel Id",
+      "type": "string"
+    },
+    "prompt_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Prompt Id",
+      "type": "string"
+    },
+    "positive_prompt": {
+      "maxLength": 16000,
+      "minLength": 1,
+      "title": "Positive Prompt",
+      "type": "string"
+    },
+    "negative_prompt": {
+      "maxLength": 8000,
+      "minLength": 1,
+      "title": "Negative Prompt",
+      "type": "string"
+    },
+    "references": {
+      "items": {
+        "$ref": "#/$defs/ReferenceInputV1"
+      },
+      "maxItems": 3,
+      "minItems": 1,
+      "title": "References",
+      "type": "array"
+    },
+    "render_profile": {
+      "$ref": "#/$defs/RenderProfile"
+    },
+    "width": {
+      "title": "Width",
+      "type": "integer"
+    },
+    "height": {
+      "title": "Height",
+      "type": "integer"
+    },
+    "seed": {
+      "minimum": 0,
+      "title": "Seed",
+      "type": "integer"
+    },
+    "steps": {
+      "const": 50,
+      "default": 50,
+      "title": "Steps",
+      "type": "integer"
+    },
+    "true_cfg_scale": {
+      "const": 4.0,
+      "default": 4.0,
+      "title": "True Cfg Scale",
+      "type": "number"
+    },
+    "guidance_scale": {
+      "const": 1.0,
+      "default": 1.0,
+      "title": "Guidance Scale",
+      "type": "number"
+    },
+    "max_sequence_length": {
+      "const": 1024,
+      "default": 1024,
+      "title": "Max Sequence Length",
+      "type": "integer"
+    },
+    "model_id": {
+      "const": "Qwen/Qwen-Image-Edit-2509",
+      "default": "Qwen/Qwen-Image-Edit-2509",
+      "title": "Model Id",
+      "type": "string"
+    },
+    "prompt_sha256": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Prompt Sha256",
+      "type": "string"
+    },
+    "used_asset_ids": {
+      "items": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+        "type": "string"
+      },
+      "maxItems": 3,
+      "minItems": 1,
+      "title": "Used Asset Ids",
+      "type": "array"
+    },
+    "visual_plan_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Visual Plan Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_id",
+    "panel_id",
+    "prompt_id",
+    "positive_prompt",
+    "negative_prompt",
+    "references",
+    "render_profile",
+    "width",
+    "height",
+    "seed",
+    "prompt_sha256",
+    "used_asset_ids"
+  ],
+  "title": "GenerationSpecV1",
+  "type": "object"
+}

@@ -1,0 +1,33 @@
+{
+  "schema_name": "SceneJobV1",
+  "schema_version": "1.0",
+  "request_id": "scene-job-001",
+  "project_id": "comic-a",
+  "chapter_id": "chapter-01",
+  "scene_id": "scene-03",
+  "asset_profile_id": "demo-v1",
+  "scene_context": {
+    "summary": "林岚在夜晚的藏书阁发现一封重要信件失踪。",
+    "location": "古代藏书阁",
+    "time_of_day": "夜晚",
+    "atmosphere": "压抑、安静",
+    "continuity_notes": ["林岚始终穿深青色长袍，头发束起。"]
+  },
+  "panels": [
+    {
+      "panel_id": "panel-001",
+      "sequence_no": 1,
+      "story_intent": "林岚发现信件不见了但掩饰紧张。",
+      "characters": [
+        {
+          "character_id": "char-a",
+          "action": "右手按住打开的抽屉边缘",
+          "emotion": "克制的紧张"
+        }
+      ],
+      "dialogue": [{"speaker_id": "char-a", "text": "没什么。"}],
+      "constraints": ["夸张惊恐表情"],
+      "render_profile": "landscape"
+    }
+  ]
+}

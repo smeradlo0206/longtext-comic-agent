@@ -1,0 +1,73 @@
+{
+  "schema_name": "SceneJobV1MappingAudit",
+  "source_schema": "UpstreamSceneEnvelopeV1",
+  "target_schema": "SceneJobV1",
+  "fields": [
+    {
+      "upstream_path": "request/project/chapter/scene IDs",
+      "scene_job_path": "same fields",
+      "disposition": "lossless",
+      "reason": "Stable identifiers are copied verbatim."
+    },
+    {
+      "upstream_path": "scene summary/location/time/atmosphere",
+      "scene_job_path": "scene_context",
+      "disposition": "lossless",
+      "reason": "SceneJobV1 has equivalent fields."
+    },
+    {
+      "upstream_path": "panel action/emotion/dialogue/constraints",
+      "scene_job_path": "panels",
+      "disposition": "lossless",
+      "reason": "Values and ordering are copied verbatim."
+    },
+    {
+      "upstream_path": "character appearance",
+      "scene_job_path": "scene_context.continuity_notes",
+      "disposition": "textual_fallback",
+      "reason": "Appearance remains readable but is no longer typed per character."
+    },
+    {
+      "upstream_path": "character clothing state",
+      "scene_job_path": "scene_context.continuity_notes",
+      "disposition": "textual_fallback",
+      "reason": "Clothing is flattened to prose; garment IDs and state transitions are unavailable."
+    },
+    {
+      "upstream_path": "scene entities",
+      "scene_job_path": "scene_context.continuity_notes",
+      "disposition": "textual_fallback",
+      "reason": "Entity descriptions are flattened to prose."
+    },
+    {
+      "upstream_path": "event IDs and causal links",
+      "scene_job_path": null,
+      "disposition": "lost",
+      "reason": "SceneJobV1 has no event graph."
+    },
+    {
+      "upstream_path": "event state before/after and held-object changes",
+      "scene_job_path": null,
+      "disposition": "lost",
+      "reason": "SceneJobV1 has no structured state store."
+    },
+    {
+      "upstream_path": "character entrances/exits",
+      "scene_job_path": null,
+      "disposition": "lost",
+      "reason": "Panel presence survives but transitions are not represented."
+    },
+    {
+      "upstream_path": "dialogue kind",
+      "scene_job_path": null,
+      "disposition": "lost",
+      "reason": "SceneJobV1 stores only speaker and text."
+    },
+    {
+      "upstream_path": "cross-panel movement direction",
+      "scene_job_path": null,
+      "disposition": "lost",
+      "reason": "SceneJobV1 has no typed motion direction field."
+    }
+  ]
+}

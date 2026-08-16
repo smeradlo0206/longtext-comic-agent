@@ -1,0 +1,31 @@
+{
+  "schema_name": "ImageJobV1",
+  "schema_version": "1.0",
+  "request_id": "novel-a-ch001-sc003-p007-review-retry-01",
+  "project_id": "novel-a",
+  "chapter_id": "ch001",
+  "scene_id": "sc003",
+  "panel_id": "p007",
+  "sequence_no": 7,
+  "render_profile": "qwen-image-2512-landscape-v1",
+  "panel_spec": {
+    "schema_name": "PanelSpecV1",
+    "shot_type": "远景",
+    "camera": "低机位，轻微仰拍",
+    "composition": "主角位于画面左侧三分之一，破碎天门占据远景中心",
+    "character_ids": ["char-lu-chen"],
+    "action": "白衣剑修迎着风暴悬立，右手持剑指向天门",
+    "scene": "雷暴云海、悬浮仙山、破碎石阶与金色阵纹",
+    "continuity_notes": ["加强人物与前一格服装的一致性"]
+  },
+  "prompt_spec": {
+    "schema_name": "PromptSpecV1",
+    "prompt_id": "prompt-ch001-sc003-p007-review-r1",
+    "language": "zh-CN",
+    "positive_prompt": "东方史诗动漫电影画面，低机位超宽远景。白衣黑发剑修位于左侧三分之一，完整露出深青剑鞘与青玉腰带，迎着风暴指向远方破碎天门。金色阵纹、悬浮仙山与瀑布形成纵深，冷青、月白、金色配色，无文字，无水印。",
+    "negative_prompt": "人物服装变色，缺少剑鞘，人物居中",
+    "story_bible_revision": "story-bible-r17",
+    "scene_plan_revision": "scene-plan-ch001-r4"
+  },
+  "retry_of": "novel-a-ch001-sc003-p007-v1"
+}

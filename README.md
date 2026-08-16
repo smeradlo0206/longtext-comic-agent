@@ -2,6 +2,13 @@
 
 长文本多 Agent 连续漫画生成系统。StoryBible Curator 是系统的核心 Agent，负责从源文本中提取人物、组织、地点和状态，生成候选提案（Proposal），经人工审批后写入正式 StoryBible。
 
+## 分镜生图 Agent
+
+刘文熙分镜生图 Agent 以独立子项目形式位于
+[`agents/liuwenxi_storyboard_image_agent`](agents/liuwenxi_storyboard_image_agent/README.md)。
+它通过唯一的 `UpstreamSceneEnvelopeV1` 写入接口接收人物、事件、场景、
+状态和分镜数据，后续视觉规划与生图流程均在服务内部执行。
+
 ## 环境要求
 
 - Python 3.12+

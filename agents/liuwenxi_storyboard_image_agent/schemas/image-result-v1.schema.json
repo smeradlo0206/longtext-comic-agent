@@ -1,0 +1,389 @@
+{
+  "$defs": {
+    "ArtifactV1": {
+      "additionalProperties": false,
+      "properties": {
+        "uri": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Uri",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "mime_type": {
+          "const": "image/png",
+          "default": "image/png",
+          "title": "Mime Type",
+          "type": "string"
+        },
+        "width": {
+          "exclusiveMinimum": 0,
+          "title": "Width",
+          "type": "integer"
+        },
+        "height": {
+          "exclusiveMinimum": 0,
+          "title": "Height",
+          "type": "integer"
+        },
+        "bytes": {
+          "exclusiveMinimum": 0,
+          "title": "Bytes",
+          "type": "integer"
+        },
+        "pixel_variance": {
+          "items": {
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "title": "Pixel Variance",
+          "type": "array"
+        }
+      },
+      "required": [
+        "uri",
+        "sha256",
+        "width",
+        "height",
+        "bytes",
+        "pixel_variance"
+      ],
+      "title": "ArtifactV1",
+      "type": "object"
+    },
+    "GeneratedImageV1": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_name": {
+          "const": "GeneratedImageV1",
+          "default": "GeneratedImageV1",
+          "title": "Schema Name",
+          "type": "string"
+        },
+        "image_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Image Id",
+          "type": "string"
+        },
+        "prompt_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Prompt Id",
+          "type": "string"
+        },
+        "artifact": {
+          "$ref": "#/$defs/ArtifactV1"
+        },
+        "metadata": {
+          "$ref": "#/$defs/GenerationMetadataV1"
+        }
+      },
+      "required": [
+        "image_id",
+        "prompt_id",
+        "artifact",
+        "metadata"
+      ],
+      "title": "GeneratedImageV1",
+      "type": "object"
+    },
+    "GenerationMetadataV1": {
+      "additionalProperties": false,
+      "properties": {
+        "model_id": {
+          "title": "Model Id",
+          "type": "string"
+        },
+        "model_revision": {
+          "title": "Model Revision",
+          "type": "string"
+        },
+        "render_profile": {
+          "const": "qwen-image-2512-landscape-v1",
+          "default": "qwen-image-2512-landscape-v1",
+          "title": "Render Profile",
+          "type": "string"
+        },
+        "dtype": {
+          "const": "bfloat16",
+          "default": "bfloat16",
+          "title": "Dtype",
+          "type": "string"
+        },
+        "scheduler": {
+          "title": "Scheduler",
+          "type": "string"
+        },
+        "seed": {
+          "minimum": 0,
+          "title": "Seed",
+          "type": "integer"
+        },
+        "attempt": {
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "width": {
+          "const": 1664,
+          "default": 1664,
+          "title": "Width",
+          "type": "integer"
+        },
+        "height": {
+          "const": 928,
+          "default": 928,
+          "title": "Height",
+          "type": "integer"
+        },
+        "steps": {
+          "const": 50,
+          "default": 50,
+          "title": "Steps",
+          "type": "integer"
+        },
+        "true_cfg_scale": {
+          "const": 4.0,
+          "default": 4.0,
+          "title": "True Cfg Scale",
+          "type": "number"
+        },
+        "max_sequence_length": {
+          "const": 512,
+          "default": 512,
+          "title": "Max Sequence Length",
+          "type": "integer"
+        },
+        "gpu_ids": {
+          "items": {
+            "type": "integer"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "title": "Gpu Ids",
+          "type": "array"
+        },
+        "worker_id": {
+          "title": "Worker Id",
+          "type": "string"
+        },
+        "model_load_seconds": {
+          "minimum": 0,
+          "title": "Model Load Seconds",
+          "type": "number"
+        },
+        "generation_seconds": {
+          "minimum": 0,
+          "title": "Generation Seconds",
+          "type": "number"
+        },
+        "peak_vram_gib": {
+          "items": {
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "title": "Peak Vram Gib",
+          "type": "array"
+        },
+        "positive_token_count": {
+          "exclusiveMinimum": 0,
+          "maximum": 512,
+          "title": "Positive Token Count",
+          "type": "integer"
+        },
+        "negative_token_count": {
+          "exclusiveMinimum": 0,
+          "maximum": 512,
+          "title": "Negative Token Count",
+          "type": "integer"
+        },
+        "prompt_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Prompt Sha256",
+          "type": "string"
+        },
+        "started_at": {
+          "format": "date-time",
+          "title": "Started At",
+          "type": "string"
+        },
+        "completed_at": {
+          "format": "date-time",
+          "title": "Completed At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model_id",
+        "model_revision",
+        "scheduler",
+        "seed",
+        "attempt",
+        "gpu_ids",
+        "worker_id",
+        "model_load_seconds",
+        "generation_seconds",
+        "peak_vram_gib",
+        "positive_token_count",
+        "negative_token_count",
+        "prompt_sha256",
+        "started_at",
+        "completed_at"
+      ],
+      "title": "GenerationMetadataV1",
+      "type": "object"
+    },
+    "ImageErrorV1": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "title": "ImageErrorV1",
+      "type": "object"
+    },
+    "ResultStatus": {
+      "enum": [
+        "SUCCEEDED",
+        "FAILED",
+        "REJECTED"
+      ],
+      "title": "ResultStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_name": {
+      "const": "ImageResultV1",
+      "default": "ImageResultV1",
+      "title": "Schema Name",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "request_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "project_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "chapter_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Chapter Id",
+      "type": "string"
+    },
+    "scene_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Scene Id",
+      "type": "string"
+    },
+    "panel_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Panel Id",
+      "type": "string"
+    },
+    "sequence_no": {
+      "minimum": 0,
+      "title": "Sequence No",
+      "type": "integer"
+    },
+    "status": {
+      "$ref": "#/$defs/ResultStatus"
+    },
+    "attempts": {
+      "maximum": 3,
+      "minimum": 0,
+      "title": "Attempts",
+      "type": "integer"
+    },
+    "generated_image": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/GeneratedImageV1"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ImageErrorV1"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "completed_at": {
+      "format": "date-time",
+      "title": "Completed At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_id",
+    "project_id",
+    "chapter_id",
+    "scene_id",
+    "panel_id",
+    "sequence_no",
+    "status",
+    "attempts",
+    "completed_at"
+  ],
+  "title": "ImageResultV1",
+  "type": "object"
+}

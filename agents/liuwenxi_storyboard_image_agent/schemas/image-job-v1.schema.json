@@ -1,0 +1,225 @@
+{
+  "$defs": {
+    "PanelSpecV1": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_name": {
+          "const": "PanelSpecV1",
+          "default": "PanelSpecV1",
+          "title": "Schema Name",
+          "type": "string"
+        },
+        "shot_type": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "title": "Shot Type",
+          "type": "string"
+        },
+        "camera": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "title": "Camera",
+          "type": "string"
+        },
+        "composition": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "title": "Composition",
+          "type": "string"
+        },
+        "character_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Character Ids",
+          "type": "array"
+        },
+        "action": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "title": "Action",
+          "type": "string"
+        },
+        "scene": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "title": "Scene",
+          "type": "string"
+        },
+        "continuity_notes": {
+          "items": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Continuity Notes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "shot_type",
+        "camera",
+        "composition",
+        "action",
+        "scene"
+      ],
+      "title": "PanelSpecV1",
+      "type": "object"
+    },
+    "PromptSpecV1": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_name": {
+          "const": "PromptSpecV1",
+          "default": "PromptSpecV1",
+          "title": "Schema Name",
+          "type": "string"
+        },
+        "prompt_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Prompt Id",
+          "type": "string"
+        },
+        "language": {
+          "const": "zh-CN",
+          "default": "zh-CN",
+          "title": "Language",
+          "type": "string"
+        },
+        "positive_prompt": {
+          "maxLength": 16000,
+          "minLength": 1,
+          "title": "Positive Prompt",
+          "type": "string"
+        },
+        "negative_prompt": {
+          "default": "",
+          "maxLength": 8000,
+          "title": "Negative Prompt",
+          "type": "string"
+        },
+        "story_bible_revision": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Story Bible Revision",
+          "type": "string"
+        },
+        "scene_plan_revision": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Scene Plan Revision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prompt_id",
+        "positive_prompt",
+        "story_bible_revision",
+        "scene_plan_revision"
+      ],
+      "title": "PromptSpecV1",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_name": {
+      "const": "ImageJobV1",
+      "default": "ImageJobV1",
+      "title": "Schema Name",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "request_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "project_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "chapter_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Chapter Id",
+      "type": "string"
+    },
+    "scene_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Scene Id",
+      "type": "string"
+    },
+    "panel_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Panel Id",
+      "type": "string"
+    },
+    "sequence_no": {
+      "minimum": 0,
+      "title": "Sequence No",
+      "type": "integer"
+    },
+    "render_profile": {
+      "const": "qwen-image-2512-landscape-v1",
+      "default": "qwen-image-2512-landscape-v1",
+      "title": "Render Profile",
+      "type": "string"
+    },
+    "panel_spec": {
+      "$ref": "#/$defs/PanelSpecV1"
+    },
+    "prompt_spec": {
+      "$ref": "#/$defs/PromptSpecV1"
+    },
+    "retry_of": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Retry Of"
+    }
+  },
+  "required": [
+    "request_id",
+    "project_id",
+    "chapter_id",
+    "scene_id",
+    "panel_id",
+    "sequence_no",
+    "panel_spec",
+    "prompt_spec"
+  ],
+  "title": "ImageJobV1",
+  "type": "object"
+}

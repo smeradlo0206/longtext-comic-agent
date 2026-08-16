@@ -1,0 +1,81 @@
+{
+  "schema_name": "PresetAssetManifestV1",
+  "schema_version": "1.0",
+  "profile_id": "demo-v1",
+  "default_scene_id": "scene-library",
+  "default_style_id": "style-comic",
+  "characters": [
+    {
+      "character_id": "char-a",
+      "name": "林岚",
+      "description": "黑色长发束起，深青色交领长袍，青玉腰带。",
+      "canonical_asset_id": "char-a-ref-01"
+    }
+  ],
+  "scenes": [
+    {
+      "scene_id": "scene-library",
+      "name": "藏书阁",
+      "description": "古代木结构藏书阁，夜晚，以烛光照明。",
+      "canonical_asset_id": "scene-library-ref-01"
+    }
+  ],
+  "styles": [
+    {
+      "style_id": "style-comic",
+      "description": "东方电影感漫画，干净线条，克制色彩。",
+      "canonical_asset_id": "style-comic-ref-01"
+    }
+  ],
+  "assets": [
+    {
+      "asset_id": "char-a-ref-01",
+      "role": "identity_reference",
+      "relative_path": "characters/char-a-ref-01.png",
+      "sha256": "7682b39a1e44ae59f3bd4b17cd33786c06e3ab93e916e1a2c761b66eae17a81c",
+      "description": "林岚标准全身身份参考图。",
+      "character_id": "char-a",
+      "view": "front",
+      "tags": [
+        "canonical",
+        "full-body",
+        "generated-demo"
+      ],
+      "source": "scripts/build_demo_assets.py",
+      "creator": "Qwen Comic Image Agent demo asset builder",
+      "license": "CC0-1.0"
+    },
+    {
+      "asset_id": "scene-library-ref-01",
+      "role": "scene_reference",
+      "relative_path": "scenes/scene-library-ref-01.png",
+      "sha256": "a3fe7c1546c6b47625190840dd489dc5f89b80b9c42a4dfca79348c1ca78192e",
+      "description": "藏书阁夜景空间参考图。",
+      "scene_id": "scene-library",
+      "view": "wide",
+      "tags": [
+        "canonical",
+        "night",
+        "generated-demo"
+      ],
+      "source": "scripts/build_demo_assets.py",
+      "creator": "Qwen Comic Image Agent demo asset builder",
+      "license": "CC0-1.0"
+    },
+    {
+      "asset_id": "style-comic-ref-01",
+      "role": "style_reference",
+      "relative_path": "styles/style-comic-ref-01.png",
+      "sha256": "c2421a61f844e11b4c8b0a41703bb185006d0bd99626dca37d1c0235eada2dbc",
+      "description": "目标漫画线条、光影和色彩参考。",
+      "view": "style-board",
+      "tags": [
+        "canonical",
+        "generated-demo"
+      ],
+      "source": "scripts/build_demo_assets.py",
+      "creator": "Qwen Comic Image Agent demo asset builder",
+      "license": "CC0-1.0"
+    }
+  ]
+}

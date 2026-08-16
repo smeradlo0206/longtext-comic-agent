@@ -1,0 +1,34 @@
+{
+  "schema_name": "ImageJobV1",
+  "schema_version": "1.0",
+  "request_id": "invalid-profile-example",
+  "project_id": "novel-a",
+  "chapter_id": "ch001",
+  "scene_id": "sc003",
+  "panel_id": "p008",
+  "sequence_no": 8,
+  "render_profile": "arbitrary-model-and-size",
+  "unexpected_override": {
+    "steps": 20,
+    "width": 1024
+  },
+  "panel_spec": {
+    "schema_name": "PanelSpecV1",
+    "shot_type": "近景",
+    "camera": "平视",
+    "composition": "人物居中",
+    "character_ids": ["char-lu-chen"],
+    "action": "回头",
+    "scene": "云海",
+    "continuity_notes": []
+  },
+  "prompt_spec": {
+    "schema_name": "PromptSpecV1",
+    "prompt_id": "prompt-invalid",
+    "language": "zh-CN",
+    "positive_prompt": "人物回头的动漫电影画面",
+    "negative_prompt": "",
+    "story_bible_revision": "story-bible-r17",
+    "scene_plan_revision": "scene-plan-ch001-r4"
+  }
+}

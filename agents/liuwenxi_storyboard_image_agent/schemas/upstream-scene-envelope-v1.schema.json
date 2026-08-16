@@ -1,0 +1,550 @@
+{
+  "$defs": {
+    "RenderProfile": {
+      "enum": [
+        "landscape",
+        "portrait",
+        "square"
+      ],
+      "title": "RenderProfile",
+      "type": "string"
+    },
+    "UpstreamCharacterV1": {
+      "additionalProperties": false,
+      "properties": {
+        "character_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Character Id",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "appearance": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Appearance",
+          "type": "string"
+        },
+        "clothing": {
+          "items": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Clothing",
+          "type": "array"
+        }
+      },
+      "required": [
+        "character_id",
+        "name",
+        "appearance",
+        "clothing"
+      ],
+      "title": "UpstreamCharacterV1",
+      "type": "object"
+    },
+    "UpstreamDialogueV1": {
+      "additionalProperties": false,
+      "properties": {
+        "dialogue_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Dialogue Id",
+          "type": "string"
+        },
+        "speaker_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Speaker Id",
+          "type": "string"
+        },
+        "kind": {
+          "default": "speech",
+          "enum": [
+            "speech",
+            "thought",
+            "off_screen"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "dialogue_id",
+        "speaker_id",
+        "text"
+      ],
+      "title": "UpstreamDialogueV1",
+      "type": "object"
+    },
+    "UpstreamEventV1": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "sequence_no": {
+          "minimum": 0,
+          "title": "Sequence No",
+          "type": "integer"
+        },
+        "action": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Action",
+          "type": "string"
+        },
+        "actor_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "type": "string"
+          },
+          "maxItems": 2,
+          "minItems": 1,
+          "title": "Actor Ids",
+          "type": "array"
+        },
+        "target_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "type": "string"
+          },
+          "maxItems": 16,
+          "title": "Target Ids",
+          "type": "array"
+        },
+        "cause_event_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "type": "string"
+          },
+          "maxItems": 16,
+          "title": "Cause Event Ids",
+          "type": "array"
+        },
+        "state_changes": {
+          "items": {
+            "$ref": "#/$defs/UpstreamStateChangeV1"
+          },
+          "maxItems": 32,
+          "title": "State Changes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "event_id",
+        "sequence_no",
+        "action",
+        "actor_ids"
+      ],
+      "title": "UpstreamEventV1",
+      "type": "object"
+    },
+    "UpstreamPanelCharacterV1": {
+      "additionalProperties": false,
+      "properties": {
+        "character_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Character Id",
+          "type": "string"
+        },
+        "action": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Action",
+          "type": "string"
+        },
+        "emotion": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Emotion",
+          "type": "string"
+        }
+      },
+      "required": [
+        "character_id",
+        "action",
+        "emotion"
+      ],
+      "title": "UpstreamPanelCharacterV1",
+      "type": "object"
+    },
+    "UpstreamPanelPlanV1": {
+      "additionalProperties": false,
+      "properties": {
+        "panel_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Panel Id",
+          "type": "string"
+        },
+        "sequence_no": {
+          "minimum": 0,
+          "title": "Sequence No",
+          "type": "integer"
+        },
+        "event_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "type": "string"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Event Ids",
+          "type": "array"
+        },
+        "story_intent": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Story Intent",
+          "type": "string"
+        },
+        "characters": {
+          "items": {
+            "$ref": "#/$defs/UpstreamPanelCharacterV1"
+          },
+          "maxItems": 2,
+          "title": "Characters",
+          "type": "array"
+        },
+        "dialogue": {
+          "items": {
+            "$ref": "#/$defs/UpstreamDialogueV1"
+          },
+          "maxItems": 16,
+          "title": "Dialogue",
+          "type": "array"
+        },
+        "constraints": {
+          "items": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Constraints",
+          "type": "array"
+        },
+        "movement_direction": {
+          "anyOf": [
+            {
+              "enum": [
+                "left_to_right",
+                "right_to_left",
+                "toward_camera",
+                "away_from_camera"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Movement Direction"
+        },
+        "render_profile": {
+          "$ref": "#/$defs/RenderProfile",
+          "default": "landscape"
+        }
+      },
+      "required": [
+        "panel_id",
+        "sequence_no",
+        "event_ids",
+        "story_intent"
+      ],
+      "title": "UpstreamPanelPlanV1",
+      "type": "object"
+    },
+    "UpstreamSceneEntityV1": {
+      "additionalProperties": false,
+      "properties": {
+        "entity_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Entity Id",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity_id",
+        "name",
+        "description"
+      ],
+      "title": "UpstreamSceneEntityV1",
+      "type": "object"
+    },
+    "UpstreamSceneV1": {
+      "additionalProperties": false,
+      "properties": {
+        "summary": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "location_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Location Id",
+          "type": "string"
+        },
+        "location": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Location",
+          "type": "string"
+        },
+        "time_of_day": {
+          "anyOf": [
+            {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Time Of Day"
+        },
+        "atmosphere": {
+          "anyOf": [
+            {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Atmosphere"
+        },
+        "entities": {
+          "items": {
+            "$ref": "#/$defs/UpstreamSceneEntityV1"
+          },
+          "maxItems": 128,
+          "title": "Entities",
+          "type": "array"
+        }
+      },
+      "required": [
+        "summary",
+        "location_id",
+        "location"
+      ],
+      "title": "UpstreamSceneV1",
+      "type": "object"
+    },
+    "UpstreamStateChangeV1": {
+      "additionalProperties": false,
+      "properties": {
+        "subject_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Subject Id",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "before": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Before"
+        },
+        "after": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "After"
+        }
+      },
+      "required": [
+        "subject_id",
+        "path",
+        "before",
+        "after"
+      ],
+      "title": "UpstreamStateChangeV1",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_name": {
+      "const": "UpstreamSceneEnvelopeV1",
+      "default": "UpstreamSceneEnvelopeV1",
+      "title": "Schema Name",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "request_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "project_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "chapter_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Chapter Id",
+      "type": "string"
+    },
+    "scene_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Scene Id",
+      "type": "string"
+    },
+    "asset_profile_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Asset Profile Id",
+      "type": "string"
+    },
+    "characters": {
+      "items": {
+        "$ref": "#/$defs/UpstreamCharacterV1"
+      },
+      "maxItems": 128,
+      "minItems": 1,
+      "title": "Characters",
+      "type": "array"
+    },
+    "scene": {
+      "$ref": "#/$defs/UpstreamSceneV1"
+    },
+    "events": {
+      "items": {
+        "$ref": "#/$defs/UpstreamEventV1"
+      },
+      "maxItems": 256,
+      "minItems": 1,
+      "title": "Events",
+      "type": "array"
+    },
+    "panels": {
+      "items": {
+        "$ref": "#/$defs/UpstreamPanelPlanV1"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "title": "Panels",
+      "type": "array"
+    }
+  },
+  "required": [
+    "request_id",
+    "project_id",
+    "chapter_id",
+    "scene_id",
+    "asset_profile_id",
+    "characters",
+    "scene",
+    "events",
+    "panels"
+  ],
+  "title": "UpstreamSceneEnvelopeV1",
+  "type": "object"
+}

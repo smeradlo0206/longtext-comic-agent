@@ -1,0 +1,845 @@
+{
+  "$defs": {
+    "AssetBindingV1": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "purpose": {
+          "enum": [
+            "identity",
+            "scene",
+            "style"
+          ],
+          "title": "Purpose",
+          "type": "string"
+        },
+        "target_character_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Character Id"
+        },
+        "image_index": {
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Image Index",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "asset_id",
+        "purpose",
+        "image_index"
+      ],
+      "title": "AssetBindingV1",
+      "type": "object"
+    },
+    "CharacterVisualStateV1": {
+      "additionalProperties": false,
+      "properties": {
+        "character_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Character Id",
+          "type": "string"
+        },
+        "placement": {
+          "enum": [
+            "left",
+            "center",
+            "right",
+            "background"
+          ],
+          "title": "Placement",
+          "type": "string"
+        },
+        "action": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Action",
+          "type": "string"
+        },
+        "expression": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Expression",
+          "type": "string"
+        },
+        "gaze": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Gaze",
+          "type": "string"
+        }
+      },
+      "required": [
+        "character_id",
+        "placement",
+        "action",
+        "expression",
+        "gaze"
+      ],
+      "title": "CharacterVisualStateV1",
+      "type": "object"
+    },
+    "GenerationSpecV1": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_name": {
+          "const": "GenerationSpecV1",
+          "default": "GenerationSpecV1",
+          "title": "Schema Name",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "request_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "panel_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Panel Id",
+          "type": "string"
+        },
+        "prompt_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Prompt Id",
+          "type": "string"
+        },
+        "positive_prompt": {
+          "maxLength": 16000,
+          "minLength": 1,
+          "title": "Positive Prompt",
+          "type": "string"
+        },
+        "negative_prompt": {
+          "maxLength": 8000,
+          "minLength": 1,
+          "title": "Negative Prompt",
+          "type": "string"
+        },
+        "references": {
+          "items": {
+            "$ref": "#/$defs/ReferenceInputV1"
+          },
+          "maxItems": 3,
+          "minItems": 1,
+          "title": "References",
+          "type": "array"
+        },
+        "render_profile": {
+          "$ref": "#/$defs/RenderProfile"
+        },
+        "width": {
+          "title": "Width",
+          "type": "integer"
+        },
+        "height": {
+          "title": "Height",
+          "type": "integer"
+        },
+        "seed": {
+          "minimum": 0,
+          "title": "Seed",
+          "type": "integer"
+        },
+        "steps": {
+          "const": 50,
+          "default": 50,
+          "title": "Steps",
+          "type": "integer"
+        },
+        "true_cfg_scale": {
+          "const": 4.0,
+          "default": 4.0,
+          "title": "True Cfg Scale",
+          "type": "number"
+        },
+        "guidance_scale": {
+          "const": 1.0,
+          "default": 1.0,
+          "title": "Guidance Scale",
+          "type": "number"
+        },
+        "max_sequence_length": {
+          "const": 1024,
+          "default": 1024,
+          "title": "Max Sequence Length",
+          "type": "integer"
+        },
+        "model_id": {
+          "const": "Qwen/Qwen-Image-Edit-2509",
+          "default": "Qwen/Qwen-Image-Edit-2509",
+          "title": "Model Id",
+          "type": "string"
+        },
+        "prompt_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Prompt Sha256",
+          "type": "string"
+        },
+        "used_asset_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "type": "string"
+          },
+          "maxItems": 3,
+          "minItems": 1,
+          "title": "Used Asset Ids",
+          "type": "array"
+        },
+        "visual_plan_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Visual Plan Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "panel_id",
+        "prompt_id",
+        "positive_prompt",
+        "negative_prompt",
+        "references",
+        "render_profile",
+        "width",
+        "height",
+        "seed",
+        "prompt_sha256",
+        "used_asset_ids"
+      ],
+      "title": "GenerationSpecV1",
+      "type": "object"
+    },
+    "PanelArtifactV1": {
+      "additionalProperties": false,
+      "properties": {
+        "image_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Image Id",
+          "type": "string"
+        },
+        "uri": {
+          "title": "Uri",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "width": {
+          "exclusiveMinimum": 0,
+          "title": "Width",
+          "type": "integer"
+        },
+        "height": {
+          "exclusiveMinimum": 0,
+          "title": "Height",
+          "type": "integer"
+        },
+        "mime_type": {
+          "const": "image/png",
+          "default": "image/png",
+          "title": "Mime Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "image_id",
+        "uri",
+        "url",
+        "sha256",
+        "width",
+        "height"
+      ],
+      "title": "PanelArtifactV1",
+      "type": "object"
+    },
+    "PanelGenerationMetadataV1": {
+      "additionalProperties": false,
+      "properties": {
+        "model_id": {
+          "title": "Model Id",
+          "type": "string"
+        },
+        "model_revision": {
+          "title": "Model Revision",
+          "type": "string"
+        },
+        "seed": {
+          "title": "Seed",
+          "type": "integer"
+        },
+        "attempt": {
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "worker_id": {
+          "title": "Worker Id",
+          "type": "string"
+        },
+        "gpu_ids": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Gpu Ids",
+          "type": "array"
+        },
+        "generation_seconds": {
+          "minimum": 0,
+          "title": "Generation Seconds",
+          "type": "number"
+        },
+        "completed_at": {
+          "format": "date-time",
+          "title": "Completed At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model_id",
+        "model_revision",
+        "seed",
+        "attempt",
+        "worker_id",
+        "gpu_ids",
+        "generation_seconds",
+        "completed_at"
+      ],
+      "title": "PanelGenerationMetadataV1",
+      "type": "object"
+    },
+    "PanelGenerationResultV1": {
+      "additionalProperties": false,
+      "properties": {
+        "panel_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Panel Id",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/PanelJobStatus"
+        },
+        "visual_plan": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PanelVisualPlanV1"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "generation_spec": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GenerationSpecV1"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "artifact": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PanelArtifactV1"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PanelGenerationMetadataV1"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneErrorV1"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "panel_id",
+        "status"
+      ],
+      "title": "PanelGenerationResultV1",
+      "type": "object"
+    },
+    "PanelJobStatus": {
+      "enum": [
+        "SUBMITTED",
+        "PLANNED",
+        "CONDITIONED",
+        "GENERATING",
+        "SUCCEEDED",
+        "FAILED"
+      ],
+      "title": "PanelJobStatus",
+      "type": "string"
+    },
+    "PanelVisualPlanV1": {
+      "additionalProperties": false,
+      "properties": {
+        "panel_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Panel Id",
+          "type": "string"
+        },
+        "narrative_focus": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Narrative Focus",
+          "type": "string"
+        },
+        "emotional_target": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Emotional Target",
+          "type": "string"
+        },
+        "shot_size": {
+          "enum": [
+            "extreme_wide",
+            "wide",
+            "medium",
+            "close_up",
+            "extreme_close_up"
+          ],
+          "title": "Shot Size",
+          "type": "string"
+        },
+        "camera_angle": {
+          "enum": [
+            "eye_level",
+            "high",
+            "low",
+            "over_shoulder",
+            "top_down",
+            "dutch"
+          ],
+          "title": "Camera Angle",
+          "type": "string"
+        },
+        "camera_direction": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Camera Direction",
+          "type": "string"
+        },
+        "characters": {
+          "items": {
+            "$ref": "#/$defs/CharacterVisualStateV1"
+          },
+          "maxItems": 2,
+          "title": "Characters",
+          "type": "array"
+        },
+        "foreground": {
+          "items": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Foreground",
+          "type": "array"
+        },
+        "midground": {
+          "items": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Midground",
+          "type": "array"
+        },
+        "background": {
+          "items": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Background",
+          "type": "array"
+        },
+        "focal_point": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Focal Point",
+          "type": "string"
+        },
+        "environment": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Environment",
+          "type": "string"
+        },
+        "lighting": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Lighting",
+          "type": "string"
+        },
+        "atmosphere": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Atmosphere",
+          "type": "string"
+        },
+        "dialogue_safe_zones": {
+          "items": {
+            "$ref": "#/$defs/RegionV1"
+          },
+          "maxItems": 4,
+          "title": "Dialogue Safe Zones",
+          "type": "array"
+        },
+        "asset_bindings": {
+          "items": {
+            "$ref": "#/$defs/AssetBindingV1"
+          },
+          "maxItems": 3,
+          "title": "Asset Bindings",
+          "type": "array"
+        },
+        "required_elements": {
+          "items": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 16,
+          "title": "Required Elements",
+          "type": "array"
+        },
+        "forbidden_elements": {
+          "items": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 16,
+          "title": "Forbidden Elements",
+          "type": "array"
+        }
+      },
+      "required": [
+        "panel_id",
+        "narrative_focus",
+        "emotional_target",
+        "shot_size",
+        "camera_angle",
+        "camera_direction",
+        "focal_point",
+        "environment",
+        "lighting",
+        "atmosphere"
+      ],
+      "title": "PanelVisualPlanV1",
+      "type": "object"
+    },
+    "ReferenceInputV1": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "purpose": {
+          "enum": [
+            "identity",
+            "scene",
+            "style"
+          ],
+          "title": "Purpose",
+          "type": "string"
+        },
+        "image_index": {
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Image Index",
+          "type": "integer"
+        },
+        "uri": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Uri",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "target_character_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Character Id"
+        }
+      },
+      "required": [
+        "asset_id",
+        "purpose",
+        "image_index",
+        "uri",
+        "sha256"
+      ],
+      "title": "ReferenceInputV1",
+      "type": "object"
+    },
+    "RegionV1": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Y",
+          "type": "number"
+        },
+        "width": {
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Width",
+          "type": "number"
+        },
+        "height": {
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Height",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "title": "RegionV1",
+      "type": "object"
+    },
+    "RenderProfile": {
+      "enum": [
+        "landscape",
+        "portrait",
+        "square"
+      ],
+      "title": "RenderProfile",
+      "type": "string"
+    },
+    "SceneErrorV1": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "SceneErrorV1",
+      "type": "object"
+    },
+    "SceneJobStatus": {
+      "enum": [
+        "SUBMITTED",
+        "PLANNING",
+        "CONDITIONING",
+        "GENERATING",
+        "SUCCEEDED",
+        "PARTIAL_FAILED",
+        "FAILED"
+      ],
+      "title": "SceneJobStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_name": {
+      "const": "SceneResultV1",
+      "default": "SceneResultV1",
+      "title": "Schema Name",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "request_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "project_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "chapter_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Chapter Id",
+      "type": "string"
+    },
+    "scene_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Scene Id",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/SceneJobStatus"
+    },
+    "panels": {
+      "items": {
+        "$ref": "#/$defs/PanelGenerationResultV1"
+      },
+      "title": "Panels",
+      "type": "array"
+    },
+    "generation_revision": {
+      "const": 1,
+      "default": 1,
+      "title": "Generation Revision",
+      "type": "integer"
+    },
+    "evaluation_status": {
+      "const": "NOT_RUN",
+      "default": "NOT_RUN",
+      "title": "Evaluation Status",
+      "type": "string"
+    },
+    "submitted_at": {
+      "format": "date-time",
+      "title": "Submitted At",
+      "type": "string"
+    },
+    "completed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Completed At"
+    }
+  },
+  "required": [
+    "request_id",
+    "project_id",
+    "chapter_id",
+    "scene_id",
+    "status",
+    "panels",
+    "submitted_at"
+  ],
+  "title": "SceneResultV1",
+  "type": "object"
+}

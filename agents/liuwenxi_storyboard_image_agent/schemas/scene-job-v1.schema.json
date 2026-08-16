@@ -1,0 +1,262 @@
+{
+  "$defs": {
+    "CharacterIntentV1": {
+      "additionalProperties": false,
+      "properties": {
+        "character_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Character Id",
+          "type": "string"
+        },
+        "action": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Action",
+          "type": "string"
+        },
+        "emotion": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Emotion",
+          "type": "string"
+        }
+      },
+      "required": [
+        "character_id",
+        "action",
+        "emotion"
+      ],
+      "title": "CharacterIntentV1",
+      "type": "object"
+    },
+    "DialogueV1": {
+      "additionalProperties": false,
+      "properties": {
+        "speaker_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Speaker Id",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "speaker_id",
+        "text"
+      ],
+      "title": "DialogueV1",
+      "type": "object"
+    },
+    "PanelIntentV1": {
+      "additionalProperties": false,
+      "properties": {
+        "panel_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Panel Id",
+          "type": "string"
+        },
+        "sequence_no": {
+          "minimum": 0,
+          "title": "Sequence No",
+          "type": "integer"
+        },
+        "story_intent": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Story Intent",
+          "type": "string"
+        },
+        "characters": {
+          "items": {
+            "$ref": "#/$defs/CharacterIntentV1"
+          },
+          "maxItems": 2,
+          "title": "Characters",
+          "type": "array"
+        },
+        "dialogue": {
+          "items": {
+            "$ref": "#/$defs/DialogueV1"
+          },
+          "maxItems": 16,
+          "title": "Dialogue",
+          "type": "array"
+        },
+        "constraints": {
+          "items": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Constraints",
+          "type": "array"
+        },
+        "render_profile": {
+          "$ref": "#/$defs/RenderProfile",
+          "default": "landscape"
+        }
+      },
+      "required": [
+        "panel_id",
+        "sequence_no",
+        "story_intent"
+      ],
+      "title": "PanelIntentV1",
+      "type": "object"
+    },
+    "RenderProfile": {
+      "enum": [
+        "landscape",
+        "portrait",
+        "square"
+      ],
+      "title": "RenderProfile",
+      "type": "string"
+    },
+    "SceneContextV1": {
+      "additionalProperties": false,
+      "properties": {
+        "summary": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "location": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Location",
+          "type": "string"
+        },
+        "time_of_day": {
+          "anyOf": [
+            {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Time Of Day"
+        },
+        "atmosphere": {
+          "anyOf": [
+            {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Atmosphere"
+        },
+        "continuity_notes": {
+          "items": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Continuity Notes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "summary",
+        "location"
+      ],
+      "title": "SceneContextV1",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_name": {
+      "const": "SceneJobV1",
+      "default": "SceneJobV1",
+      "title": "Schema Name",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "request_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "project_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "chapter_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Chapter Id",
+      "type": "string"
+    },
+    "scene_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Scene Id",
+      "type": "string"
+    },
+    "asset_profile_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Asset Profile Id",
+      "type": "string"
+    },
+    "scene_context": {
+      "$ref": "#/$defs/SceneContextV1"
+    },
+    "panels": {
+      "items": {
+        "$ref": "#/$defs/PanelIntentV1"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "title": "Panels",
+      "type": "array"
+    }
+  },
+  "required": [
+    "request_id",
+    "project_id",
+    "chapter_id",
+    "scene_id",
+    "asset_profile_id",
+    "scene_context",
+    "panels"
+  ],
+  "title": "SceneJobV1",
+  "type": "object"
+}

@@ -1,0 +1,141 @@
+{
+  "schema_name": "UpstreamSceneEnvelopeV1",
+  "schema_version": "1.0",
+  "request_id": "demo-library-letter-v1",
+  "project_id": "demo-comic",
+  "chapter_id": "chapter-01",
+  "scene_id": "library-letter",
+  "asset_profile_id": "demo-v1",
+  "characters": [
+    {
+      "character_id": "char-a",
+      "name": "林岚",
+      "appearance": "黑色长发束起，面容清秀。",
+      "clothing": ["深青色交领长袍", "青玉腰带"]
+    }
+  ],
+  "scene": {
+    "summary": "林岚在夜晚的藏书阁发现一封被藏起来的信。",
+    "location_id": "scene-library",
+    "location": "古代木结构藏书阁",
+    "time_of_day": "夜晚",
+    "atmosphere": "安静而紧张",
+    "entities": [
+      {
+        "entity_id": "hidden-letter",
+        "name": "密信",
+        "description": "折叠整齐、没有可见文字的旧纸信件。"
+      }
+    ]
+  },
+  "events": [
+    {
+      "event_id": "event-search",
+      "sequence_no": 1,
+      "action": "林岚在书架之间寻找线索。",
+      "actor_ids": ["char-a"],
+      "target_ids": [],
+      "cause_event_ids": [],
+      "state_changes": []
+    },
+    {
+      "event_id": "event-discovery",
+      "sequence_no": 2,
+      "action": "林岚从书架暗格中发现密信。",
+      "actor_ids": ["char-a"],
+      "target_ids": ["hidden-letter"],
+      "cause_event_ids": ["event-search"],
+      "state_changes": [
+        {
+          "subject_id": "hidden-letter",
+          "path": "holder_id",
+          "before": null,
+          "after": "char-a"
+        }
+      ]
+    },
+    {
+      "event_id": "event-hide",
+      "sequence_no": 3,
+      "action": "林岚听见门外脚步，将密信收入袖中。",
+      "actor_ids": ["char-a"],
+      "target_ids": ["hidden-letter"],
+      "cause_event_ids": ["event-discovery"],
+      "state_changes": [
+        {
+          "subject_id": "hidden-letter",
+          "path": "location",
+          "before": "hand",
+          "after": "sleeve"
+        }
+      ]
+    }
+  ],
+  "panels": [
+    {
+      "panel_id": "panel-001",
+      "sequence_no": 1,
+      "event_ids": ["event-search"],
+      "story_intent": "交代夜晚藏书阁和人物寻找线索的状态。",
+      "characters": [
+        {
+          "character_id": "char-a",
+          "action": "提灯查看高处书架",
+          "emotion": "专注警惕"
+        }
+      ],
+      "dialogue": [],
+      "constraints": ["现代物品", "其他人物", "文字、字幕、气泡"],
+      "movement_direction": null,
+      "render_profile": "landscape"
+    },
+    {
+      "panel_id": "panel-002",
+      "sequence_no": 2,
+      "event_ids": ["event-discovery"],
+      "story_intent": "林岚发现藏在暗格里的密信。",
+      "characters": [
+        {
+          "character_id": "char-a",
+          "action": "从书架暗格中取出折叠密信",
+          "emotion": "惊讶怀疑"
+        }
+      ],
+      "dialogue": [
+        {
+          "dialogue_id": "line-002-a",
+          "speaker_id": "char-a",
+          "kind": "thought",
+          "text": "原来藏在这里。"
+        }
+      ],
+      "constraints": ["信上出现可读文字", "其他人物", "文字、字幕、气泡"],
+      "movement_direction": null,
+      "render_profile": "portrait"
+    },
+    {
+      "panel_id": "panel-003",
+      "sequence_no": 3,
+      "event_ids": ["event-hide"],
+      "story_intent": "门外脚步迫近，林岚迅速隐藏密信。",
+      "characters": [
+        {
+          "character_id": "char-a",
+          "action": "回头看向门口并把密信收入袖中",
+          "emotion": "紧张戒备"
+        }
+      ],
+      "dialogue": [
+        {
+          "dialogue_id": "line-003-a",
+          "speaker_id": "char-a",
+          "kind": "thought",
+          "text": "有人来了。"
+        }
+      ],
+      "constraints": ["第二个人物入镜", "密信遗落", "文字、字幕、气泡"],
+      "movement_direction": "right_to_left",
+      "render_profile": "square"
+    }
+  ]
+}
