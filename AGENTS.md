@@ -34,4 +34,7 @@
 - Mark database migration impact.
 - List tests run.
 - Do not include secrets.
-- At least one reviewer must review core schema changes.
+- External review is encouraged for core schemas, migrations, Gate boundaries, and
+  CommitService changes, but it is not a merge blocker. A PR may merge without a
+  reviewer once required automated validation has passed and its description records
+  scope, compatibility, migration impact, and tests run.
