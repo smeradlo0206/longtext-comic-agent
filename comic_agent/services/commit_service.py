@@ -1,6 +1,7 @@
 """Canonical commit boundary for evidence-backed story data."""
 
 from comic_agent.repositories.storybible_repository import StoryBibleRepository
+from comic_agent.schemas.base import EvidenceRefV1
 from comic_agent.schemas.narrative import (
     EventProposalV1,
     TemporalRelation,
@@ -20,15 +21,13 @@ class CommitService:
     def validate_story_proposal_evidence(self, proposal: EventProposalV1) -> None:
         """Ensure every evidence reference resolves to a known SourceChunk."""
 
-        StoryBibleValidator(self._evidence_lookup).validate_evidence_refs(
-            proposal.evidence_refs,
-            owner=f"event proposal {proposal.proposal_id}",
-        )
+        for evidence_ref in proposal.evidence_refs:
+            self._validate_evidence_ref(evidence_ref)
 
     def validate_temporal_relation_evidence(
         self, proposal: TemporalRelationProposalV1, project_id: str
     ) -> None:
-        """Validate LLM evidence before a known temporal relation is persisted."""
+        """Validate Timeline evidence before a temporal relation is persisted."""
 
         if proposal.relation == TemporalRelation.UNKNOWN and not proposal.evidence_refs:
             return
@@ -87,3 +86,22 @@ class CommitService:
 
         self.validate_story_proposal_evidence(proposal)
         raise NotImplementedError("Story proposal canonical commits are not implemented in phase 1")
+
+    def _validate_evidence_ref(self, evidence_ref: EvidenceRefV1) -> None:
+        chunk = self._evidence_lookup.get_chunk(evidence_ref.chunk_id)
+        if chunk is None:
+            raise ValueError(f"EvidenceRef chunk not found: {evidence_ref.chunk_id}")
+
+        has_range = evidence_ref.quote_start is not None and evidence_ref.quote_end is not None
+        if has_range:
+            quote_start = evidence_ref.quote_start
+            quote_end = evidence_ref.quote_end
+            if quote_start is None or quote_end is None:
+                raise ValueError("Evidence quote range out of bounds")
+            if quote_start < 0 or quote_end > len(chunk.text):
+                raise ValueError("Evidence quote range out of bounds; range exceeds source chunk")
+            if evidence_ref.quote_text is not None:
+                if chunk.text[quote_start:quote_end] != evidence_ref.quote_text:
+                    raise ValueError("Evidence quote range does not match quote_text")
+        elif evidence_ref.quote_text is not None and evidence_ref.quote_text not in chunk.text:
+            raise ValueError("Evidence quote_text not found in source chunk")

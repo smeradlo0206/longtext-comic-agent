@@ -83,7 +83,14 @@ the prior `"1.0"` payloads. V2 adds the optional input `mode` (`RULES_ONLY` rema
 default) and an optional short `reasoning_summary` on a temporal-relation candidate.
 LLM mode emits only reviewable candidate relations, never canonical StoryBible data.
 
-No new Alembic migration is required: V2 continues to store the versioned Pydantic
-payload in the JSON column introduced by `0005_timeline_analysis_proposals`. Its
-idempotency key is strengthened in application code to include evidence text, prompt,
-agent version, and provider model before any LLM call.
+### Narrative Analyst automatic Gate 2
+
+`NarrativeAnalysisRunV1`, `NarrativeAnalysisWindowV1`, and the six typed Proposal families
+are the source-of-truth contracts for bounded whole-document analysis. Gate 1-approved
+chunk ids and AgentRun provenance are explicit review context; no service expands that scope
+or resolves references implicitly. `ReviewGate2ResultV1` and
+`NarrativeAnalysisReviewRouteV1` persist the fresh automatic decision. APPROVED carries the
+typed `ApprovedProposalBundleV1`; REJECTED carries only sanitized issue summaries;
+NEEDS_HUMAN_REVIEW carries held Proposal ids; FAILED carries sanitized execution diagnostics;
+NOT_READY carries no review artifact. Historical run and Proposal payload versions remain
+readable.

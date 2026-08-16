@@ -1,0 +1,2887 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Longtext Comic Agent Demo</title>
+  <style>
+    :root {
+      --bg: #eef2f6;
+      --panel: #ffffff;
+      --panel-soft: #f8fafc;
+      --ink: #111827;
+      --muted: #667085;
+      --line: #d8e0ea;
+      --accent: #0f766e;
+      --accent-strong: #0b5d56;
+      --warn: #9a6700;
+      --danger: #b42318;
+      --ok: #067647;
+      --shadow: 0 18px 48px rgba(17, 24, 39, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+      letter-spacing: 0;
+    }
+
+    button, input, textarea, select { font: inherit; }
+
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 280px 1fr;
+    }
+
+    .app, main, .grid, .stack, section, .body { min-width: 0; }
+
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 24px 18px;
+      background: #111827;
+      color: #f9fafb;
+    }
+
+    .brand h1 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      line-height: 1.2;
+    }
+
+    .brand p {
+      margin: 0 0 22px;
+      color: #a7b0bf;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .sidebar-nav-shell {
+      min-width: 0;
+      margin-bottom: 22px;
+    }
+
+    .sidebar-nav-toolbar {
+      display: none;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      padding: 0 0 8px;
+      color: #a7b0bf;
+      font-size: 12px;
+    }
+
+    .sidebar-nav-controls { display: inline-flex; gap: 6px; }
+
+    .sidebar-nav-viewport { min-width: 0; }
+
+    nav {
+      display: grid;
+      gap: 6px;
+    }
+
+    nav a {
+      color: #d6dbe5;
+      text-decoration: none;
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+
+    nav a:hover { background: rgba(255,255,255,0.08); }
+
+    .notice {
+      padding: 12px;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 8px;
+      color: #d6dbe5;
+      background: rgba(255,255,255,0.06);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    main {
+      padding: 24px;
+      display: grid;
+      gap: 18px;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: 1.2fr 0.9fr 1fr auto auto;
+      gap: 12px;
+      align-items: end;
+      padding: 18px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    input, textarea, select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 11px;
+      background: white;
+      color: var(--ink);
+      outline: none;
+      font-size: 14px;
+    }
+
+    input:focus, textarea:focus, select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+    }
+
+    button {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 13px;
+      background: white;
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      min-height: 40px;
+    }
+
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(360px, 0.72fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .stack { display: grid; gap: 18px; }
+    .full-span { grid-column: 1 / -1; }
+    .full-span { order: 1; }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel-soft);
+    }
+
+    .section-head h2 {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.25;
+    }
+
+    .section-head p {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .body {
+      padding: 16px 18px 18px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .matrix {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .cap {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .cap strong {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 6px;
+    }
+
+    .cap span, .muted {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      align-items: end;
+    }
+
+    .wide { grid-column: 1 / -1; }
+
+    .checkline {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      min-height: 40px;
+      color: var(--ink);
+      font-size: 13px;
+    }
+
+    .checkline input {
+      width: auto;
+      margin: 0;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #edf7f6;
+      color: var(--accent-strong);
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid #bfe3df;
+    }
+
+    .pill.warn {
+      color: var(--warn);
+      background: #fffbeb;
+      border-color: #f1d28a;
+    }
+
+    .pill.bad {
+      color: var(--danger);
+      background: #fff1f0;
+      border-color: #f4b8b1;
+    }
+
+    details {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      overflow: hidden;
+    }
+
+    summary {
+      padding: 11px 12px;
+      cursor: pointer;
+      font-weight: 750;
+      color: var(--ink);
+      background: var(--panel-soft);
+      border-bottom: 1px solid var(--line);
+    }
+
+    details pre {
+      border-radius: 0;
+      max-height: 420px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .table-scroll {
+      width: 100%;
+      max-width: 100%;
+      overflow-x: scroll;
+      overscroll-behavior-inline: contain;
+      scrollbar-gutter: stable;
+      touch-action: pan-x;
+    }
+
+    .table-scroll > table { min-width: 880px; }
+
+    .table-scroll-shell {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+    }
+
+    .table-scroll-toolbar {
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      padding: 8px 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .table-scroll-controls {
+      position: sticky;
+      right: 0;
+      display: inline-flex;
+      flex: 0 0 auto;
+      gap: 6px;
+      padding-left: 8px;
+      background: var(--panel);
+    }
+
+    .table-scroll-button {
+      min-height: 30px;
+      min-width: 34px;
+      padding: 4px 8px;
+    }
+
+    .target-summary {
+      min-width: 220px;
+      max-width: 360px;
+      overflow-wrap: anywhere;
+    }
+
+    .target-summary summary {
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--accent-strong);
+      font-weight: 700;
+    }
+
+    .target-summary div {
+      margin-top: 8px;
+      color: var(--ink);
+      line-height: 1.5;
+      white-space: normal;
+    }
+
+    .possible-duplicate {
+      margin-top: 8px;
+      border: 1px solid #f1d28a;
+      border-radius: 8px;
+      background: #fffbeb;
+      color: #7a4e00;
+    }
+
+    .possible-duplicate summary {
+      padding: 8px;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      font-size: 12px;
+    }
+
+    .possible-duplicate-body {
+      display: grid;
+      gap: 8px;
+      padding: 0 8px 8px;
+      color: var(--ink);
+      font-size: 12px;
+    }
+
+    .possible-duplicate-candidate {
+      display: grid;
+      gap: 3px;
+      padding: 8px;
+      border: 1px solid #f1d28a;
+      border-radius: 6px;
+      background: #fff;
+      overflow-wrap: anywhere;
+    }
+
+    #narrative { overflow: visible; }
+
+    #wholeDocumentWindows {
+      min-width: 0;
+      overflow: visible;
+    }
+
+    .window-execution-shell {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+    }
+
+    .window-execution-toolbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      padding: 8px 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .window-execution-controls { display: inline-flex; gap: 6px; }
+
+    .window-execution-viewport {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+      overscroll-behavior-inline: contain;
+      scrollbar-gutter: stable;
+      touch-action: pan-x;
+    }
+
+    .window-execution-table {
+      width: max-content;
+      min-width: 1400px;
+    }
+
+    .window-execution-table th,
+    .window-execution-table td { white-space: nowrap; }
+
+    .window-execution-table th:nth-child(10),
+    .window-execution-table td:nth-child(10),
+    .window-execution-table th:nth-child(11),
+    .window-execution-table td:nth-child(11),
+    .window-execution-table th:nth-child(12),
+    .window-execution-table td:nth-child(12) {
+      min-width: 220px;
+      white-space: normal;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 10px 9px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 12px;
+      background: var(--panel-soft);
+      font-weight: 750;
+    }
+
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
+    pre {
+      max-height: 360px;
+      overflow: auto;
+      margin: 0;
+      padding: 12px;
+      border-radius: 8px;
+      background: #111827;
+      color: #e5e7eb;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .selected {
+      display: grid;
+      gap: 8px;
+    }
+
+    .selected-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-soft);
+    }
+
+    mark {
+      background: #fde68a;
+      color: #111827;
+      padding: 1px 2px;
+      border-radius: 3px;
+    }
+
+    .log {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      width: min(520px, calc(100vw - 36px));
+      padding: 12px;
+      background: #111827;
+      color: #f9fafb;
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      font-size: 12px;
+      line-height: 1.5;
+      max-height: 180px;
+      overflow: auto;
+      display: none;
+      z-index: 5;
+    }
+
+    @media (max-width: 1080px) {
+      .app { grid-template-columns: 1fr; }
+      aside {
+        position: static;
+        height: auto;
+      }
+      .sidebar-nav-toolbar { display: flex; }
+      .sidebar-nav-viewport {
+        overflow-x: auto;
+        overscroll-behavior-inline: contain;
+        scrollbar-gutter: stable;
+        touch-action: pan-x;
+      }
+      .sidebar-nav-viewport nav {
+        display: flex;
+        width: max-content;
+        min-width: 100%;
+      }
+      .sidebar-nav-viewport nav a { white-space: nowrap; }
+      .topbar, .grid { grid-template-columns: 1fr; }
+      .form-grid { grid-template-columns: 1fr; }
+      .matrix { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 640px) {
+      main { padding: 14px; }
+      .matrix { grid-template-columns: 1fr; }
+      table { font-size: 12px; }
+      th, td { padding: 8px 6px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside>
+      <div class="brand">
+        <h1>Comic Agent Demo</h1>
+        <p>内部 Hosted Demo Runtime。支持 Event、Entity、Claim 的 Narrative Analyst 评估。</p>
+      </div>
+      <div class="sidebar-nav-shell">
+        <div class="sidebar-nav-toolbar">
+          <span>功能导航</span>
+          <span class="sidebar-nav-controls">
+            <button type="button" class="table-scroll-button" data-sidebar-scroll="left" aria-label="Scroll navigation left">←</button>
+            <button type="button" class="table-scroll-button" data-sidebar-scroll="right" aria-label="Scroll navigation right">→</button>
+          </span>
+        </div>
+        <div class="sidebar-nav-viewport" tabindex="0">
+          <nav>
+            <a href="#status">Demo Status</a>
+            <a href="#import">TXT Import</a>
+            <a href="#chapters">Chunks</a>
+            <a href="#agents">Agents</a>
+            <a href="#narrative">Narrative Analyst</a>
+            <a href="#knowledgeEvaluation">Knowledge State 评测</a>
+            <a href="#runs">Agent Runs</a>
+            <a href="#evidence">Evidence</a>
+          </nav>
+        </div>
+      </div>
+      <div class="notice">
+        Real LLM 使用服务端托管配置。页面不接收或展示 API Key，访问码只用于授权 demo 操作。
+      </div>
+    </aside>
+
+    <main>
+      <div class="topbar">
+        <label>API Base URL
+          <input id="apiBase" value="http://127.0.0.1:8080" />
+        </label>
+        <label>Project ID
+          <input id="projectId" placeholder="manual-eval-YYYYMMDD" />
+        </label>
+        <label>访问码
+          <input id="accessCode" type="password" autocomplete="off" />
+        </label>
+        <button id="verifyAccess" class="primary">验证访问码</button>
+        <button id="refreshStatus">刷新状态</button>
+      </div>
+
+      <section id="status">
+        <div class="section-head">
+          <div>
+            <h2>Demo Status</h2>
+            <p>后端只返回脱敏配置状态，不返回访问码或模型密钥。</p>
+          </div>
+          <span id="accessBadge" class="pill warn">Access 未验证</span>
+        </div>
+        <div class="body">
+          <div class="matrix" id="capabilityMatrix"></div>
+          <pre id="demoStatus">{}</pre>
+        </div>
+      </section>
+
+      <div class="grid">
+        <div class="stack">
+          <section id="import">
+            <div class="section-head">
+              <div>
+                <h2>Project 与 TXT 上传</h2>
+                <p>创建项目并上传 UTF-8 TXT，后端会分章和生成 SourceChunk。</p>
+              </div>
+            </div>
+            <div class="body">
+              <div class="row">
+                <button id="createProject" class="primary">创建项目</button>
+                <button id="loadChapters">查看章节</button>
+              </div>
+              <label>TXT 文件
+                <input id="txtFile" type="file" accept=".txt,text/plain" />
+              </label>
+              <button id="importTxt" class="primary">导入 TXT</button>
+              <pre id="importResult">{}</pre>
+              <details id="gate1ReviewDetails">
+                <summary>Gate 1 import quality review</summary>
+                <div id="gate1ReviewSummary" class="selected">尚未导入文档。</div>
+                <pre id="gate1ReviewPayload">{}</pre>
+              </details>
+            </div>
+          </section>
+
+          <section id="chapters">
+            <div class="section-head">
+              <div>
+                <h2>章节与 Chunks</h2>
+                <p>选择 1-3 个 chunk 作为 Event Agent 输入。</p>
+              </div>
+              <span class="pill" id="selectedCount">Selected 0</span>
+            </div>
+            <div class="body">
+              <div id="chapterTable"></div>
+              <div id="chunkTable"></div>
+            </div>
+          </section>
+
+          <section id="agents">
+            <div class="section-head">
+              <div>
+                <h2>Event Agent Controls</h2>
+                <p>Mock 不调用真实模型；Real Event 需要访问码并受 ENABLE_REAL_LLM 控制。</p>
+              </div>
+            </div>
+            <div class="body">
+              <div id="selectedChunks" class="selected"></div>
+              <div class="row">
+                <button id="runMock" class="primary">运行 Mock Event Agent</button>
+                <button id="runRealEvent" class="primary" disabled>运行 Real Event Agent · event only</button>
+              </div>
+              <pre id="agentResult">{}</pre>
+            </div>
+          </section>
+        </div>
+
+          <section id="narrative" class="full-span">
+            <div class="section-head">
+              <div>
+                <h2>Narrative Analyst Console</h2>
+                <p>统一运行 event/entity/claim mode，并查看脱敏 summary、Proposal 和人工复核模板。</p>
+              </div>
+              <span id="narrativeStatusBadge" class="pill warn">Not run</span>
+            </div>
+            <div class="body">
+              <div class="form-grid">
+                <label>Document
+                  <select id="analysisDocumentId">
+                    <option value="">Select an imported document</option>
+                  </select>
+                </label>
+                <div class="wide">
+                  <h3>Chapters authorized by Gate 1</h3>
+                  <div id="analysisChapterSelection" class="selected">Select an approved document to load chapters.</div>
+                </div>
+                <div class="row">
+                  <button id="loadAnalysisDocuments">Load documents</button>
+                </div>
+                <label class="checkline">
+                  <input id="analysisModeEvent" data-analysis-mode="event_extraction" type="checkbox" checked />
+                  event_extraction
+                </label>
+                <label class="checkline">
+                  <input id="analysisModeEntity" data-analysis-mode="entity_extraction" type="checkbox" checked />
+                  entity_extraction
+                </label>
+                <label class="checkline">
+                  <input id="analysisModeClaim" data-analysis-mode="claim_extraction" type="checkbox" checked />
+                  claim_extraction
+                </label>
+                <label class="checkline">
+                  <input id="analysisModeKnowledge" data-analysis-mode="knowledge_state_extraction" type="checkbox" checked />
+                  knowledge_state_extraction
+                </label>
+                <label class="checkline">
+                  <input id="analysisModeStateChange" data-analysis-mode="state_change_extraction" type="checkbox" checked />
+                  state_change_extraction
+                </label>
+                <label class="checkline">
+                  <input id="analysisModeRelationshipSignal" data-analysis-mode="relationship_signal_extraction" type="checkbox" checked />
+                  relationship_signal_extraction
+                </label>
+                <label class="checkline">
+                  <input id="analysisRealLlmRequested" type="checkbox" />
+                  real LLM requested
+                </label>
+                <div class="row wide">
+                  <button id="startWholeDocumentAnalysis" class="primary">Start whole-document analysis</button>
+                  <button id="refreshWholeDocumentAnalysis">Refresh progress</button>
+                  <button id="resumeWholeDocumentAnalysis">Resume failed windows</button>
+                </div>
+              </div>
+              <div class="row" id="wholeDocumentOutcome"></div>
+              <div>
+                <h3>Whole-document progress</h3>
+                <pre id="wholeDocumentProgress">{}</pre>
+              </div>
+              <div>
+                <h3>Whole-document summary</h3>
+                <pre id="wholeDocumentSummary">{}</pre>
+              </div>
+              <div>
+                <h3>Automatic Review Gate 2</h3>
+                <pre id="wholeDocumentGate2">{"state":"NOT_READY"}</pre>
+              </div>
+              <div>
+                <h3>Automatic Recovery (read-only)</h3>
+                <pre id="wholeDocumentRecovery">{"state":"NOT_STARTED"}</pre>
+              </div>
+              <details>
+                <summary>Whole-document Full Proposal JSON</summary>
+                <pre id="wholeDocumentFullProposal">{}</pre>
+              </details>
+              <div>
+                <h3>Whole-document proposal list</h3>
+                <div id="wholeDocumentProposalList"></div>
+              </div>
+              <div>
+                <h3>Window execution details</h3>
+                <div id="wholeDocumentWindows"><span class="muted">No analysis windows loaded.</span></div>
+              </div>
+              <div>
+                <h3>Selected whole-document proposal</h3>
+                <pre id="wholeDocumentProposalDetail">Select a proposal detail button from the list.</pre>
+              </div>
+              <details id="advancedNarrativeDebug" open>
+                <summary>Manual Narrative Analyst：选择 1–3 个 chunks 后运行</summary>
+                <div class="body">
+              <div class="form-grid">
+                <label>Mode
+                  <select id="narrativeMode">
+                    <option value="event_extraction">event_extraction · EventProposalBatchV1</option>
+                    <option value="entity_extraction">entity_extraction · EntityProposalBatchV1</option>
+                    <option value="claim_extraction">claim_extraction · ClaimProposalBatchV1</option>
+                    <option value="knowledge_state_extraction">knowledge_state_extraction · KnowledgeStateProposalBatchV1</option>
+                    <option value="state_change_extraction">state_change_extraction · StateChangeProposalBatchV1</option>
+                    <option value="relationship_signal_extraction">relationship_signal_extraction · RelationshipSignalProposalBatchV1</option>
+                  </select>
+                </label>
+                <label>chunk_limit
+                  <input id="narrativeChunkLimit" type="number" min="1" max="3" value="3" />
+                </label>
+                <label>chunk_offset
+                  <input id="narrativeChunkOffset" type="number" min="0" value="0" />
+                </label>
+                <label>max_chars_per_chunk
+                  <input id="narrativeMaxChars" type="number" min="1" value="1200" />
+                </label>
+                <label class="checkline">
+                  <input id="narrativeRealLlmRequested" type="checkbox" />
+                  real LLM requested
+                </label>
+                <div class="row">
+                  <button id="runNarrativeAnalyst" class="primary" disabled>运行 Narrative Analyst</button>
+                  <button id="refreshNarrativeRuns">刷新 AgentRuns</button>
+                </div>
+                <label class="wide">Chunk IDs
+                  <textarea id="narrativeChunkIds" rows="3" placeholder="请先从章节 chunks 中选择 1-3 个；也可一行一个或逗号分隔手动填写"></textarea>
+                </label>
+              </div>
+
+              <div>
+                <h3>本次输入 chunks / Selected input chunks</h3>
+                <div id="narrativeSelectedChunks" class="selected"></div>
+              </div>
+              <div class="row" id="narrativeOutcome"></div>
+              <div>
+                <h3>Summary JSON</h3>
+                <pre id="narrativeSummary">{}</pre>
+              </div>
+              <details>
+                <summary>Full Proposal JSON</summary>
+                <pre id="narrativeProposal">null</pre>
+              </details>
+              <div>
+                <h3>Proposal List</h3>
+                <div id="narrativeProposalList"></div>
+              </div>
+              <div>
+                <h3>Evidence / Validation</h3>
+                <pre id="narrativeEvidenceStatus">{}</pre>
+              </div>
+              <div>
+                <h3>Provider Diagnostics</h3>
+                <pre id="narrativeProviderDiagnostics">null</pre>
+              </div>
+              <div>
+                <h3>Manual Review Checklist</h3>
+                <p class="muted">这些字段需要人工复核，不是模型自动判断结果。</p>
+                <div id="manualReviewChecklist"></div>
+              </div>
+                </div>
+              </details>
+            </div>
+          </section>
+
+          <section id="knowledgeEvaluation" class="full-span">
+            <div class="section-head">
+              <div>
+                <h2>Knowledge State 评测</h2>
+                <p>独立的离线语义评测：只比较合成或脱敏 fixture 与手工粘贴的结构化 Batch，不读取项目文本，也不会在加载时调用 Provider。</p>
+              </div>
+              <span class="pill warn" id="knowledgeEvaluationBadge">未加载</span>
+            </div>
+            <div class="body stack">
+              <div class="row">
+                <button id="loadKnowledgeEvaluationCases" class="primary">加载评测用例</button>
+                <label>评测用例
+                  <select id="knowledgeEvaluationCase"><option value="">先加载用例</option></select>
+                </label>
+              </div>
+              <p id="knowledgeEvaluationActionHint" class="muted">请先加载并选择一个评测用例，才能进行离线或真实 LLM 评测。</p>
+              <div id="knowledgeEvaluationCaseList"><span class="muted">尚未加载评测用例。</span></div>
+              <div>
+                <h3>Fixture 详情（仅合成/脱敏文本）</h3>
+                <pre id="knowledgeEvaluationCaseDetail">尚未加载。</pre>
+              </div>
+              <label>KnowledgeStateProposalBatchV1 JSON
+                <textarea id="knowledgeEvaluationBatch" rows="12" placeholder='粘贴结构化 Proposal Batch；不会发送到 Provider。'></textarea>
+              </label>
+              <div class="row">
+                <button id="evaluateKnowledgeStateBatch" class="primary" disabled>离线评测</button>
+                <label class="checkline"><input id="knowledgeEvaluationRealLlm" type="checkbox" /> 我明确请求真实 LLM（服务端必须启用）</label>
+                <button id="runKnowledgeStateCase" disabled>运行真实 LLM 评测</button>
+              </div>
+              <p id="knowledgeEvaluationRunStatus" class="pill" role="status" aria-live="polite">等待选择评测用例。</p>
+              <div>
+                <h3>评测结果</h3>
+                <pre id="knowledgeEvaluationResult">{}</pre>
+              </div>
+              <div>
+                <h3>批量评测报告</h3>
+                <p class="muted">每个 case 只保留当前浏览器内最新一次离线或显式真实 LLM 的结构化 Batch；生成报告不会调用 Provider。</p>
+                <div class="row">
+                  <button id="buildKnowledgeEvaluationReport" class="primary">生成已收集评测结果的报告</button>
+                  <button id="clearKnowledgeEvaluationReport">清空已收集结果</button>
+                  <span class="muted" id="knowledgeEvaluationCollectedCount">已收集评测结果：0</span>
+                  <button id="exportKnowledgeEvaluationReport">导出批量报告 JSON</button>
+                </div>
+                <p id="knowledgeEvaluationReportStatus" class="pill" role="status" aria-live="polite">尚未生成报告。</p>
+                <pre id="knowledgeEvaluationReport">{}</pre>
+              </div>
+              <div>
+                <h3>浏览器本地人工复核</h3>
+                <p class="muted">人工复核不写入后端，不会传给 Provider；导出仅包含 fixture ID、结果和以下本地字段。</p>
+                <div class="form-grid">
+                  <label>结论
+                    <select id="knowledgeEvaluationReviewDecision"><option value="">未选择</option><option>通过</option><option>误判状态</option><option>target_kind 错误</option><option>证据不足</option><option>多余输出</option><option>需新增规则</option></select>
+                  </label>
+                  <label>评审人<input id="knowledgeEvaluationReviewer" /></label>
+                  <label class="wide">备注<textarea id="knowledgeEvaluationReviewNotes" rows="3"></textarea></label>
+                </div>
+                <div class="row"><button id="saveKnowledgeEvaluationReview">保存本地复核</button><button id="exportKnowledgeEvaluation">导出脱敏评测 JSON</button></div>
+              </div>
+            </div>
+          </section>
+
+        <div class="stack">
+          <section>
+            <div class="section-head">
+              <div>
+                <h2>Chunk 详情</h2>
+                <p>查看当前项目已上传文本的单个 chunk。</p>
+              </div>
+            </div>
+            <div class="body">
+              <pre id="chunkDetail">选择一个 chunk 查看详情。</pre>
+            </div>
+          </section>
+
+          <section id="runs">
+            <div class="section-head">
+              <div>
+                <h2>AgentRun 审计</h2>
+                <p>查看运行记录、ProviderResult 状态和脱敏 payload。</p>
+              </div>
+              <button id="loadRuns">刷新 runs</button>
+            </div>
+            <div class="body">
+              <div id="runTable"></div>
+              <pre id="runDetail">选择一个 AgentRun 查看详情。</pre>
+            </div>
+          </section>
+
+          <section id="evidence">
+            <div class="section-head">
+              <div>
+                <h2>Evidence 回源</h2>
+                <p>加载 AgentRun evidence 并高亮短 quote。</p>
+              </div>
+            </div>
+            <div class="body">
+              <div id="evidencePanel" class="stack"></div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+  <div id="log" class="log"></div>
+
+  <script>
+    const state = {
+      chapters: [],
+      chunksByChapter: new Map(),
+      selectedChunks: new Map(),
+      analysisDocuments: [],
+      wholeDocumentAnalysisRunId: null,
+      wholeDocumentProgress: null,
+      wholeDocumentResult: null,
+      wholeDocumentGate2: null,
+      wholeDocumentWindows: [],
+      wholeDocumentPollTimer: null,
+      selectedAnalysisChapters: [],
+      analysisGate1: null,
+      accessGranted: true,
+      requireAccessCode: false,
+      lastNarrativeResponse: null,
+      knowledgeEvaluationCases: [],
+      knowledgeEvaluationCase: null,
+      knowledgeEvaluationResult: null,
+      knowledgeEvaluationReview: null,
+      knowledgeEvaluationBatches: new Map(),
+      knowledgeEvaluationRunFailures: new Map(),
+      knowledgeEvaluationReport: null,
+      knowledgeEvaluationRunInProgress: false
+    };
+
+    const $ = (id) => document.getElementById(id);
+    const api = () => $("apiBase").value.replace(/\/$/, "");
+    const projectId = () => $("projectId").value.trim();
+    const accessCode = () => $("accessCode").value;
+    const projectStorageKey = "comic-agent-project-id";
+    const analysisDocumentStorageKey = "comic-agent-analysis-document-id";
+
+    const capabilities = [
+      ["TXT import", "UTF-8 text upload"],
+      ["Mock Event Agent", "No model call"],
+      ["Real Event Agent", "Platform-hosted model"],
+      ["Narrative Analyst", "Event / Entity / Claim"],
+      ["AgentRun audit", "List and detail"],
+      ["Evidence audit", "Short quote trace"],
+      ["LLM status", "Sanitized settings"],
+      ["Access code", "Header-gated real agent"],
+      ["Scope", "Proposal-only"]
+    ];
+
+    function renderCapabilities(status = {}) {
+      $("capabilityMatrix").innerHTML = capabilities.map(([title, note]) => `
+        <div class="cap"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(note)}</span></div>
+      `).join("");
+      if (status.supported_modes) {
+        $("demoStatus").textContent = pretty(status);
+      }
+    }
+
+    function demoHeaders() {
+      const headers = {"Content-Type": "application/json"};
+      if (accessCode()) headers["X-Demo-Access-Code"] = accessCode();
+      return headers;
+    }
+
+    async function request(path, options = {}) {
+      const response = await fetch(api() + path, options);
+      const text = await response.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+      if (!response.ok) {
+        if (data && typeof data === "object" && data.gate1) {
+          renderGate1Review(data.gate1, data.approved_chunk_bundle);
+        }
+        const error = new Error(typeof data === "object" && data?.detail ? data.detail : response.statusText);
+        error.payload = data;
+        error.status = response.status;
+        throw error;
+      }
+      return data;
+    }
+
+    function showLog(message) {
+      const el = $("log");
+      el.textContent = message;
+      el.style.display = "block";
+      clearTimeout(showLog.timer);
+      showLog.timer = setTimeout(() => { el.style.display = "none"; }, 5000);
+    }
+
+    function pretty(data) {
+      return JSON.stringify(data, null, 2);
+    }
+
+    function defaultProjectId() {
+      const now = new Date();
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, "0");
+      const dd = String(now.getDate()).padStart(2, "0");
+      return `manual-eval-${yyyy}${mm}${dd}`;
+    }
+
+    function initializeProjectId() {
+      const saved = localStorage.getItem(projectStorageKey);
+      $("projectId").value = saved || defaultProjectId();
+    }
+
+    function rememberProjectId() {
+      const value = projectId();
+      if (value) localStorage.setItem(projectStorageKey, value);
+    }
+
+    async function refreshStatus() {
+      const data = await request("/demo/status");
+      state.requireAccessCode = data.require_access_code;
+      if (!data.require_access_code) state.accessGranted = true;
+      renderCapabilities(data);
+      updateAccessUi();
+    }
+
+    async function verifyAccess() {
+      const data = await request("/demo/verify-access", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({access_code: accessCode()})
+      });
+      state.accessGranted = data.access_granted === true;
+      updateAccessUi();
+      showLog("访问码验证通过。");
+    }
+
+    function updateAccessUi() {
+      if (!state.requireAccessCode) {
+        $("accessBadge").textContent = "Access Not Required";
+        $("accessBadge").className = "pill";
+        $("verifyAccess").disabled = true;
+      } else {
+        $("accessBadge").textContent = state.accessGranted ? "Access Granted" : "Access Required";
+        $("accessBadge").className = state.accessGranted ? "pill" : "pill warn";
+        $("verifyAccess").disabled = false;
+      }
+      $("runRealEvent").disabled = !state.accessGranted || state.selectedChunks.size < 1;
+      $("runNarrativeAnalyst").disabled = !state.accessGranted || state.selectedChunks.size < 1;
+      $("startWholeDocumentAnalysis").disabled = !state.accessGranted;
+    }
+
+    async function createProject() {
+      rememberProjectId();
+      const data = await request("/projects", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({project_id: projectId(), name: projectId()})
+      });
+      showLog(data.created ? "项目已创建。" : "项目已存在，已复用。");
+    }
+
+    async function importTxt() {
+      const file = $("txtFile").files[0];
+      if (!file) throw new Error("请选择 TXT 文件。");
+      rememberProjectId();
+      const form = new FormData();
+      form.append("file", file);
+      const data = await request(`/projects/${encodeURIComponent(projectId())}/documents/import`, {
+        method: "POST",
+        body: form
+      });
+      $("importResult").textContent = pretty(data);
+      renderGate1Review(data.gate1, data.approved_chunk_bundle);
+      if (data.gate1?.decision === "APPROVED") showLog("Gate 1 APPROVED; analysis is available.");
+      if (data.document?.document_id) localStorage.setItem(analysisDocumentStorageKey, data.document.document_id);
+      clearSelectedChunks();
+      await loadAnalysisDocuments();
+      showLog(`导入完成：${data.status}, chapters=${data.chapters_count}, chunks=${data.chunks_count}。请点击“查看章节”并选择本次要分析的 chunks。`);
+    }
+
+    async function loadChapters() {
+      rememberProjectId();
+      const chapters = await request(`/projects/${encodeURIComponent(projectId())}/chapters`);
+      state.chapters = chapters;
+      $("chapterTable").innerHTML = table(
+        ["order", "title", "chapter_id", "chunks"],
+        chapters.map((chapter) => [
+          chapter.order,
+          chapter.title,
+          `<button data-chapter="${chapter.chapter_id}">${chapter.chapter_id}</button>`,
+          `${chapter.start_chunk_order}-${chapter.end_chunk_order}`
+        ])
+      );
+      document.querySelectorAll("[data-chapter]").forEach((button) => {
+        button.addEventListener("click", () => loadChunks(button.dataset.chapter));
+      });
+    }
+
+    function analysisDocumentId() {
+      return $("analysisDocumentId").value;
+    }
+
+    function selectedAnalysisModes() {
+      return Array.from(document.querySelectorAll("[data-analysis-mode]:checked"))
+        .map((input) => input.dataset.analysisMode);
+    }
+
+    function rememberAnalysisDocumentId() {
+      const documentId = analysisDocumentId();
+      if (documentId) localStorage.setItem(analysisDocumentStorageKey, documentId);
+    }
+
+    async function loadAnalysisDocuments() {
+      rememberProjectId();
+      const documents = await request(`/projects/${encodeURIComponent(projectId())}/documents`);
+      state.analysisDocuments = documents;
+      const remembered = localStorage.getItem(analysisDocumentStorageKey);
+      $("analysisDocumentId").innerHTML = [
+        `<option value="">Select an imported document</option>`,
+        ...documents.map((document) => (
+          `<option value="${escapeHtml(document.document_id)}">${escapeHtml(document.filename)} · rev ${escapeHtml(document.revision)}</option>`
+        ))
+      ].join("");
+      if (documents.some((document) => document.document_id === remembered)) {
+        $("analysisDocumentId").value = remembered;
+        await loadAnalysisChapters(remembered);
+      }
+    }
+
+    function renderGate1Review(gate1, bundle) {
+      state.analysisGate1 = gate1 || null;
+      $("gate1ReviewSummary").textContent = gate1
+        ? `Gate 1: ${gate1.decision}; routing=${gate1.routing_advice?.action || "未声明"}; issues=${(gate1.issues || []).length}`
+        : "尚未导入文档。";
+      $("gate1ReviewPayload").textContent = pretty({gate1: gate1 || null, approved_chunk_bundle: bundle || null});
+    }
+
+    async function loadAnalysisChapters(documentId = analysisDocumentId()) {
+      if (!documentId) return;
+      const payload = await request(
+        `/projects/${encodeURIComponent(projectId())}/documents/${encodeURIComponent(documentId)}/narrative-analysis-chapters`
+      );
+      state.selectedAnalysisChapters = (payload.chapters || [])
+        .filter((chapter) => chapter.available)
+        .map((chapter) => chapter.chapter_id);
+      $("analysisChapterSelection").innerHTML = (payload.chapters || []).map((chapter) => `
+        <label class="checkline"><input type="checkbox" data-analysis-chapter="${escapeHtml(chapter.chapter_id)}" ${state.selectedAnalysisChapters.includes(chapter.chapter_id) ? "checked" : ""} ${chapter.available ? "" : "disabled"} />
+          ${escapeHtml(chapter.title)} · ${chapter.available_chunk_count}/${chapter.chunk_count}
+        </label>`).join("") || "No chapters available after Gate 1.";
+      document.querySelectorAll("[data-analysis-chapter]").forEach((input) => input.addEventListener("change", () => {
+        state.selectedAnalysisChapters = Array.from(document.querySelectorAll("[data-analysis-chapter]:checked"))
+          .map((item) => item.dataset.analysisChapter);
+      }));
+      renderGate1Review(payload.gate1, payload.gate1?.approved_chunk_bundle);
+      $("startWholeDocumentAnalysis").disabled = !payload.eligible;
+    }
+
+    function renderWholeDocumentProgress(data) {
+      state.wholeDocumentProgress = data;
+      $("wholeDocumentProgress").textContent = pretty({
+        analysis_run_id: data.analysis_run_id,
+        document_id: data.document_id,
+        modes: data.modes,
+        status: data.status,
+        real_llm_requested: data.real_llm_requested,
+        concurrency: data.concurrency,
+        windows_total: data.windows_total,
+        windows_succeeded: data.windows_succeeded,
+        windows_failed: data.windows_failed,
+        windows_pending: data.windows_pending
+      });
+      $("wholeDocumentOutcome").innerHTML = [
+        statusPill("status", data.status),
+        statusPill("windows succeeded", data.windows_succeeded),
+        statusPill("windows failed", data.windows_failed),
+        statusPill("windows pending", data.windows_pending)
+      ].join("");
+      renderWholeDocumentGate2(data);
+    }
+
+    function renderWholeDocumentGate2(progress, audit = null) {
+      state.wholeDocumentGate2 = audit;
+      const route = audit?.route || {};
+      $("wholeDocumentGate2").textContent = pretty({
+        ready: progress.review_gate2_ready === true,
+        route_decision: progress.review_gate2_route_decision ?? route.decision ?? "NOT_READY",
+        review_run_id: progress.review_gate2_run_id ?? route.review_run_id ?? null,
+        approved_count: progress.review_gate2_approved_count ?? route.approved_count ?? 0,
+        rejected_count: progress.review_gate2_rejected_count ?? route.rejected_count ?? 0,
+        held_count: progress.review_gate2_held_count ?? route.held_count ?? 0,
+        safe_issue_codes: progress.review_gate2_issue_codes ?? []
+      });
+    }
+
+    async function loadWholeDocumentGate2(progress) {
+      const runId = state.wholeDocumentAnalysisRunId;
+      if (!runId || progress.review_gate2_ready !== true) return;
+      try {
+        const audit = await request(`/narrative-analysis-runs/${encodeURIComponent(runId)}/review-gate2`);
+        renderWholeDocumentGate2(progress, audit);
+      } catch (error) {
+        renderWholeDocumentGate2(progress);
+      }
+      try {
+        const recovery = await request(`/narrative-analysis-runs/${encodeURIComponent(runId)}/recovery`);
+        $("wholeDocumentRecovery").textContent = pretty(recovery);
+      } catch (error) {
+        $("wholeDocumentRecovery").textContent = pretty({ state: "NOT_STARTED" });
+      }
+    }
+
+    function renderWholeDocumentWindows(items) {
+      state.wholeDocumentWindows = Array.isArray(items) ? items : [];
+      const rows = state.wholeDocumentWindows.map((windowItem) => [
+        escapeHtml(windowItem.mode ?? "-"),
+        escapeHtml(windowItem.window_index ?? "-"),
+        escapeHtml((windowItem.chunk_ids || []).join(", ")),
+        escapeHtml((windowItem.owned_chunk_ids || []).join(", ")),
+        escapeHtml(windowItem.parent_window_id ?? "-"),
+        escapeHtml(windowItem.split_reason ?? "-"),
+        statusPill("status", windowItem.status ?? "-"),
+        escapeHtml(windowItem.agent_run_id ?? "-"),
+        escapeHtml(windowItem.attempt_count ?? 0),
+        escapeHtml(windowItem.effective_max_chars_per_chunk ?? "-"),
+        escapeHtml(windowItem.previous_failure_category ?? "-"),
+        escapeHtml(windowItem.failure_category ?? "-"),
+        escapeHtml(windowItem.error_message ?? "-"),
+        escapeHtml(windowItem.recommended_action ?? "-"),
+        escapeHtml(shortPreview(pretty(windowItem.provider_error_diagnostics ?? {}), 240))
+      ]);
+      $("wholeDocumentWindows").innerHTML = windowExecutionTable(
+        ["mode", "window", "context chunk ids", "owned chunk ids", "parent window", "split reason", "status", "AgentRun", "attempts", "input budget", "previous failure", "failure", "sanitized error", "recommended action", "safe diagnostics"],
+        rows
+      );
+    }
+
+    async function loadWholeDocumentWindows() {
+      const runId = state.wholeDocumentAnalysisRunId;
+      if (!runId) return;
+      const payload = await request(`/narrative-analysis-runs/${encodeURIComponent(runId)}/windows`);
+      renderWholeDocumentWindows(payload.items || []);
+    }
+
+    async function ensureWholeDocumentRealLlmEnabled() {
+      const llmStatus = await request("/settings/llm/status");
+      if (llmStatus.enable_real_llm !== true) {
+        throw new Error(
+          "Real LLM is disabled by server settings. Restart the API with ENABLE_REAL_LLM=true."
+        );
+      }
+    }
+
+    function clearWholeDocumentResult() {
+      state.wholeDocumentResult = null;
+      state.wholeDocumentGate2 = null;
+      state.wholeDocumentWindows = [];
+      $("wholeDocumentSummary").textContent = "{}";
+      $("wholeDocumentGate2").textContent = '{"state":"NOT_READY"}';
+      $("wholeDocumentFullProposal").textContent = "{}";
+      $("wholeDocumentProposalList").innerHTML = `<span class="muted">暂无数据。</span>`;
+      $("wholeDocumentProposalDetail").textContent = "Select a proposal detail button from the list.";
+    }
+
+    function renderWholeDocumentSummary(result) {
+      const progress = state.wholeDocumentProgress || {};
+      $("wholeDocumentSummary").textContent = pretty({
+        analysis_run_id: result.analysis_run_id,
+        document_id: result.document_id,
+        modes: progress.modes || [],
+        status: progress.status || null,
+        event_proposals_count: result.events.length,
+        entity_proposals_count: result.entities.length,
+        claim_proposals_count: result.claims.length,
+        knowledge_state_proposals_count: (result.knowledge_states || []).length,
+        state_change_proposals_count: (result.state_changes || []).length,
+        relationship_signal_proposals_count: (result.relationship_signals || []).length,
+        total_proposals: result.events.length + result.entities.length + result.claims.length + (result.knowledge_states || []).length + (result.state_changes || []).length + (result.relationship_signals || []).length,
+        windows_total: progress.windows_total ?? null,
+        windows_succeeded: progress.windows_succeeded ?? null,
+        windows_failed: progress.windows_failed ?? null
+      });
+    }
+
+    function proposalItemsForWholeDocumentMode(mode) {
+      const result = state.wholeDocumentResult;
+      if (!result) return [];
+      if (mode === "event_extraction") return result.events || [];
+      if (mode === "entity_extraction") return result.entities || [];
+      if (mode === "claim_extraction") return result.claims || [];
+      if (mode === "knowledge_state_extraction") return result.knowledge_states || [];
+      if (mode === "state_change_extraction") return result.state_changes || [];
+      if (mode === "relationship_signal_extraction") return result.relationship_signals || [];
+      return [];
+    }
+
+    function renderWholeDocumentProposalDetail(mode, index) {
+      const item = proposalItemsForWholeDocumentMode(mode)[Number(index)];
+      if (!item) {
+        $("wholeDocumentProposalDetail").textContent = "Proposal detail is unavailable.";
+        return;
+      }
+      $("wholeDocumentProposalDetail").textContent = pretty({
+        mode,
+        proposal: item.proposal || null,
+        agent_run_ids: item.agent_run_ids || [],
+        evidence_refs: item.evidence_refs || []
+      });
+    }
+
+    function renderWholeDocumentResult(result) {
+      state.wholeDocumentResult = result;
+      renderWholeDocumentSummary(result);
+      $("wholeDocumentFullProposal").textContent = pretty(result);
+      $("wholeDocumentProposalDetail").textContent = "Select a proposal detail button from the list.";
+      const knowledgeDuplicateReviews = buildKnowledgePossibleDuplicateReview(
+        (result.knowledge_states || []).map((item, index) => knowledgeReviewCandidate(
+          item.proposal || {},
+          `whole-${index}`,
+          `Aggregate / ${(item.agent_run_ids || []).join(", ") || "—"}`,
+          item.agent_run_ids || [],
+          item.evidence_refs || []
+        ))
+      );
+      const rows = [
+        ...(result.events || []).map((item, index) => ["event_extraction", item, index]),
+        ...(result.entities || []).map((item, index) => ["entity_extraction", item, index]),
+        ...(result.claims || []).map((item, index) => ["claim_extraction", item, index]),
+        ...(result.knowledge_states || []).map((item, index) => ["knowledge_state_extraction", item, index])
+      ].map(([mode, item, index]) => {
+        const proposal = item.proposal || {};
+        const evidence = Array.isArray(item.evidence_refs) ? item.evidence_refs[0] : null;
+        const subjectOrSubtype = proposal.subject?.mention_text ?? proposal.creature_subtype ?? "-";
+        const subjectResolution = proposal.subject?.resolution_status ?? "—";
+        const targetSummary = proposal.target?.target_text ?? proposal.summary ?? proposal.canonical_name ?? proposal.claim_text ?? "—";
+        const targetKind = proposal.target?.target_kind ?? "—";
+        const targetResolution = proposal.target?.resolution_status ?? "—";
+        const temporalScope = proposal.temporal_scope ?? "—";
+        const validFrom = knowledgeTemporalAnchorSummary(proposal.valid_from);
+        const validUntil = knowledgeTemporalAnchorSummary(proposal.valid_until);
+        const agentRunIds = item.agent_run_ids || [];
+        const auditContext = mode === "knowledge_state_extraction"
+          ? `Aggregate / ${agentRunIds[0] ?? "—"}${agentRunIds.length > 1 ? ` (+${agentRunIds.length - 1})` : ""}`
+          : agentRunIds.join(", ");
+        const duplicateReview = mode === "knowledge_state_extraction"
+          ? knowledgeDuplicateReviews.get(`whole-${index}`)
+          : null;
+        return [
+          escapeHtml(mode),
+          escapeHtml(proposal.proposal_id ?? "-"),
+           escapeHtml(auditContext || "—"),
+           escapeHtml(proposal.event_type ?? proposal.entity_type ?? proposal.claim_type ?? proposal.epistemic_status ?? "-"),
+           escapeHtml(proposal.epistemic_basis ?? "—"),
+           escapeHtml(subjectOrSubtype),
+          escapeHtml(subjectResolution),
+          expandableTargetSummary(targetSummary),
+          escapeHtml(targetKind),
+          escapeHtml(targetResolution),
+          escapeHtml(temporalScope),
+          escapeHtml(validFrom),
+          escapeHtml(validUntil),
+          escapeHtml(proposal.reality_layer ?? "-"),
+          escapeHtml((item.evidence_refs || []).map((ref) => ref.chunk_id).join(", ")),
+          escapeHtml(shortPreview(evidence?.quote_text ?? "", 40)),
+          `${knowledgePossibleDuplicateMarkup(duplicateReview)}<button data-whole-proposal-mode="${mode}" data-whole-proposal-index="${index}">View details</button>`
+        ];
+      });
+      $("wholeDocumentProposalList").innerHTML = table(
+        ["mode", "proposal_id", "batch / agent run", "type", "basis", "subject / subtype", "subject resolution", "target summary", "target kind", "target resolution", "temporal scope", "valid from", "valid until", "reality layer", "evidence chunks", "quote preview", "review"],
+        rows
+      );
+      document.querySelectorAll("[data-whole-proposal-mode]").forEach((button) => {
+        button.addEventListener("click", () => {
+          renderWholeDocumentProposalDetail(
+            button.dataset.wholeProposalMode,
+            button.dataset.wholeProposalIndex
+          );
+        });
+      });
+      bindKnowledgeEvidenceAuditButtons();
+      renderWholeDocumentStateChanges(result.state_changes || []);
+      renderWholeDocumentRelationshipSignals(result.relationship_signals || []);
+    }
+
+    function stopWholeDocumentProgressPoll() {
+      if (state.wholeDocumentPollTimer !== null) {
+        window.clearTimeout(state.wholeDocumentPollTimer);
+        state.wholeDocumentPollTimer = null;
+      }
+    }
+
+    function scheduleWholeDocumentProgressPoll() {
+      stopWholeDocumentProgressPoll();
+      state.wholeDocumentPollTimer = window.setTimeout(() => {
+        loadWholeDocumentProgress().catch((error) => showLog(error.message));
+      }, 2500);
+    }
+
+    async function loadWholeDocumentProgress() {
+      const runId = state.wholeDocumentAnalysisRunId;
+      if (!runId) throw new Error("Start or select a whole-document analysis run first.");
+      const progress = await request(`/narrative-analysis-runs/${encodeURIComponent(runId)}`);
+      renderWholeDocumentProgress(progress);
+      await loadWholeDocumentWindows();
+      if (progress.status === "PENDING" || progress.status === "RUNNING") {
+        scheduleWholeDocumentProgressPoll();
+        return;
+      }
+      stopWholeDocumentProgressPoll();
+      const result = await request(`/narrative-analysis-runs/${encodeURIComponent(runId)}/result`);
+      renderWholeDocumentResult(result);
+      await loadWholeDocumentGate2(progress);
+    }
+
+    async function startWholeDocumentAnalysis() {
+      const documentId = analysisDocumentId();
+      const modes = selectedAnalysisModes();
+      if (!documentId) throw new Error("Select an imported document first.");
+      if (!modes.length) throw new Error("Select at least one Narrative Analyst mode.");
+      if ($("analysisRealLlmRequested").checked) {
+        await ensureWholeDocumentRealLlmEnabled();
+      }
+      rememberAnalysisDocumentId();
+      const data = await request(
+        `/projects/${encodeURIComponent(projectId())}/documents/${encodeURIComponent(documentId)}/narrative-analysis-runs`,
+        {
+          method: "POST",
+          headers: demoHeaders(),
+          body: JSON.stringify({
+            modes,
+            chapter_ids: state.selectedAnalysisChapters,
+            real_llm_requested: $("analysisRealLlmRequested").checked
+          })
+        }
+      );
+      stopWholeDocumentProgressPoll();
+      clearWholeDocumentResult();
+      state.wholeDocumentAnalysisRunId = data.analysis_run_id;
+      renderWholeDocumentProgress(data);
+      await loadWholeDocumentProgress();
+    }
+
+    async function resumeWholeDocumentAnalysis() {
+      const runId = state.wholeDocumentAnalysisRunId;
+      if (!runId) throw new Error("Start or select a whole-document analysis run first.");
+      const data = await request(`/narrative-analysis-runs/${encodeURIComponent(runId)}/resume`, {
+        method: "POST",
+        headers: demoHeaders()
+      });
+      clearWholeDocumentResult();
+      renderWholeDocumentProgress(data);
+      await loadWholeDocumentProgress();
+    }
+
+    async function loadChunks(chapterId) {
+      const chunks = await request(`/chapters/${encodeURIComponent(chapterId)}/chunks`);
+      state.chunksByChapter.set(chapterId, chunks);
+      $("chunkTable").innerHTML = table(
+        ["select", "order", "chunk_id", "range", "length", "hash", "preview"],
+        chunks.map((chunk) => [
+          `<input type="checkbox" data-select="${chunk.chunk_id}" ${state.selectedChunks.has(chunk.chunk_id) ? "checked" : ""}>`,
+          chunk.order,
+          `<button data-chunk="${chunk.chunk_id}">${chunk.chunk_id}</button>`,
+          `${chunk.char_start ?? "-"}-${chunk.char_end ?? "-"}`,
+          chunk.text.length,
+          `<span class="mono">${chunk.checksum.slice(0, 12)}</span>`,
+          `<span>${escapeHtml(chunk.text.slice(0, 64))}</span>`
+        ])
+      );
+      document.querySelectorAll("[data-select]").forEach((input) => {
+        input.addEventListener("change", () => toggleChunk(input.dataset.select, input.checked));
+      });
+      document.querySelectorAll("[data-chunk]").forEach((button) => {
+        button.addEventListener("click", () => loadChunkDetail(button.dataset.chunk));
+      });
+    }
+
+    async function loadChunkDetail(chunkId) {
+      const chunk = await request(`/chunks/${encodeURIComponent(chunkId)}`);
+      $("chunkDetail").textContent = pretty(sanitizedChunkDetail(chunk));
+    }
+
+    function sanitizedChunkDetail(chunk) {
+      return {
+        chunk_id: chunk.chunk_id,
+        document_id: chunk.document_id,
+        chapter_id: chunk.chapter_id,
+        project_id: chunk.project_id,
+        order: chunk.order,
+        char_start: chunk.char_start,
+        char_end: chunk.char_end,
+        checksum: chunk.checksum,
+        text_preview: String(chunk.text || "").slice(0, 96),
+        text_length: String(chunk.text || "").length
+      };
+    }
+
+    function findLoadedChunk(chunkId) {
+      for (const chunks of state.chunksByChapter.values()) {
+        const match = chunks.find((chunk) => chunk.chunk_id === chunkId);
+        if (match) return match;
+      }
+      return null;
+    }
+
+    function chunkMetadata(chunkId) {
+      const chunk = findLoadedChunk(chunkId);
+      if (!chunk) return {chunk_id: chunkId};
+      const chapter = state.chapters.find((item) => item.chapter_id === chunk.chapter_id);
+      return {
+        chunk_id: chunk.chunk_id,
+        document_id: chunk.document_id,
+        chapter_id: chunk.chapter_id,
+        chapter_title: chapter?.title ?? null,
+        preview: shortPreview(chunk.text, 60),
+        text_length: String(chunk.text || "").length
+      };
+    }
+
+    function shortPreview(text, limit) {
+      const compact = String(text || "").trim().replace(/\s+/g, " ");
+      if (!compact) return "";
+      if (compact.length > limit) return compact.slice(0, limit).trimEnd();
+      if (compact.length === 1) return "...";
+      return `${compact.slice(0, Math.min(20, compact.length - 1)).trimEnd()}...`;
+    }
+
+    function expandableTargetSummary(text) {
+      const fullText = String(text || "").trim();
+      if (!fullText) return "—";
+      const preview = shortPreview(fullText, 48);
+      if (preview === fullText) return escapeHtml(fullText);
+      return `<details class="target-summary"><summary>${escapeHtml(preview)}… 查看完整</summary><div>${escapeHtml(fullText)}</div></details>`;
+    }
+
+    function clearSelectedChunks() {
+      state.selectedChunks.clear();
+      $("narrativeChunkIds").value = "";
+      document.querySelectorAll("[data-select]").forEach((input) => {
+        input.checked = false;
+      });
+      renderSelected();
+      renderNarrativeSelectedChunks();
+    }
+
+    function toggleChunk(chunkId, checked) {
+      if (checked) {
+        if (state.selectedChunks.size >= 3) {
+          showLog("最多选择 3 个 chunk。");
+          document.querySelector(`[data-select="${chunkId}"]`).checked = false;
+          return;
+        }
+        state.selectedChunks.set(chunkId, chunkMetadata(chunkId));
+      } else {
+        state.selectedChunks.delete(chunkId);
+      }
+      renderSelected();
+    }
+
+    function renderSelected() {
+      $("selectedCount").textContent = `Selected ${state.selectedChunks.size}`;
+      $("selectedChunks").innerHTML = Array.from(state.selectedChunks.keys()).map((chunkId) => `
+        <div class="selected-item"><span class="mono">${chunkId}</span><button data-remove="${chunkId}">移除</button></div>
+      `).join("") || `<span class="muted">尚未选择 chunk。</span>`;
+      syncNarrativeChunkIds();
+      renderNarrativeSelectedChunks();
+      document.querySelectorAll("[data-remove]").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.selectedChunks.delete(button.dataset.remove);
+          renderSelected();
+          const input = document.querySelector(`[data-select="${button.dataset.remove}"]`);
+          if (input) input.checked = false;
+        });
+      });
+      updateAccessUi();
+    }
+
+    function syncNarrativeChunkIds() {
+      const selectedIds = Array.from(state.selectedChunks.keys());
+      $("narrativeChunkIds").value = selectedIds.join("\n");
+    }
+
+    function renderNarrativeSelectedChunks() {
+      const chunkIds = parseNarrativeChunkIds();
+      $("narrativeSelectedChunks").innerHTML = chunkIds.map((chunkId) => {
+        const metadata = state.selectedChunks.get(chunkId) || chunkMetadata(chunkId);
+        const title = metadata.chapter_title || metadata.chapter_id || "chapter unknown";
+        const documentId = metadata.document_id || "document unknown";
+        const preview = metadata.preview || "preview unavailable; verify this chunk id before running";
+        return `
+          <div class="selected-item">
+            <div>
+              <div class="mono">${escapeHtml(metadata.chunk_id || chunkId)}</div>
+              <span>${escapeHtml(title)} · ${escapeHtml(documentId)}</span>
+              <div class="muted">${escapeHtml(preview)}</div>
+            </div>
+          </div>
+        `;
+      }).join("") || `<span class="muted">请先选择 1-3 个 chunks，避免误用旧项目文本。</span>`;
+    }
+
+    async function runMock() {
+      const chunkIds = Array.from(state.selectedChunks.keys());
+      if (!chunkIds.length) throw new Error("请先选择 1-3 个 chunk。");
+      const data = await request(`/projects/${encodeURIComponent(projectId())}/agent-runs/mock-event`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({chunk_ids: chunkIds})
+      });
+      $("agentResult").textContent = pretty(data);
+      showLog(`Mock run: ${data.status}`);
+      await loadRuns();
+    }
+
+    async function runRealEvent() {
+      const chunkIds = Array.from(state.selectedChunks.keys());
+      if (!chunkIds.length || chunkIds.length > 3) throw new Error("请选择 1-3 个 chunk。");
+      const data = await request(`/projects/${encodeURIComponent(projectId())}/agent-runs/real-event`, {
+        method: "POST",
+        headers: demoHeaders(),
+        body: JSON.stringify({chunk_ids: chunkIds})
+      });
+      $("agentResult").textContent = pretty(data);
+      showLog(`Real Event run: ${data.agent_run_status}`);
+      await loadRuns();
+    }
+
+    function parseNarrativeChunkIds() {
+      return $("narrativeChunkIds").value
+        .split(/[\s,]+/)
+        .map((value) => value.trim())
+        .filter(Boolean);
+    }
+
+    async function runNarrativeAnalyst() {
+      const chunkIds = parseNarrativeChunkIds();
+      if (!chunkIds.length) {
+        renderNarrativeSelectedChunks();
+        throw new Error("请先选择 1-3 个 chunks，避免误用旧项目文本。");
+      }
+      if (chunkIds.length > 3) {
+        renderNarrativeSelectedChunks();
+        throw new Error("Narrative Analyst 最多一次运行 3 个 chunks。");
+      }
+      const requestedMode = $("narrativeMode").value;
+      const body = {
+        mode: requestedMode,
+        chunk_limit: Number.parseInt($("narrativeChunkLimit").value, 10),
+        chunk_offset: Number.parseInt($("narrativeChunkOffset").value, 10),
+        max_chars_per_chunk: Number.parseInt($("narrativeMaxChars").value, 10),
+        real_llm_requested: $("narrativeRealLlmRequested").checked
+      };
+      body.chunk_ids = chunkIds;
+      const data = await request(`/projects/${encodeURIComponent(projectId())}/agent-runs/narrative-analyst`, {
+        method: "POST",
+        headers: demoHeaders(),
+        body: JSON.stringify(body)
+      });
+      assertNarrativeModeMatches(requestedMode, data);
+      renderNarrativeResult(data);
+      showLog(`Narrative Analyst: ${data.agent_run_status ?? "dry-run"}`);
+      if (data.agent_run_saved) await loadRuns();
+    }
+
+    function assertNarrativeModeMatches(requestedMode, data) {
+      const expectedSchema = expectedSchemaForMode(requestedMode);
+      if (data.mode !== requestedMode || data.output_schema !== expectedSchema) {
+        throw new Error(
+          `Narrative Analyst mode mismatch: requested ${requestedMode} / ${expectedSchema}, ` +
+          `received ${data.mode ?? "-"} / ${data.output_schema ?? "-"}`
+        );
+      }
+    }
+
+    function expectedSchemaForMode(mode) {
+      if (mode === "event_extraction") return "EventProposalBatchV1";
+      if (mode === "entity_extraction") return "EntityProposalBatchV1";
+      if (mode === "claim_extraction") return "ClaimProposalBatchV1";
+      if (mode === "knowledge_state_extraction") return "KnowledgeStateProposalBatchV1";
+      if (mode === "state_change_extraction") return "StateChangeProposalBatchV1";
+      if (mode === "relationship_signal_extraction") return "RelationshipSignalProposalBatchV1";
+      return null;
+    }
+
+    function renderNarrativeResult(data) {
+      const sanitized = sanitizeNarrativeResponse(data);
+      state.lastNarrativeResponse = sanitized;
+      const summary = JSON.parse(JSON.stringify(sanitized));
+      delete summary.proposal;
+      delete summary.manual_review_checklist;
+      $("narrativeSummary").textContent = pretty(summary);
+      $("narrativeProposal").textContent = pretty(sanitized.proposal ?? null);
+      renderProposalList(
+        sanitized.proposal,
+        sanitized.agent_run_id,
+        sanitized.batch_id,
+        sanitized.knowledge_state_evidence_results || [],
+        sanitized.state_change_evidence_results || []
+      );
+      $("narrativeEvidenceStatus").textContent = pretty({
+        batch_id: sanitized.batch_id,
+        events_count: sanitized.events_count,
+        event_proposal_ids: sanitized.event_proposal_ids,
+        entities_count: sanitized.entities_count,
+        entity_proposal_ids: sanitized.entity_proposal_ids,
+        claims_count: sanitized.claims_count,
+        claim_proposal_ids: sanitized.claim_proposal_ids,
+        states_count: sanitized.states_count,
+        state_proposal_ids: sanitized.state_proposal_ids,
+        changes_count: sanitized.changes_count,
+        change_proposal_ids: sanitized.change_proposal_ids,
+        evidence_validation_passed: sanitized.evidence_validation_passed,
+        evidence_chunk_id: sanitized.evidence_chunk_id,
+        quote_matched: sanitized.quote_matched,
+        char_range_matched: sanitized.char_range_matched,
+        event_evidence_results: sanitized.event_evidence_results,
+        entity_evidence_results: sanitized.entity_evidence_results,
+        claim_evidence_results: sanitized.claim_evidence_results,
+        knowledge_state_evidence_results: sanitized.knowledge_state_evidence_results,
+        state_change_evidence_results: sanitized.state_change_evidence_results
+      });
+      $("narrativeProviderDiagnostics").textContent = pretty(sanitized.provider_error_diagnostics ?? null);
+      renderManualReviewChecklist(sanitized.manual_review_checklist || {});
+      renderNarrativeOutcome(sanitized);
+    }
+
+    function sanitizeNarrativeResponse(data) {
+      const copy = JSON.parse(JSON.stringify(data));
+      if (copy.provider_result && Object.hasOwn(copy.provider_result, "raw_output")) {
+        delete copy.provider_result.raw_output;
+      }
+      const messageContentKey = ["message", "content"].join(".");
+      if (copy.provider_error_diagnostics && Object.hasOwn(copy.provider_error_diagnostics, messageContentKey)) {
+        delete copy.provider_error_diagnostics[messageContentKey];
+      }
+      return copy;
+    }
+
+    function renderProposalList(
+      proposal,
+      agentRunId = null,
+      batchId = null,
+      knowledgeEvidenceResults = [],
+      stateChangeEvidenceResults = []
+    ) {
+      if (!proposal) {
+        $("narrativeProposalList").innerHTML = `<span class="muted">暂无 proposal。</span>`;
+        return;
+      }
+      if (Array.isArray(proposal.states)) {
+        renderKnowledgeStateProposalList(
+          proposal.states,
+          agentRunId,
+          batchId,
+          knowledgeEvidenceResults
+        );
+        return;
+      }
+      if (Array.isArray(proposal.changes)) {
+        renderStateChangeProposalList(
+          proposal.changes,
+          agentRunId,
+          batchId,
+          stateChangeEvidenceResults
+        );
+        return;
+      }
+      if (Array.isArray(proposal.signals)) {
+        renderRelationshipSignalProposalList(
+          proposal.signals,
+          agentRunId,
+          batchId,
+          data.relationship_signal_evidence_results || []
+        );
+        return;
+      }
+      const rows = proposalItems(proposal).map((item) => proposalRow(item));
+      $("narrativeProposalList").innerHTML = table(
+        ["proposal_id", "type", "creature_subtype", "temporal_scope", "source_type", "summary/name", "confidence", "evidence chunk", "quote preview"],
+        rows
+      );
+    }
+
+    function knowledgeTemporalAnchorSummary(anchor) {
+      if (!anchor) return "未声明";
+      if (anchor.resolution_status === "UNRESOLVED" && anchor.anchor_text) {
+        return `未解析：${shortPreview(anchor.anchor_text, 48)}`;
+      }
+      if (anchor.resolution_status === "RESOLVED") {
+        return `已解析：${anchor.event_proposal_id ?? "—"}`;
+      }
+      return anchor.resolution_status ?? "未声明";
+    }
+
+    function knowledgeEvidenceStatus(proposalId, evidenceResults) {
+      const result = evidenceResults.find((item) => item.proposal_id === proposalId);
+      if (!result) return "待审计";
+      if (result.quote_matched === true) return "quote 已匹配";
+      if (result.quote_matched === false) return "quote 未匹配";
+      return "证据已记录";
+    }
+
+    function normalizeKnowledgeDuplicateDisplayText(value) {
+      let text = String(value ?? "").normalize("NFC").trim().replace(/\s+/gu, " ");
+      while (/^["'“”‘’「」『』].*["'“”‘’「」『』]$/u.test(text)) {
+        text = text.slice(1, -1).trim();
+      }
+      return text.replace(/[。！？!?；;，,、.]+$/u, "").trim();
+    }
+
+    function normalizeKnowledgeDuplicateTarget(value) {
+      let text = normalizeKnowledgeDuplicateDisplayText(value);
+      let previous = null;
+      while (text && text !== previous) {
+        previous = text;
+        text = text
+          .replace(/^(?:传言|传闻|说法|消息)\s*[:：]\s*/u, "")
+          .replace(/\s*(?:的\s*)?(?:传言|传闻|说法|消息)$/u, "");
+        text = normalizeKnowledgeDuplicateDisplayText(text);
+      }
+      return text;
+    }
+
+    function knowledgeDuplicateAnchorKey(anchor) {
+      if (!anchor) return "未声明";
+      return [
+        anchor.resolution_status ?? "",
+        anchor.event_proposal_id ?? "",
+        normalizeKnowledgeDuplicateDisplayText(anchor.anchor_text)
+      ].join("\u001f");
+    }
+
+    function knowledgeReviewCandidate(state, id, auditContext, agentRunIds, evidenceRefs) {
+      return {state, id, auditContext, agentRunIds, evidenceRefs};
+    }
+
+    function knowledgeDuplicateBaseKey(candidate) {
+      const state = candidate.state || {};
+      const subject = state.subject || {};
+      return [
+        subject.resolution_status ?? "",
+        subject.entity_proposal_id ?? "",
+        normalizeKnowledgeDuplicateDisplayText(subject.mention_text),
+        state.epistemic_status ?? "",
+        state.epistemic_basis ?? "",
+        state.reality_layer ?? "",
+        knowledgeDuplicateAnchorKey(state.valid_from),
+        knowledgeDuplicateAnchorKey(state.valid_until)
+      ].join("\u001f");
+    }
+
+    function buildKnowledgePossibleDuplicateReview(candidates) {
+      const reviews = new Map(candidates.map((candidate) => [candidate.id, []]));
+      for (let leftIndex = 0; leftIndex < candidates.length; leftIndex += 1) {
+        for (let rightIndex = leftIndex + 1; rightIndex < candidates.length; rightIndex += 1) {
+          const left = candidates[leftIndex];
+          const right = candidates[rightIndex];
+          if (knowledgeDuplicateBaseKey(left) !== knowledgeDuplicateBaseKey(right)) continue;
+          const leftTarget = left.state?.target || {};
+          const rightTarget = right.state?.target || {};
+          const leftCore = normalizeKnowledgeDuplicateTarget(leftTarget.target_text);
+          const rightCore = normalizeKnowledgeDuplicateTarget(rightTarget.target_text);
+          if (!leftCore || leftCore !== rightCore) continue;
+          const reason = leftTarget.target_kind !== rightTarget.target_kind
+            ? "可能重复：目标类型不一致"
+            : normalizeKnowledgeDuplicateDisplayText(leftTarget.target_text)
+                !== normalizeKnowledgeDuplicateDisplayText(rightTarget.target_text)
+              ? "可能重复：目标表达不同"
+              : null;
+          if (!reason) continue;
+          reviews.get(left.id).push({reason, candidate: right});
+          reviews.get(right.id).push({reason, candidate: left});
+        }
+      }
+      return reviews;
+    }
+
+    function knowledgeAuditMarkup(candidate) {
+      if (candidate.agentRunIds?.length) {
+        return candidate.agentRunIds
+          .map((agentRunId) => `<button data-evidence-run="${escapeHtml(agentRunId)}">Evidence audit</button>`)
+          .join(" ");
+      }
+      return escapeHtml(candidate.evidenceRefs?.[0]?.chunk_id ?? "Evidence audit unavailable");
+    }
+
+    function knowledgePossibleDuplicateMarkup(matches) {
+      if (!matches?.length) return "";
+      const reasons = [...new Set(matches.map((match) => match.reason))];
+      const candidates = [...new Map(matches.map((match) => [match.candidate.id, match.candidate])).values()];
+      return `<details class="possible-duplicate"><summary>${escapeHtml(reasons.join("；"))}</summary><div class="possible-duplicate-body">${candidates.map((candidate) => {
+        const state = candidate.state || {};
+        const target = state.target || {};
+        return `<div class="possible-duplicate-candidate"><strong>${escapeHtml(state.proposal_id ?? "—")}</strong><span>Batch / AgentRun: ${escapeHtml(candidate.auditContext ?? "—")}</span><span>Status / Basis: ${escapeHtml(state.epistemic_status ?? "—")} / ${escapeHtml(state.epistemic_basis ?? "—")}</span><span>Target: ${escapeHtml(target.target_text ?? "—")}</span><span>Kind / Resolution: ${escapeHtml(target.target_kind ?? "—")} / ${escapeHtml(target.resolution_status ?? "—")}</span>${knowledgeAuditMarkup(candidate)}</div>`;
+      }).join("")}</div></details>`;
+    }
+
+    function bindKnowledgeEvidenceAuditButtons() {
+      document.querySelectorAll("[data-evidence-run]").forEach((button) => {
+        if (button.dataset.evidenceBound === "true") return;
+        button.dataset.evidenceBound = "true";
+        button.addEventListener("click", () => loadEvidence(button.dataset.evidenceRun));
+      });
+    }
+
+    function renderKnowledgeStateProposalList(states, agentRunId, batchId, evidenceResults) {
+      const candidates = states.map((state, index) => knowledgeReviewCandidate(
+        state,
+        `manual-${index}`,
+        `${batchId ?? "—"} / ${agentRunId ?? "—"}`,
+        agentRunId ? [agentRunId] : [],
+        state.evidence_refs || []
+      ));
+      const knowledgeDuplicateReviews = buildKnowledgePossibleDuplicateReview(candidates);
+      const rows = candidates.map((candidate) => {
+        const state = candidate.state;
+        const evidence = Array.isArray(state.evidence_refs) ? state.evidence_refs[0] : null;
+        const auditEntry = knowledgeAuditMarkup(candidate);
+        return [
+          escapeHtml(state.proposal_id ?? "-"),
+          escapeHtml(`${batchId ?? "—"} / ${agentRunId ?? "—"}`),
+          escapeHtml(state.epistemic_status ?? "-"),
+          escapeHtml(state.epistemic_basis ?? "-"),
+          escapeHtml(state.subject?.mention_text ?? "-"),
+          escapeHtml(state.subject?.resolution_status ?? "-"),
+          expandableTargetSummary(state.target?.target_text ?? ""),
+          escapeHtml(state.target?.target_kind ?? "-"),
+          escapeHtml(state.target?.resolution_status ?? "-"),
+          escapeHtml(knowledgeTemporalAnchorSummary(state.valid_from)),
+          escapeHtml(knowledgeTemporalAnchorSummary(state.valid_until)),
+          escapeHtml(state.reality_layer ?? "-"),
+          `${escapeHtml(knowledgeEvidenceStatus(state.proposal_id, evidenceResults))} · ${auditEntry}`,
+          knowledgePossibleDuplicateMarkup(knowledgeDuplicateReviews.get(candidate.id))
+        ];
+      });
+      $("narrativeProposalList").innerHTML = table(
+        [
+          "Proposal ID",
+          "Batch / Agent Run",
+          "Status",
+          "Basis",
+          "Subject",
+          "Subject resolution",
+          "Target summary",
+          "Target kind",
+          "Target resolution",
+          "Valid from",
+          "Valid until",
+          "Reality layer",
+          "Evidence status",
+          "Possible duplicate"
+        ],
+        rows
+      );
+      bindKnowledgeEvidenceAuditButtons();
+    }
+
+    function stateChangeScalar(value) {
+      if (value === null || value === undefined) return "原文未声明";
+      return typeof value === "string" ? value : JSON.stringify(value);
+    }
+
+    function stateChangeResolution(reference) {
+      return reference?.resolution_status === "UNRESOLVED" ? "UNRESOLVED" : (reference?.resolution_status ?? "未声明");
+    }
+
+    function stateChangeScalarKey(value) {
+      if (value === null || value === undefined) return "null";
+      return `${typeof value}:${JSON.stringify(value)}`;
+    }
+
+    function stateChangeDuplicateBaseKey(change) {
+      const event = change?.event || {};
+      const target = change?.target || {};
+      return [
+        target.mention_text ?? "",
+        target.target_kind ?? "",
+        target.resolution_status ?? "",
+        target.entity_proposal_id ?? "",
+        target.proposal_schema ?? "",
+        change?.attribute_path ?? "",
+        stateChangeScalarKey(change?.old_value),
+        stateChangeScalarKey(change?.new_value),
+        Boolean(change?.persistent),
+        change?.reality_layer ?? "",
+        event.resolution_status ?? "",
+        event.event_proposal_id ?? "",
+        event.proposal_schema ?? ""
+      ].join("\u001f");
+    }
+
+    function stateChangeReviewCandidate(change, id, auditContext, agentRunIds, evidenceRefs) {
+      return {change, id, auditContext, agentRunIds, evidenceRefs};
+    }
+
+    function buildStateChangePossibleDuplicateReview(candidates) {
+      const reviews = new Map(candidates.map((candidate) => [candidate.id, []]));
+      for (let leftIndex = 0; leftIndex < candidates.length; leftIndex += 1) {
+        for (let rightIndex = leftIndex + 1; rightIndex < candidates.length; rightIndex += 1) {
+          const left = candidates[leftIndex];
+          const right = candidates[rightIndex];
+          if (stateChangeDuplicateBaseKey(left.change) !== stateChangeDuplicateBaseKey(right.change)) continue;
+          if ((left.change?.event?.event_summary ?? "") === (right.change?.event?.event_summary ?? "")) continue;
+          const match = {reason: "可能重复：事件表达不同", candidate: right};
+          reviews.get(left.id).push(match);
+          reviews.get(right.id).push({reason: match.reason, candidate: left});
+        }
+      }
+      return reviews;
+    }
+
+    function stateChangePossibleDuplicateMarkup(matches) {
+      if (!matches?.length) return "";
+      const reasons = [...new Set(matches.map((match) => match.reason))];
+      const candidates = [...new Map(matches.map((match) => [match.candidate.id, match.candidate])).values()];
+      return `<details class="possible-duplicate"><summary>${escapeHtml(reasons.join("；"))}（仅供人工审核；未自动合并）</summary><div class="possible-duplicate-body">${candidates.map((candidate) => {
+        const change = candidate.change || {};
+        const target = change.target || {};
+        const event = change.event || {};
+        const audit = candidate.agentRunIds?.length
+          ? candidate.agentRunIds.map((runId) => `<button data-state-change-evidence-run="${escapeHtml(runId)}">Evidence audit</button>`).join(" ")
+          : "Evidence audit unavailable";
+        return `<div class="possible-duplicate-candidate"><strong>${escapeHtml(change.proposal_id ?? "—")}</strong><span>Batch / AgentRun: ${escapeHtml(candidate.auditContext ?? "—")}</span><span>Event: ${escapeHtml(event.event_summary ?? "—")}</span><span>Target / Kind / Resolution: ${escapeHtml(target.mention_text ?? "—")} / ${escapeHtml(target.target_kind ?? "—")} / ${escapeHtml(target.resolution_status ?? "—")}</span><span>Attribute / Old / New: ${escapeHtml(change.attribute_path ?? "—")} / ${escapeHtml(stateChangeScalar(change.old_value))} / ${escapeHtml(stateChangeScalar(change.new_value))}</span>${audit}</div>`;
+      }).join("")}</div></details>`;
+    }
+
+    function stateChangeRows(changes, auditContext, evidenceRefsFor, evidenceRunIdFor, duplicateReviews = new Map()) {
+      return changes.map((change, index) => {
+        const evidenceRefs = evidenceRefsFor(change, index);
+        const evidence = evidenceRefs[0] || null;
+        const evidenceRunId = evidenceRunIdFor(change, index);
+        const candidateId = `state-change-${index}`;
+        return [
+          escapeHtml(change.proposal_id ?? "-"),
+          escapeHtml(auditContext(change, index)),
+          escapeHtml(change.event?.event_summary ?? "-"),
+          escapeHtml(stateChangeResolution(change.event)),
+          expandableTargetSummary(change.target?.mention_text ?? ""),
+          escapeHtml(change.target?.target_kind ?? "-"),
+          escapeHtml(stateChangeResolution(change.target)),
+          escapeHtml(change.attribute_path ?? "-"),
+          escapeHtml(stateChangeScalar(change.old_value)),
+          escapeHtml(stateChangeScalar(change.new_value)),
+          escapeHtml(change.persistent ? "明确持续性支持" : "未获持续性支持"),
+          escapeHtml(change.reality_layer ?? "-"),
+          escapeHtml(evidenceRefs.map((ref) => ref.chunk_id).join(", ")),
+          escapeHtml((change.new_value_evidence_indexes || []).join(", ") || "未声明"),
+          escapeHtml((change.persistence_evidence_indexes || []).join(", ") || "未声明"),
+          escapeHtml(shortPreview(evidence?.quote_text ?? "", 40)),
+          `${stateChangePossibleDuplicateMarkup(duplicateReviews.get(candidateId))}${evidenceRunId ? `<button data-state-change-evidence-run="${escapeHtml(evidenceRunId)}">View details / Evidence audit</button>` : "—"}`
+        ];
+      });
+    }
+
+    const stateChangeAuditHeaders = [
+      "Proposal ID", "Batch / Agent Run", "Event summary", "Event resolution",
+      "Target summary", "Target kind", "Target resolution", "Attribute path",
+      "Old value", "New value", "Persistent", "Reality layer", "Evidence chunks",
+      "New value evidence", "Persistence evidence", "Quote preview", "Review / View details"
+    ];
+
+    function renderStateChangeProposalList(changes, agentRunId, batchId, evidenceResults = []) {
+      if (!changes.length) {
+        $("narrativeProposalList").innerHTML = `<span class="muted">未发现可审计状态变化</span>`;
+        return;
+      }
+      const candidates = changes.map((change, index) => stateChangeReviewCandidate(
+        change,
+        `state-change-${index}`,
+        `${batchId ?? "—"} / ${agentRunId ?? "—"}`,
+        agentRunId ? [agentRunId] : [],
+        change.evidence_refs || []
+      ));
+      const duplicateReviews = buildStateChangePossibleDuplicateReview(candidates);
+      $("narrativeProposalList").innerHTML = table(
+        stateChangeAuditHeaders,
+        stateChangeRows(
+          changes,
+          () => `${batchId ?? "—"} / ${agentRunId ?? "—"}`,
+          (change) => change.evidence_refs || [],
+          () => agentRunId,
+          duplicateReviews
+        )
+      );
+      bindStateChangeEvidenceAuditButtons();
+    }
+
+    function renderWholeDocumentStateChanges(items) {
+      if (!items.length) return;
+      const changes = items.map((item) => item.proposal || {});
+      const candidates = changes.map((change, index) => {
+        const runIds = items[index].agent_run_ids || [];
+        return stateChangeReviewCandidate(
+          change,
+          `state-change-${index}`,
+          `Aggregate / ${runIds[0] ?? "—"}${runIds.length > 1 ? ` (+${runIds.length - 1})` : ""}`,
+          runIds,
+          items[index].evidence_refs || []
+        );
+      });
+      const duplicateReviews = buildStateChangePossibleDuplicateReview(candidates);
+      const rows = stateChangeRows(
+        changes,
+        (_change, index) => {
+          const runIds = items[index].agent_run_ids || [];
+          return `Aggregate / ${runIds[0] ?? "—"}${runIds.length > 1 ? ` (+${runIds.length - 1})` : ""}`;
+        },
+        (_change, index) => items[index].evidence_refs || [],
+        (_change, index) => (items[index].agent_run_ids || [])[0] || null,
+        duplicateReviews
+      );
+      $("wholeDocumentProposalList").innerHTML += `<h4>State Change audit</h4>${table(stateChangeAuditHeaders, rows)}`;
+      bindStateChangeEvidenceAuditButtons();
+    }
+
+    function bindStateChangeEvidenceAuditButtons() {
+      document.querySelectorAll("[data-state-change-evidence-run]").forEach((button) => {
+        button.addEventListener("click", () => loadEvidence(button.dataset.stateChangeEvidenceRun));
+      });
+    }
+
+    const relationshipSignalAuditHeaders = [
+      "Proposal ID", "Batch / Agent Run", "Subject", "Subject kind", "Subject resolution",
+      "Relationship domain", "Relationship kind", "Directionality", "Counterpart",
+      "Counterpart kind", "Counterpart resolution", "Signal effect", "Assertion polarity",
+      "Evidence basis", "Support level", "Source speaker", "Context event", "Temporal anchor",
+      "Reality layer", "Evidence chunks", "Quote preview", "Review / View details"
+    ];
+
+    function relationshipSignalValue(value) {
+      return value === null || value === undefined || value === "" ? "未声明" : String(value);
+    }
+
+    function relationshipSignalRows(signals, auditContext, evidenceRefsFor, evidenceRunIdFor) {
+      return signals.map((signal, index) => {
+        const evidenceRefs = evidenceRefsFor(signal, index);
+        const evidence = evidenceRefs[0] || null;
+        const evidenceRunId = evidenceRunIdFor(signal, index);
+        const subject = signal.subject || {};
+        const counterpart = signal.counterpart || {};
+        return [
+          escapeHtml(signal.proposal_id ?? "-"),
+          escapeHtml(auditContext(signal, index)),
+          escapeHtml(subject.mention_text ?? "-"),
+          escapeHtml(subject.participant_kind ?? "-"),
+          escapeHtml(subject.resolution_status ?? "UNRESOLVED"),
+          escapeHtml(signal.relationship_domain ?? "-"),
+          escapeHtml(signal.relationship_kind ?? "-"),
+          escapeHtml(signal.directionality ?? "-"),
+          escapeHtml(counterpart.mention_text ?? "-"),
+          escapeHtml(counterpart.participant_kind ?? "-"),
+          escapeHtml(counterpart.resolution_status ?? "UNRESOLVED"),
+          escapeHtml(signal.signal_effect ?? "-"),
+          escapeHtml(signal.assertion_polarity ?? "-"),
+          escapeHtml(signal.evidence_basis ?? "-"),
+          escapeHtml(signal.support_level ?? "-"),
+          escapeHtml(relationshipSignalValue(signal.source_speaker?.mention_text)),
+          escapeHtml(relationshipSignalValue(signal.context_event?.event_summary)),
+          escapeHtml(relationshipSignalValue(signal.temporal_anchor?.anchor_text)),
+          escapeHtml(signal.reality_layer ?? "-"),
+          escapeHtml(evidenceRefs.map((ref) => ref.chunk_id).join(", ")),
+          escapeHtml(shortPreview(evidence?.quote_text ?? "", 40)),
+          evidenceRunId ? `<button data-relationship-signal-evidence-run="${escapeHtml(evidenceRunId)}">View details / Evidence audit</button>` : "—"
+        ];
+      });
+    }
+
+    function renderRelationshipSignalProposalList(signals, agentRunId, batchId) {
+      if (!signals.length) {
+        $("narrativeProposalList").innerHTML = `<span class="muted">未发现可审计关系信号</span>`;
+        return;
+      }
+      $("narrativeProposalList").innerHTML = table(
+        relationshipSignalAuditHeaders,
+        relationshipSignalRows(
+          signals,
+          () => `${batchId ?? "—"} / ${agentRunId ?? "—"}`,
+          (signal) => signal.evidence_refs || [],
+          () => agentRunId
+        )
+      );
+      bindRelationshipSignalEvidenceAuditButtons();
+    }
+
+    function renderWholeDocumentRelationshipSignals(items) {
+      if (!items.length) {
+        $("wholeDocumentProposalList").innerHTML += `<h4>Relationship Signal audit</h4><span class="muted">未发现可审计关系信号</span>`;
+        return;
+      }
+      const signals = items.map((item) => item.proposal || {});
+      const rows = relationshipSignalRows(
+        signals,
+        (_signal, index) => {
+          const runIds = items[index].agent_run_ids || [];
+          return `Aggregate / ${runIds[0] ?? "—"}${runIds.length > 1 ? ` (+${runIds.length - 1})` : ""}`;
+        },
+        (_signal, index) => items[index].evidence_refs || [],
+        (_signal, index) => (items[index].agent_run_ids || [])[0] || null
+      );
+      $("wholeDocumentProposalList").innerHTML += `<h4>Relationship Signal audit</h4>${table(relationshipSignalAuditHeaders, rows)}`;
+      bindRelationshipSignalEvidenceAuditButtons();
+    }
+
+    function bindRelationshipSignalEvidenceAuditButtons() {
+      document.querySelectorAll("[data-relationship-signal-evidence-run]").forEach((button) => {
+        button.addEventListener("click", () => loadEvidence(button.dataset.relationshipSignalEvidenceRun));
+      });
+    }
+
+    function proposalItems(proposal) {
+      if (Array.isArray(proposal?.events)) return proposal.events;
+      if (Array.isArray(proposal?.entities)) return proposal.entities;
+      if (Array.isArray(proposal?.claims)) return proposal.claims;
+      if (Array.isArray(proposal?.states)) return proposal.states;
+      if (Array.isArray(proposal?.changes)) return proposal.changes;
+      if (Array.isArray(proposal?.signals)) return proposal.signals;
+      return [proposal];
+    }
+
+    function proposalRow(proposal) {
+      const evidence = Array.isArray(proposal.evidence_refs) ? proposal.evidence_refs[0] : null;
+      const title = proposal.summary ?? proposal.canonical_name ?? proposal.claim_text ?? proposal.target?.target_text ?? "-";
+      const type = proposal.event_type ?? proposal.entity_type ?? proposal.claim_type ?? proposal.epistemic_status ?? "-";
+      return [
+        escapeHtml(proposal.proposal_id ?? "-"),
+        escapeHtml(type),
+        escapeHtml(proposal.creature_subtype ?? "-"),
+        escapeHtml(proposal.temporal_scope ?? "-"),
+        escapeHtml(proposal.source_type ?? "-"),
+        escapeHtml(shortPreview(title, 48)),
+        escapeHtml(proposal.confidence ?? "-"),
+        escapeHtml(evidence?.chunk_id ?? "-"),
+        escapeHtml(shortPreview(evidence?.quote_text ?? "", 40))
+      ];
+    }
+
+    function renderNarrativeOutcome(data) {
+      const ok = data.agent_run_status === "SUCCEEDED" || (data.dry_run && !data.error_message);
+      $("narrativeStatusBadge").textContent = data.agent_run_status ?? (data.dry_run ? "DRY_RUN" : "UNKNOWN");
+      $("narrativeStatusBadge").className = ok ? "pill" : "pill bad";
+      $("narrativeOutcome").innerHTML = [
+        statusPill("mode", data.mode),
+        statusPill("schema", data.output_schema),
+        statusPill("provider", data.provider_success),
+        statusPill("evidence", data.evidence_validation_passed),
+        statusPill("failure", data.failure_category),
+        statusPill("action", data.recommended_action)
+      ].join("");
+    }
+
+    function statusPill(label, value) {
+      const display = value === null || value === undefined ? "-" : String(value);
+      const bad = label === "failure" && display !== "-";
+      return `<span class="${bad ? "pill bad" : "pill"}">${escapeHtml(label)}: ${escapeHtml(display)}</span>`;
+    }
+
+    function renderManualReviewChecklist(checklist) {
+      const rows = Object.entries(checklist).map(([key, value]) => [
+        `<span class="mono">${escapeHtml(key)}</span>`,
+        value === null || value === undefined ? "待人工填写" : escapeHtml(value)
+      ]);
+      $("manualReviewChecklist").innerHTML = table(["field", "value"], rows);
+    }
+
+    async function loadRuns() {
+      const data = await request(`/projects/${encodeURIComponent(projectId())}/agent-runs`);
+      $("runTable").innerHTML = table(
+        ["agent_run_id", "agent", "status", "provider", "schema", "evidence"],
+        data.items.map((run) => [
+          `<button data-run="${run.agent_run_id}">${run.agent_run_id}</button>`,
+          run.agent_name,
+          run.status,
+          `${run.provider_name ?? "-"} / ${run.provider_type ?? "-"}`,
+          run.output_schema,
+          run.evidence_validation_passed
+        ])
+      );
+      document.querySelectorAll("[data-run]").forEach((button) => {
+        button.addEventListener("click", () => loadRunDetail(button.dataset.run));
+      });
+    }
+
+    async function loadRunDetail(agentRunId) {
+      const data = await request(`/agent-runs/${encodeURIComponent(agentRunId)}`);
+      $("runDetail").textContent = pretty(sanitizeRunDetail(data));
+      if (data.agent_name.startsWith("narrative-analyst:")) {
+        renderNarrativeResultFromRunDetail(data);
+      }
+      await loadEvidence(agentRunId);
+    }
+
+    function renderNarrativeResultFromRunDetail(data) {
+      const mode = String(data.agent_name || "").replace("narrative-analyst:", "");
+      const proposal = data.proposal ?? data.provider_result?.structured_output ?? null;
+      const events = Array.isArray(proposal?.events) ? proposal.events : [];
+      const entities = Array.isArray(proposal?.entities) ? proposal.entities : [];
+      const claims = Array.isArray(proposal?.claims) ? proposal.claims : [];
+      const states = Array.isArray(proposal?.states) ? proposal.states : [];
+      renderNarrativeResult({
+        mode,
+        dry_run: false,
+        agent_run_saved: true,
+        agent_run_id: data.agent_run_id,
+        agent_run_status: data.status,
+        provider_result_id: data.provider_result?.provider_result_id ?? null,
+        provider_success: data.provider_result?.success ?? null,
+        provider_error_diagnostics: null,
+        output_schema: data.output_schema,
+        schema_validation_passed: proposal !== null,
+        evidence_validation_passed: data.evidence_validation_passed,
+        batch_id: proposal?.batch_id ?? null,
+        events_count: events.length || null,
+        event_proposal_ids: events.map((event) => event.proposal_id),
+        entities_count: entities.length || null,
+        entity_proposal_ids: entities.map((entity) => entity.proposal_id),
+        claims_count: claims.length || null,
+        claim_proposal_ids: claims.map((claim) => claim.proposal_id),
+        states_count: states.length,
+        state_proposal_ids: states.map((state) => state.proposal_id),
+        primary_event_type: events[0]?.event_type ?? null,
+        primary_event_summary: events[0]?.summary ?? null,
+        quote_matched: null,
+        char_range_matched: null,
+        error_message: data.error_message,
+        failure_category: data.status === "FAILED" ? "SEE_AGENT_RUN_DETAIL" : null,
+        recommended_action: data.status === "FAILED" ? "查看 AgentRun 审计中的 error_message" : null,
+        proposal,
+        manual_review_checklist: manualReviewTemplateForMode(mode)
+      });
+      showLog("已将 Narrative AgentRun 详情回填到 Full Proposal JSON。");
+    }
+
+    function manualReviewTemplateForMode(mode) {
+      if (mode === "event_extraction") {
+        return {
+          events_cover_major_plot_points: null,
+          event_count_reasonable: null,
+          no_duplicate_events: null,
+          no_invented_events: null,
+          every_event_has_supporting_evidence: null,
+          event_summaries_supported_by_quotes: null,
+          manual_score: null,
+          manual_issue: null
+        };
+      }
+      if (mode === "entity_extraction") {
+        return {
+          entities_cover_major_entities: null,
+          entity_count_reasonable: null,
+          no_duplicate_entities: null,
+          entity_types_correct: null,
+          creature_classification_correct: null,
+          creature_subtype_supported_or_null: null,
+          important_unnamed_objects_allowed: null,
+          concept_is_not_a_catch_all: null,
+          names_and_aliases_not_invented: null,
+          every_entity_has_supporting_evidence: null,
+          manual_score: null,
+          manual_issue: null
+        };
+      }
+      if (mode === "claim_extraction") {
+        return {
+          claims_cover_major_claims: null,
+          claim_count_reasonable: null,
+          no_duplicate_claims: null,
+          claim_is_attributable_proposition: null,
+          claim_type_matches_decision_table: null,
+          factual_assertions_are_unhedged: null,
+          belief_and_hypothesis_distinguished: null,
+          evaluation_and_interpretation_distinguished: null,
+          claim_temporal_scope_correct: null,
+          prediction_commitment_distinguished: null,
+          every_claim_has_supporting_evidence: null,
+          no_duplicate_or_invented_claims: null,
+          manual_score: null,
+          manual_issue: null
+        };
+      }
+      if (mode === "knowledge_state_extraction") {
+        return {
+          knowledge_states_cover_explicit_epistemic_states: null,
+          no_state_inferred_from_speech_presence_or_silence: null,
+          knows_not_inferred_from_reader_or_narrator_knowledge: null,
+          subject_target_and_anchor_resolution_preserved: null,
+          every_knowledge_state_has_supporting_evidence: null,
+          no_status_upgrade_or_contradiction_adjudication: null,
+          manual_score: null,
+          manual_issue: null
+        };
+      }
+      if (mode === "state_change_extraction") {
+        return {
+          state_changes_cover_explicit_object_state_changes: null,
+          event_and_target_remain_source_grounded: null,
+          attribute_path_matches_target_kind: null,
+          new_value_has_supporting_evidence: null,
+          persistence_is_not_inferred: null,
+          unresolved_references_are_not_upgraded: null,
+          manual_score: null,
+          manual_issue: null
+        };
+      }
+      if (mode === "relationship_signal_extraction") {
+        return {
+          signals_are_source_grounded_not_canonical_relationships: null,
+          participants_and_references_remain_unresolved: null,
+          ordinary_interactions_not_upgraded_to_relationships: null,
+          statement_speaker_and_temporal_effect_contract_preserved: null,
+          every_relationship_signal_has_supporting_evidence: null,
+          manual_score: null,
+          manual_issue: null
+        };
+      }
+      return {manual_score: null, manual_issue: null};
+    }
+
+    function sanitizeRunDetail(data) {
+      const copy = JSON.parse(JSON.stringify(data));
+      if (copy.provider_result && Object.hasOwn(copy.provider_result, "raw_output")) {
+        delete copy.provider_result.raw_output;
+      }
+      return copy;
+    }
+
+    async function loadEvidence(agentRunId) {
+      const data = await request(`/agent-runs/${encodeURIComponent(agentRunId)}/evidence`);
+      const cards = await Promise.all(data.items.map(async (item) => {
+        let chunkText = "";
+        try {
+          const chunk = await request(`/chunks/${encodeURIComponent(item.chunk_id)}`);
+          chunkText = evidenceSnippet(chunk, item.quote);
+        } catch (error) {
+          chunkText = `<span class="pill bad">chunk 加载失败</span>`;
+        }
+        return `
+          <div class="cap">
+            <strong>${escapeHtml(item.validation_status)} · ${escapeHtml(item.chunk_id)}</strong>
+            <span>range: ${item.char_start ?? "-"}-${item.char_end ?? "-"}</span>
+            <p>${chunkText}</p>
+          </div>
+        `;
+      }));
+      $("evidencePanel").innerHTML = cards.join("") || `<span class="muted">暂无 evidence。</span>`;
+    }
+
+    function evidenceSnippet(chunk, quote) {
+      return highlightQuote(String(chunk.text || ""), quote, 28);
+    }
+
+    function highlightQuote(text, quote, radius) {
+      if (!quote) return `<span class="muted">quote unavailable</span>`;
+      const index = text.indexOf(quote);
+      if (index < 0) return `<span class="pill bad">回源失败</span>`;
+      const start = Math.max(0, index - radius);
+      const end = Math.min(text.length, index + quote.length + radius);
+      const prefix = start > 0 ? "..." : "";
+      const suffix = end < text.length ? "..." : "";
+      return `${prefix}${escapeHtml(text.slice(start, index))}<mark>${escapeHtml(quote)}</mark>${escapeHtml(text.slice(index + quote.length, end))}${suffix}`;
+    }
+
+    function table(headers, rows) {
+      if (!rows.length) return `<span class="muted">暂无数据。</span>`;
+      return `
+        <div class="table-scroll-shell">
+          <div class="table-scroll-toolbar">
+            <span>Wide table: swipe or use arrows to view all columns.</span>
+            <span class="table-scroll-controls">
+              <button type="button" class="table-scroll-button" data-table-scroll="left" aria-label="Scroll table left">←</button>
+              <button type="button" class="table-scroll-button" data-table-scroll="right" aria-label="Scroll table right">→</button>
+            </span>
+          </div>
+          <div class="table-scroll"><table>
+            <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>
+            <tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody>
+          </table></div>
+        </div>
+      `;
+    }
+
+    function windowExecutionTable(headers, rows) {
+      if (!rows.length) return `<span class="muted">No analysis windows loaded.</span>`;
+      return `
+        <div class="window-execution-shell">
+          <div class="window-execution-toolbar">
+            <span>Wide table: swipe or use arrows to view all columns.</span>
+            <span class="window-execution-controls">
+              <button type="button" class="table-scroll-button" data-window-scroll="left" aria-label="Scroll window execution table left" title="View columns to the left">&larr;</button>
+              <button type="button" class="table-scroll-button" data-window-scroll="right" aria-label="Scroll window execution table right" title="View columns to the right">&rarr;</button>
+            </span>
+          </div>
+          <div class="window-execution-viewport" tabindex="0">
+            <table class="window-execution-table">
+              <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>
+              <tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    async function loadKnowledgeEvaluationCases() {
+      const cases = await request("/knowledge-state-evaluation/cases");
+      state.knowledgeEvaluationCases = cases;
+      $("knowledgeEvaluationCase").innerHTML = [
+        `<option value="">选择一个评测用例</option>`,
+        ...cases.map((item) => `<option value="${escapeHtml(item.case_id)}">${escapeHtml(item.title)} · ${escapeHtml(item.category)}</option>`)
+      ].join("");
+      $("knowledgeEvaluationCaseList").innerHTML = table(
+        ["case_id", "title", "category", "risk_tags", "origin", "零输出"],
+        cases.map((item) => [
+          escapeHtml(item.case_id),
+          escapeHtml(item.title),
+          escapeHtml(item.category),
+          escapeHtml((item.risk_tags || []).join(", ")),
+          escapeHtml(item.fixture_origin),
+          item.zero_output_expected ? "是" : "否"
+        ])
+      );
+      $("knowledgeEvaluationBadge").textContent = `已加载 ${cases.length} 个`;
+      $("knowledgeEvaluationBadge").className = "pill";
+      setKnowledgeEvaluationRunStatus("请选择一个评测用例后再开始评测。");
+      updateKnowledgeEvaluationActionUi();
+    }
+
+    async function loadKnowledgeEvaluationCase() {
+      const caseId = $("knowledgeEvaluationCase").value;
+      updateKnowledgeEvaluationActionUi();
+      if (!caseId) return;
+      const detail = await request(`/knowledge-state-evaluation/cases/${encodeURIComponent(caseId)}`);
+      state.knowledgeEvaluationCase = detail;
+      $("knowledgeEvaluationCaseDetail").textContent = pretty(detail);
+      $("knowledgeEvaluationResult").textContent = "{}";
+      state.knowledgeEvaluationResult = null;
+      setKnowledgeEvaluationRunStatus(
+        "评测用例已就绪。离线评测不会调用 Provider；真实 LLM 评测须勾选明确授权。"
+      );
+    }
+
+    function updateKnowledgeEvaluationActionUi() {
+      const caseId = $("knowledgeEvaluationCase").value;
+      const hasSelectedCase = Boolean(caseId);
+      const canRun = hasSelectedCase && !state.knowledgeEvaluationRunInProgress;
+      $("evaluateKnowledgeStateBatch").disabled = !canRun;
+      $("runKnowledgeStateCase").disabled = !canRun;
+      $("knowledgeEvaluationRealLlm").disabled = state.knowledgeEvaluationRunInProgress;
+      $("knowledgeEvaluationActionHint").textContent = hasSelectedCase
+        ? "已选择评测用例。离线评测不会调用 Provider；真实 LLM 评测仍须勾选明确授权。"
+        : "请先加载并选择一个评测用例，才能进行离线或真实 LLM 评测。";
+    }
+
+    function setKnowledgeEvaluationRunStatus(message, tone = "normal") {
+      const status = $("knowledgeEvaluationRunStatus");
+      status.textContent = message;
+      status.className = tone === "error" ? "pill bad" : tone === "running" ? "pill warn" : "pill";
+    }
+
+    function selectedKnowledgeEvaluationCaseId() {
+      const caseId = $("knowledgeEvaluationCase").value;
+      if (!caseId) throw new Error("请先加载并选择一个 Knowledge State 评测用例。");
+      return caseId;
+    }
+
+    function renderKnowledgeEvaluationResult(result) {
+      state.knowledgeEvaluationResult = result;
+      $("knowledgeEvaluationResult").textContent = pretty(result);
+      $("knowledgeEvaluationBadge").textContent = result.passed ? "通过" : "需复核";
+      $("knowledgeEvaluationBadge").className = result.passed ? "pill" : "pill bad";
+    }
+
+    function updateKnowledgeEvaluationCollectedCount() {
+      $("knowledgeEvaluationCollectedCount").textContent = `已收集评测结果：${state.knowledgeEvaluationBatches.size}，运行失败：${state.knowledgeEvaluationRunFailures.size}`;
+    }
+
+    function collectKnowledgeEvaluationBatch(caseId, batch) {
+      state.knowledgeEvaluationBatches.set(caseId, batch);
+      state.knowledgeEvaluationRunFailures.delete(caseId);
+      updateKnowledgeEvaluationCollectedCount();
+    }
+
+    function collectKnowledgeEvaluationRunFailure(failure) {
+      if (!failure?.case_id) return;
+      state.knowledgeEvaluationRunFailures.set(failure.case_id, failure);
+      state.knowledgeEvaluationBatches.delete(failure.case_id);
+      updateKnowledgeEvaluationCollectedCount();
+    }
+
+    async function evaluateKnowledgeStateBatch() {
+      const batchText = $("knowledgeEvaluationBatch").value.trim();
+      if (!batchText) throw new Error("请粘贴 KnowledgeStateProposalBatchV1 JSON。");
+      let batch;
+      try { batch = JSON.parse(batchText); } catch { throw new Error("Batch JSON 无法解析。"); }
+      const result = await request(
+        `/knowledge-state-evaluation/cases/${encodeURIComponent(selectedKnowledgeEvaluationCaseId())}/evaluate`,
+        {method: "POST", headers: demoHeaders(), body: JSON.stringify({batch})}
+      );
+      renderKnowledgeEvaluationResult(result);
+      collectKnowledgeEvaluationBatch(selectedKnowledgeEvaluationCaseId(), batch);
+      showLog("已完成离线 Knowledge State 评测；未调用 Provider。");
+    }
+
+    async function runKnowledgeStateCase() {
+      if (!$("knowledgeEvaluationRealLlm").checked) {
+        throw new Error("请先明确勾选真实 LLM 请求；默认仅允许离线评测。");
+      }
+      const caseId = selectedKnowledgeEvaluationCaseId();
+      state.knowledgeEvaluationRunInProgress = true;
+      updateKnowledgeEvaluationActionUi();
+      $("knowledgeEvaluationBadge").textContent = "运行中";
+      $("knowledgeEvaluationBadge").className = "pill warn";
+      setKnowledgeEvaluationRunStatus("真实 LLM 评测正在运行。请勿重复点击或关闭页面。", "running");
+      $("knowledgeEvaluationResult").textContent = pretty({
+        status: "RUNNING",
+        case_id: caseId,
+        message: "真实 LLM 评测正在运行。"
+      });
+      try {
+        const data = await request(
+          `/knowledge-state-evaluation/cases/${encodeURIComponent(caseId)}/run`,
+          {method: "POST", headers: demoHeaders(), body: JSON.stringify({real_llm_requested: true})}
+        );
+        if (data.status === "FAILED") {
+          collectKnowledgeEvaluationRunFailure(data);
+          $("knowledgeEvaluationBadge").textContent = "运行失败，未评测";
+          $("knowledgeEvaluationBadge").className = "pill bad";
+          setKnowledgeEvaluationRunStatus(
+            `真实 LLM 运行失败（${data.failure_category}），该 case 已记录为未评测。`,
+            "error"
+          );
+          $("knowledgeEvaluationResult").textContent = pretty(data);
+          return;
+        }
+        $("knowledgeEvaluationBatch").value = pretty(data.batch);
+        renderKnowledgeEvaluationResult(data.evaluation);
+        collectKnowledgeEvaluationBatch(caseId, data.batch);
+        setKnowledgeEvaluationRunStatus(
+          data.evaluation.passed
+            ? "真实 LLM 评测已完成，结果通过。"
+            : "真实 LLM 评测已完成，结果需人工复核。",
+          data.evaluation.passed ? "normal" : "running"
+        );
+        showLog("已完成明确请求的真实 LLM 评测。");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "真实 LLM 评测请求失败。";
+        const failure = error?.payload?.status === "FAILED"
+          ? error.payload
+          : {status: "FAILED", case_id: caseId, failure_category: "PROVIDER_CONFIGURATION", message};
+        collectKnowledgeEvaluationRunFailure(failure);
+        $("knowledgeEvaluationBadge").textContent = "失败";
+        $("knowledgeEvaluationBadge").className = "pill bad";
+        setKnowledgeEvaluationRunStatus(`真实 LLM 评测失败：${message}`, "error");
+        $("knowledgeEvaluationResult").textContent = pretty({
+          ...failure,
+          message: failure.message || message
+        });
+        showLog(`真实 LLM 评测失败：${message}`);
+      } finally {
+        state.knowledgeEvaluationRunInProgress = false;
+        updateKnowledgeEvaluationActionUi();
+      }
+    }
+
+    async function buildKnowledgeEvaluationReport() {
+      if (!state.knowledgeEvaluationBatches.size && !state.knowledgeEvaluationRunFailures.size) {
+        throw new Error("请先完成至少一个离线或显式真实 LLM 的 case 评测。");
+      }
+      const evaluations = [...state.knowledgeEvaluationBatches.entries()].map(([case_id, batch]) => ({case_id, batch}));
+      const report = await request(
+        "/knowledge-state-evaluation/report",
+        {method: "POST", headers: demoHeaders(), body: JSON.stringify({
+          evaluations,
+          run_failures: [...state.knowledgeEvaluationRunFailures.values()]
+        })}
+      );
+      state.knowledgeEvaluationReport = report;
+      $("knowledgeEvaluationReport").textContent = pretty(report);
+      $("knowledgeEvaluationReportStatus").textContent = report.acceptance_eligible
+        ? `报告完整：${report.attempted_case_count} 个 case，具备验收资格。`
+        : `报告未完整或不具备验收资格：已尝试 ${report.attempted_case_count}，已评测 ${report.evaluated_case_count}，运行失败 ${report.run_failed_case_count}。`;
+      $("knowledgeEvaluationReportStatus").className = report.acceptance_eligible ? "pill" : "pill bad";
+      showLog(`已生成 ${report.attempted_case_count} 个 case 的批量评测报告；未调用 Provider。`);
+    }
+
+    function clearKnowledgeEvaluationReport() {
+      state.knowledgeEvaluationBatches.clear();
+      state.knowledgeEvaluationRunFailures.clear();
+      state.knowledgeEvaluationReport = null;
+      $("knowledgeEvaluationReport").textContent = "{}";
+      $("knowledgeEvaluationReportStatus").textContent = "尚未生成报告。";
+      $("knowledgeEvaluationReportStatus").className = "pill";
+      updateKnowledgeEvaluationCollectedCount();
+      showLog("已清空当前浏览器内收集的评测结果。");
+    }
+
+    function exportKnowledgeEvaluationReport() {
+      if (!state.knowledgeEvaluationReport) {
+        throw new Error("请先生成批量评测报告。");
+      }
+      const payload = {
+        report: state.knowledgeEvaluationReport,
+        evaluated_case_batches: [...state.knowledgeEvaluationBatches.entries()].map(([case_id, batch]) => ({case_id, batch})),
+        run_failures: [...state.knowledgeEvaluationRunFailures.values()],
+        exported_at: new Date().toISOString()
+      };
+      const blob = new Blob([pretty(payload)], {type: "application/json;charset=utf-8"});
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "knowledge-state-evaluation-report.json";
+      link.click();
+      URL.revokeObjectURL(link.href);
+    }
+
+    function saveKnowledgeEvaluationReview() {
+      state.knowledgeEvaluationReview = {
+        decision: $("knowledgeEvaluationReviewDecision").value,
+        reviewer: $("knowledgeEvaluationReviewer").value.trim(),
+        notes: $("knowledgeEvaluationReviewNotes").value.trim(),
+        reviewed_at: new Date().toISOString()
+      };
+      showLog("人工复核已保存在当前浏览器内存中。");
+    }
+
+    function exportKnowledgeEvaluation() {
+      let actualBatch = null;
+      try { actualBatch = JSON.parse($("knowledgeEvaluationBatch").value); } catch { /* export result only */ }
+      const payload = {
+        evaluation_case_id: $("knowledgeEvaluationCase").value || null,
+        actual_structured_batch: actualBatch,
+        evaluation_result: state.knowledgeEvaluationResult,
+        manual_review: state.knowledgeEvaluationReview,
+        exported_at: new Date().toISOString()
+      };
+      const blob = new Blob([pretty(payload)], {type: "application/json;charset=utf-8"});
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "knowledge-state-evaluation-review.json";
+      link.click();
+      URL.revokeObjectURL(link.href);
+    }
+
+    $("refreshStatus").addEventListener("click", () => refreshStatus().catch((error) => showLog(error.message)));
+    $("verifyAccess").addEventListener("click", () => verifyAccess().catch((error) => showLog(error.message)));
+    $("createProject").addEventListener("click", () => createProject().catch((error) => showLog(error.message)));
+    $("importTxt").addEventListener("click", () => importTxt().catch((error) => showLog(error.message)));
+    $("loadChapters").addEventListener("click", () => loadChapters().catch((error) => showLog(error.message)));
+    $("runMock").addEventListener("click", () => runMock().catch((error) => showLog(error.message)));
+    $("runRealEvent").addEventListener("click", () => runRealEvent().catch((error) => showLog(error.message)));
+    $("runNarrativeAnalyst").addEventListener("click", () => runNarrativeAnalyst().catch((error) => showLog(error.message)));
+    $("loadAnalysisDocuments").addEventListener("click", () => loadAnalysisDocuments().catch((error) => showLog(error.message)));
+    $("startWholeDocumentAnalysis").addEventListener("click", () => startWholeDocumentAnalysis().catch((error) => showLog(error.message)));
+    $("refreshWholeDocumentAnalysis").addEventListener("click", () => loadWholeDocumentProgress().catch((error) => showLog(error.message)));
+    $("resumeWholeDocumentAnalysis").addEventListener("click", () => resumeWholeDocumentAnalysis().catch((error) => showLog(error.message)));
+    $("refreshNarrativeRuns").addEventListener("click", () => loadRuns().catch((error) => showLog(error.message)));
+    $("loadRuns").addEventListener("click", () => loadRuns().catch((error) => showLog(error.message)));
+    $("loadKnowledgeEvaluationCases").addEventListener("click", () => loadKnowledgeEvaluationCases().catch((error) => showLog(error.message)));
+    $("knowledgeEvaluationCase").addEventListener("change", () => loadKnowledgeEvaluationCase().catch((error) => showLog(error.message)));
+    $("evaluateKnowledgeStateBatch").addEventListener("click", () => evaluateKnowledgeStateBatch().catch((error) => showLog(error.message)));
+    $("runKnowledgeStateCase").addEventListener("click", () => runKnowledgeStateCase().catch((error) => showLog(error.message)));
+    $("buildKnowledgeEvaluationReport").addEventListener("click", () => buildKnowledgeEvaluationReport().catch((error) => showLog(error.message)));
+    $("clearKnowledgeEvaluationReport").addEventListener("click", clearKnowledgeEvaluationReport);
+    $("exportKnowledgeEvaluationReport").addEventListener("click", () => exportKnowledgeEvaluationReport().catch((error) => showLog(error.message)));
+    $("saveKnowledgeEvaluationReview").addEventListener("click", saveKnowledgeEvaluationReview);
+    $("exportKnowledgeEvaluation").addEventListener("click", exportKnowledgeEvaluation);
+    $("narrativeChunkIds").addEventListener("input", () => renderNarrativeSelectedChunks());
+    $("narrativeMode").addEventListener("change", () => {
+      renderNarrativeSelectedChunks();
+      updateAccessUi();
+    });
+    $("projectId").addEventListener("input", () => {
+      rememberProjectId();
+      clearSelectedChunks();
+      state.analysisDocuments = [];
+      state.wholeDocumentAnalysisRunId = null;
+      state.wholeDocumentProgress = null;
+      stopWholeDocumentProgressPoll();
+      clearWholeDocumentResult();
+      $("analysisDocumentId").innerHTML = `<option value="">Select an imported document</option>`;
+    });
+    $("analysisDocumentId").addEventListener("change", () => {
+      rememberAnalysisDocumentId();
+      loadAnalysisChapters().catch((error) => showLog(error.message));
+    });
+    document.addEventListener("click", (event) => {
+      const sidebarControl = event.target.closest("[data-sidebar-scroll]");
+      if (sidebarControl) {
+        const sidebarViewport = sidebarControl.closest(".sidebar-nav-shell")?.querySelector(".sidebar-nav-viewport");
+        if (!sidebarViewport) return;
+        const direction = sidebarControl.dataset.sidebarScroll === "left" ? -1 : 1;
+        sidebarViewport.scrollBy({ left: direction * 240, behavior: "smooth" });
+        return;
+      }
+      const windowControl = event.target.closest("[data-window-scroll]");
+      if (windowControl) {
+        const windowExecutionViewport = windowControl.closest(".window-execution-shell")?.querySelector(".window-execution-viewport");
+        if (!windowExecutionViewport) return;
+        const direction = windowControl.dataset.windowScroll === "left" ? -1 : 1;
+        windowExecutionViewport.scrollBy({ left: direction * 420, behavior: "smooth" });
+        return;
+      }
+      const control = event.target.closest("[data-table-scroll]");
+      if (!control) return;
+      const scrollArea = control.closest(".table-scroll-shell")?.querySelector(".table-scroll");
+      if (!scrollArea) return;
+      const direction = control.dataset.tableScroll === "left" ? -1 : 1;
+      scrollArea.scrollBy({ left: direction * 360, behavior: "smooth" });
+    });
+
+    initializeProjectId();
+    renderCapabilities();
+    renderSelected();
+    updateKnowledgeEvaluationActionUi();
+    refreshStatus().catch(() => showLog("后端未启动。请先运行 uv run uvicorn comic_agent.main:app --reload"));
+  </script>
+</body>
+</html>

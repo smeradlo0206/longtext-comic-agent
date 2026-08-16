@@ -7,7 +7,13 @@ from comic_agent.schemas.narrative import (
     EventProposalV1,
     TemporalRelationProposalV1,
 )
-from comic_agent.schemas.source import FidelityMode, ProjectSpecV1, ProjectType
+from comic_agent.schemas.source import (
+    FidelityMode,
+    ProjectSpecV1,
+    ProjectType,
+    SourceChapterV1,
+    SourceChunkV1,
+)
 from comic_agent.schemas.visual import PanelSpecV1
 
 
@@ -46,6 +52,73 @@ def test_confidence_out_of_bounds_is_rejected() -> None:
 def test_evidence_ref_requires_valid_range() -> None:
     with pytest.raises(ValidationError):
         EvidenceRefV1(chunk_id="chunk-1", quote_start=10, quote_end=5)
+
+
+def test_evidence_ref_rejects_empty_quote_text() -> None:
+    with pytest.raises(ValidationError):
+        EvidenceRefV1(chunk_id="chunk-1", quote_text="")
+
+
+def test_evidence_ref_requires_quote_range_pair() -> None:
+    with pytest.raises(ValidationError):
+        EvidenceRefV1(chunk_id="chunk-1", quote_start=0)
+
+
+def test_source_chunk_rejects_empty_text() -> None:
+    with pytest.raises(ValidationError):
+        SourceChunkV1(
+            chunk_id="chunk-1",
+            document_id="doc-1",
+            chapter_id="chapter-1",
+            project_id="project-1",
+            order=0,
+            text="",
+            char_start=0,
+            char_end=1,
+            checksum="checksum",
+        )
+
+
+def test_source_chunk_requires_char_range_pair() -> None:
+    with pytest.raises(ValidationError):
+        SourceChunkV1(
+            chunk_id="chunk-1",
+            document_id="doc-1",
+            chapter_id="chapter-1",
+            project_id="project-1",
+            order=0,
+            text="正文",
+            char_start=0,
+            checksum="checksum",
+        )
+
+
+def test_source_chunk_rejects_invalid_char_range() -> None:
+    with pytest.raises(ValidationError):
+        SourceChunkV1(
+            chunk_id="chunk-1",
+            document_id="doc-1",
+            chapter_id="chapter-1",
+            project_id="project-1",
+            order=0,
+            text="正文",
+            char_start=2,
+            char_end=2,
+            checksum="checksum",
+        )
+
+
+def test_source_chapter_rejects_invalid_chunk_order_range() -> None:
+    with pytest.raises(ValidationError):
+        SourceChapterV1(
+            chapter_id="chapter-1",
+            document_id="doc-1",
+            project_id="project-1",
+            title="第一章",
+            order=0,
+            start_chunk_order=3,
+            end_chunk_order=2,
+        )
 
 
 def test_temporal_relation_rejects_self_loop() -> None:

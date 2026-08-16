@@ -62,7 +62,9 @@ def analyze_timeline(
             AgentRunV1(
                 agent_run_id=f"agent-run-{uuid4().hex}",
                 project_id=project_id,
+                agent_name=TimelineAgent.spec.agent_id,
                 agent_id=TimelineAgent.spec.agent_id,
+                output_schema="TimelineAnalysisProposalV1",
                 status=AgentRunStatus.FAILED,
                 error_message=str(exc),
             )
@@ -74,8 +76,12 @@ def analyze_timeline(
             agent_run_id=f"agent-run-{uuid4().hex}",
             project_id=project_id,
             agent_id=TimelineAgent.spec.agent_id,
+            agent_name=TimelineAgent.spec.agent_id,
+            input_chunk_ids=sorted(chunks),
             status=AgentRunStatus.SUCCEEDED,
             output_proposal_id=stored_proposal.proposal_id,
+            output_proposal_ids=[stored_proposal.proposal_id],
+            output_schema="TimelineAnalysisProposalV1",
         )
     )
     return stored_proposal

@@ -53,3 +53,15 @@ rules, and candidate commit plans.
 ## Startup Phase Boundary
 
 This phase implements the source evidence chain, schema contracts, mock providers, API shell, database shell, docs, and tests. Full story compilation, image generation, QA repair loops, and frontend workflows are planned but not implemented.
+
+## Narrative Analyst and automatic Gate 2
+
+Narrative Analyst runs are persisted as bounded, resumable mode/window work. Each worker
+uses only Gate 1 APPROVED source chunks and records AgentRun provenance, typed Proposal
+outputs, and deterministic aggregation. Agents never write canonical StoryBible data.
+
+After all leaf windows succeed, `NarrativeAnalysisReviewCoordinator` builds a caller-supplied
+Gate 2 context and invokes deterministic `ReviewGate2Service`. Gate 2 persists an auditable
+result and route (`APPROVED`, `REJECTED`, `NEEDS_HUMAN_REVIEW`, `FAILED`, or `NOT_READY`)
+without mutating the run, Proposal, AgentRun, or Timeline artifacts. Only a fresh APPROVED
+route exposes its typed approved Proposal bundle through the read-only API.
