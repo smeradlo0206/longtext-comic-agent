@@ -12,7 +12,10 @@ from comic_agent.schemas.storybible import (
     StoryBibleCuratorProposalV1,
 )
 from comic_agent.services.storybible_content_hash import with_computed_content_hash
-from comic_agent.services.storybible_event_order import apply_event_orders_to_plan
+from comic_agent.services.storybible_event_order import (
+    apply_event_orders_to_plan,
+    assign_event_orders,
+)
 
 
 class StoryBibleCurator:
@@ -22,11 +25,11 @@ class StoryBibleCurator:
     world rules) from the reviewed upstream narrative-analysis proposals. Each state
     is effective from its anchoring event onward and persists across chapter imports.
     Provider output is only a draft: this class then stamps state intervals with the
-    event orders provided by the parallel timeline agent (consumed, never derived),
-    replaces any provider-chosen commit-plan content hash with a deterministic
-    SHA-256 content hash, and downgrades low-confidence drafts into blocking review
-    conflicts. The result is still a CANDIDATE proposal; the curator never writes
-    canonical data.
+    deterministic sequence derived from the timeline agent's temporal-relation output
+    (consumed, never extracted from text), replaces any provider-chosen commit-plan
+    content hash with a deterministic SHA-256 content hash, and downgrades
+    low-confidence drafts into blocking review conflicts. The result is still a
+    CANDIDATE proposal; the curator never writes canonical data.
     """
 
     spec = AgentSpec(
@@ -65,7 +68,7 @@ class StoryBibleCurator:
     ) -> StoryBibleCuratorProposalV1:
         """Apply deterministic post-processing before the candidate is returned."""
 
-        event_orders = {anchor.event_id: anchor.order for anchor in context.event_orders}
+        event_orders = assign_event_orders(context.temporal_relation_proposals)
         ordered_plan = apply_event_orders_to_plan(draft.commit_plan, event_orders)
         hashed_plan = with_computed_content_hash(ordered_plan)
 
@@ -327,9 +330,8 @@ class StoryBibleCurator:
         "The user message contains, in order:\n"
         "1. A JSON context object with reviewed upstream proposals "
         "(entity_proposals, event_proposals, state_change_proposals), the "
-        "timeline agent's event_orders, optional temporal_relation_proposals, "
-        "and existing canonical StoryBible resources "
-        "(profiles, states, relationships, world_rules).\n"
+        "timeline agent's temporal_relation_proposals, and existing canonical "
+        "StoryBible resources (profiles, states, relationships, world_rules).\n"
         "2. Source chunk texts, each labeled with its chunk id.\n\n"
         "Produce ONE StoryBibleCuratorProposalV1 candidate as a JSON object.\n\n"
         "CURATION RULES:\n"
@@ -351,10 +353,10 @@ class StoryBibleCurator:
         "3. EFFECTIVE-FROM STATES. Each state is effective from its from-event "
         "onward and stays in effect until a later change; the library persists "
         "across chapter imports. Anchor states to events by event id only and "
-        "leave valid_from_order/valid_until_order null: the context event_orders "
-        "carry the timeline agent's ordering and the system stamps the order "
-        "fields itself. Do not derive any order, and do not re-assert inherited "
-        "canonical states unless this batch changes them.\n"
+        "leave valid_from_order/valid_until_order null: the system stamps them "
+        "from the timeline agent's temporal_relation_proposals. Do not derive any "
+        "order yourself, and do not re-assert inherited canonical states unless "
+        "this batch changes them.\n"
         "4. RELATIONSHIPS. For durable, chunk-supported connections between people "
         "and organizations (family, alliance, enmity, membership, location-of) emit "
         "a RelationshipUpdateProposalV1 whose source/target profile ids exist in the "

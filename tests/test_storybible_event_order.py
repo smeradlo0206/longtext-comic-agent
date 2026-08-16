@@ -1,6 +1,7 @@
-"""Consuming timeline-provided event orders to stamp state intervals."""
+"""Consuming timeline relation output to stamp state intervals."""
 
 from comic_agent.schemas.base import EvidenceRefV1
+from comic_agent.schemas.narrative import TemporalRelation, TemporalRelationProposalV1
 from comic_agent.schemas.storybible import (
     CommitPlanV1,
     RelationshipUpdateProposalV1,
@@ -11,7 +12,92 @@ from comic_agent.schemas.storybible import (
     WorldRuleUpdateProposalV1,
     WorldRuleV1,
 )
-from comic_agent.services.storybible_event_order import apply_event_orders_to_plan
+from comic_agent.services.storybible_event_order import (
+    apply_event_orders_to_plan,
+    assign_event_orders,
+)
+
+
+def relation(
+    source: str,
+    target: str,
+    relation_label: TemporalRelation,
+) -> TemporalRelationProposalV1:
+    return TemporalRelationProposalV1(
+        proposal_id=f"rel-{source}-{target}",
+        source_event_id=source,
+        target_event_id=target,
+        relation=relation_label,
+        evidence_refs=(
+            []
+            if relation_label == TemporalRelation.UNKNOWN
+            else [EvidenceRefV1(chunk_id="c")]
+        ),
+        confidence=0.9,
+    )
+
+
+def test_before_chain_assigns_increasing_orders() -> None:
+    relations = [
+        relation("e1", "e2", TemporalRelation.BEFORE),
+        relation("e2", "e3", TemporalRelation.BEFORE),
+    ]
+    assert assign_event_orders(relations) == {"e1": 0, "e2": 1, "e3": 2}
+
+
+def test_after_relation_orders_in_reverse_direction() -> None:
+    assert assign_event_orders([relation("e2", "e1", TemporalRelation.AFTER)]) == {
+        "e1": 0,
+        "e2": 1,
+    }
+
+
+def test_non_ordering_relations_impose_no_order() -> None:
+    relations = [
+        relation("e1", "e2", TemporalRelation.SIMULTANEOUS),
+        relation("e1", "e3", TemporalRelation.OVERLAPS),
+        relation("e1", "e4", TemporalRelation.DURING),
+        relation("e1", "e5", TemporalRelation.CONTAINS),
+        relation("e1", "e6", TemporalRelation.UNKNOWN),
+    ]
+    assert assign_event_orders(relations) == {}
+
+
+def test_unknown_only_timeline_output_stamps_nothing() -> None:
+    """A RULES_ONLY timeline analysis must never fabricate sequence numbers."""
+
+    relations = [
+        relation("e1", "e2", TemporalRelation.UNKNOWN),
+        relation("e2", "e3", TemporalRelation.UNKNOWN),
+    ]
+    assert assign_event_orders(relations) == {}
+
+
+def test_cycles_receive_no_order() -> None:
+    relations = [
+        relation("e1", "e2", TemporalRelation.BEFORE),
+        relation("e2", "e1", TemporalRelation.BEFORE),
+    ]
+    assert assign_event_orders(relations) == {}
+
+
+def test_single_edge_assigns_the_two_endpoints() -> None:
+    relations = [relation("e1", "e2", TemporalRelation.BEFORE)]
+    assert assign_event_orders(relations) == {"e1": 0, "e2": 1}
+
+
+def test_assignment_is_deterministic_across_relation_order() -> None:
+    first = [
+        relation("e1", "e3", TemporalRelation.BEFORE),
+        relation("e2", "e3", TemporalRelation.BEFORE),
+    ]
+    second = [
+        relation("e2", "e3", TemporalRelation.BEFORE),
+        relation("e1", "e3", TemporalRelation.BEFORE),
+    ]
+    expected = {"e1": 0, "e2": 0, "e3": 1}
+    assert assign_event_orders(first) == expected
+    assert assign_event_orders(second) == expected
 
 
 def state_update(

@@ -248,25 +248,13 @@ class CommitPlanV1(StrictBaseModel):
         return value
 
 
-class EventOrderAnchorV1(StrictBaseModel):
-    """Timeline-provided story order for one event id.
-
-    The parallel timeline agent owns event ordering. The StoryBible pipeline consumes
-    these anchors (it never derives them) to stamp state intervals with
-    ``valid_from_order`` / ``valid_until_order`` and to resolve world-state snapshots.
-    """
-
-    event_id: StoryBibleId
-    order: int = Field(ge=0, description="Timeline sequence number for the event.")
-
-    @field_validator("event_id")
-    @classmethod
-    def event_id_is_not_blank(cls, value: str) -> str:
-        return _reject_blank(value)
-
-
 class StoryBibleContextV1(StrictBaseModel):
-    """Bounded context supplied to the proposal-only StoryBible curator."""
+    """Bounded context supplied to the proposal-only StoryBible curator.
+
+    ``temporal_relation_proposals`` carries the parallel timeline agent's output
+    (pairwise BEFORE/AFTER/… event relations). The curator consumes them only to
+    stamp state intervals; it never derives story order from raw text.
+    """
 
     schema_version: Literal["1.0"] = "1.0"
     project_id: StoryBibleId
@@ -274,7 +262,6 @@ class StoryBibleContextV1(StrictBaseModel):
     event_proposals: list[EventProposalV1] = Field(default_factory=list)
     state_change_proposals: list[StateChangeProposalV1] = Field(default_factory=list)
     temporal_relation_proposals: list[TemporalRelationProposalV1] = Field(default_factory=list)
-    event_orders: list[EventOrderAnchorV1] = Field(default_factory=list)
     profiles: list[StoryEntityProfileV1] = Field(default_factory=list)
     states: list[StoryEntityStateV1] = Field(default_factory=list)
     relationships: list[StoryRelationshipV1] = Field(default_factory=list)
@@ -285,13 +272,6 @@ class StoryBibleContextV1(StrictBaseModel):
     @classmethod
     def project_id_is_not_blank(cls, value: str) -> str:
         return _reject_blank(value)
-
-    @model_validator(mode="after")
-    def event_orders_reference_each_event_at_most_once(self) -> "StoryBibleContextV1":
-        event_ids = [anchor.event_id for anchor in self.event_orders]
-        if len(set(event_ids)) != len(event_ids):
-            raise ValueError("event_orders must reference each event id at most once")
-        return self
 
 
 class ResolvedProfileStateV1(StrictBaseModel):

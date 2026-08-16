@@ -10,9 +10,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from comic_agent.database.base import Base
 from comic_agent.repositories.storybible_repository import StoryBibleRepository
 from comic_agent.schemas.base import EvidenceRefV1
-from comic_agent.schemas.narrative import EntityProposalV1
+from comic_agent.schemas.narrative import (
+    EntityProposalV1,
+    TemporalRelation,
+    TemporalRelationProposalV1,
+)
 from comic_agent.schemas.source import SourceChunkV1
-from comic_agent.schemas.storybible import EventOrderAnchorV1
 from comic_agent.services.context_builder import ContextBuilder
 
 
@@ -94,40 +97,28 @@ def test_context_rejects_foreign_project_source_chunks(
         )
 
 
-def test_event_orders_are_passed_through_the_context(
+def test_temporal_relations_are_bounded_to_sixty_four(
     storybible_repository: StoryBibleRepository,
 ) -> None:
-    context = ContextBuilder().storybible_context(
-        project_id="project-a",
-        profile_ids=[],
-        source_chunks=[chunk("chunk-1")],
-        repository=storybible_repository,
-        event_orders=[
-            EventOrderAnchorV1(event_id="event-1", order=0),
-            EventOrderAnchorV1(event_id="event-2", order=1),
-        ],
-    )
-
-    assert context.event_orders == [
-        EventOrderAnchorV1(event_id="event-1", order=0),
-        EventOrderAnchorV1(event_id="event-2", order=1),
+    relations = [
+        TemporalRelationProposalV1(
+            proposal_id=f"rel-{index}",
+            source_event_id=f"event-{index}",
+            target_event_id=f"event-{index + 1}",
+            relation=TemporalRelation.BEFORE,
+            evidence_refs=[EvidenceRefV1(chunk_id="chunk-1")],
+            confidence=0.9,
+        )
+        for index in range(80)
     ]
-
-
-def test_event_orders_are_bounded_to_sixty_four(
-    storybible_repository: StoryBibleRepository,
-) -> None:
     context = ContextBuilder().storybible_context(
         project_id="project-a",
         profile_ids=[],
         source_chunks=[chunk("chunk-1")],
         repository=storybible_repository,
-        event_orders=[
-            EventOrderAnchorV1(event_id=f"event-{index}", order=index)
-            for index in range(80)
-        ],
+        temporal_relation_proposals=relations,
     )
 
-    assert len(context.event_orders) == 64
-    assert context.event_orders[0].event_id == "event-0"
-    assert context.event_orders[-1].event_id == "event-63"
+    assert len(context.temporal_relation_proposals) == 64
+    assert context.temporal_relation_proposals[0].source_event_id == "event-0"
+    assert context.temporal_relation_proposals[-1].source_event_id == "event-63"

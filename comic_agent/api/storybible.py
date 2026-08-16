@@ -129,7 +129,6 @@ def _build_project_context(
                 event_proposals=requested_context.event_proposals,
                 state_change_proposals=requested_context.state_change_proposals,
                 temporal_relation_proposals=requested_context.temporal_relation_proposals,
-                event_orders=requested_context.event_orders,
                 world_rules=repository.list_world_rules(project_id),
             ),
             chunk_texts,

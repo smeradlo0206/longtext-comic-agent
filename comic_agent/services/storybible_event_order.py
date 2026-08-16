@@ -1,11 +1,16 @@
-"""Apply timeline-provided event orders to StoryBible state intervals.
+"""Join the timeline agent's relation output onto StoryBible state intervals.
 
-The parallel timeline agent owns event ordering. This module only CONSUMES the orders
-it produced: it stamps state and relationship intervals with ``valid_from_order`` /
-``valid_until_order`` so the state library can answer "what is the world like at this
-moment". It never derives event order from temporal relations.
+The parallel timeline agent emits pairwise `TemporalRelationProposalV1` records
+(BEFORE/AFTER/SIMULTANEOUS/OVERLAPS/DURING/CONTAINS/UNKNOWN). This module consumes
+that output: it derives deterministic sequence stamps only for events constrained by
+real BEFORE/AFTER edges, and applies them to missing `valid_from_order` /
+`valid_until_order` fields. It never extracts ordering from raw text, and it stamps
+nothing when the timeline provided no real ordering constraints.
 """
 
+from collections.abc import Iterable
+
+from comic_agent.schemas.narrative import TemporalRelation, TemporalRelationProposalV1
 from comic_agent.schemas.storybible import (
     CommitPlanV1,
     ProfileUpdateProposalV1,
@@ -20,6 +25,62 @@ type StoryBibleUpdate = (
     | RelationshipUpdateProposalV1
     | WorldRuleUpdateProposalV1
 )
+
+
+def assign_event_orders(
+    temporal_relations: Iterable[TemporalRelationProposalV1],
+) -> dict[str, int]:
+    """Assign deterministic sequence numbers from the timeline agent's relations.
+
+    Only strict BEFORE/AFTER edges constrain the order; DURING, CONTAINS, OVERLAPS,
+    SIMULTANEOUS, and UNKNOWN impose none. An event's order is its longest-path depth
+    in the directed graph. Events not incident to any real edge, events inside a
+    cycle, and events whose relations are all UNKNOWN receive no order, so a
+    RULES_ONLY timeline analysis (which emits only UNKNOWN relations) stamps nothing
+    and never fabricates false conflicts. Tie-breaking sorts by event id, making the
+    assignment deterministic for the same input.
+    """
+
+    edges: set[tuple[str, str]] = set()
+    for relation in temporal_relations:
+        if relation.relation == TemporalRelation.BEFORE:
+            edges.add((relation.source_event_id, relation.target_event_id))
+        elif relation.relation == TemporalRelation.AFTER:
+            edges.add((relation.target_event_id, relation.source_event_id))
+
+    if not edges:
+        return {}
+
+    participants: set[str] = set()
+    for source, target in edges:
+        participants.add(source)
+        participants.add(target)
+
+    graph: dict[str, set[str]] = {node: set() for node in participants}
+    indegree: dict[str, int] = {node: 0 for node in participants}
+    for source, target in edges:
+        if target not in graph[source]:
+            graph[source].add(target)
+            indegree[target] += 1
+
+    orders: dict[str, int] = {node: 0 for node in participants if indegree[node] == 0}
+    remaining = {node for node in participants if indegree[node] > 0}
+    frontier = sorted(orders)
+    while frontier:
+        next_frontier: list[str] = []
+        for node in frontier:
+            for successor in sorted(graph[node]):
+                indegree[successor] -= 1
+                orders[successor] = max(orders.get(successor, 0), orders[node] + 1)
+                if indegree[successor] == 0:
+                    remaining.discard(successor)
+                    next_frontier.append(successor)
+        frontier = sorted(next_frontier)
+
+    for cyclic_node in remaining:
+        orders.pop(cyclic_node, None)
+
+    return orders
 
 
 def apply_event_orders_to_plan(

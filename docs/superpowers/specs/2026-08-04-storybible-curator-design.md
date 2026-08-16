@@ -122,9 +122,9 @@ Original scope listed "use confirmed temporal relations to order state changes" 
 curator responsibility. That responsibility was later moved to a parallel timeline
 agent: the StoryBible Curator anchors states and relationships to events by event id
 (`triggering_event_id` / `valid_from_event_id` / `valid_until_event_id`) and CONSUMES
-the timeline agent's ordering — supplied as `event_orders` in `StoryBibleContextV1` —
-only to stamp `valid_from_order` / `valid_until_order`. It never derives event order
-from temporal relations. States are effective from their from-event onward and persist
-across chapter imports; a deterministic `state-at` snapshot folds every in-effect
-interval into one merged world view for downstream consumers, which join StoryBible
-state with narrative-analysis and timeline output by event id.
+the timeline agent's pairwise `temporal_relation_proposals` output only to stamp
+`valid_from_order` / `valid_until_order`. It never extracts event order from text, and
+all-UNKNOWN timeline output stamps nothing. States are effective from their from-event
+onward and persist across chapter imports; a deterministic `state-at` snapshot folds
+every in-effect interval into one merged world view for downstream consumers, which
+join StoryBible state with narrative-analysis and timeline output by event id.

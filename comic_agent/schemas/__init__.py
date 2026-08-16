@@ -18,7 +18,6 @@ from comic_agent.schemas.source import (
 from comic_agent.schemas.storybible import (
     CommitPlanV1,
     ConflictV1,
-    EventOrderAnchorV1,
     ProfileUpdateProposalV1,
     RelationshipUpdateProposalV1,
     ResolvedProfileStateV1,
@@ -45,7 +44,6 @@ __all__ = [
     "CommitPlanV1",
     "ConflictV1",
     "EntityProposalV1",
-    "EventOrderAnchorV1",
     "EventProposalV1",
     "EvidenceRefV1",
     "PanelSpecV1",

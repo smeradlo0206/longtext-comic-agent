@@ -27,12 +27,13 @@ provider interface.
 
 Provider output is only a draft. The curator then applies deterministic post-processing
 before returning the candidate: it stamps state and relationship intervals with the
-event orders the timeline agent supplied in the context (`event_orders`, consumed —
-never derived), replaces any provider-chosen commit-plan content hash with a
-deterministic SHA-256 content hash, and adds a blocking `LOW_CONFIDENCE` conflict when
-the draft confidence is below the curator's threshold. The plan-identity fields
-(`commit_plan_id`, `source_proposal_id`) are excluded from the content hash, so an
-identical-content replay reuses the stored candidate plan instead of duplicating it.
+deterministic sequence derived from the timeline agent's pairwise relation output
+(`temporal_relation_proposals` — consumed, never extracted from text; all-UNKNOWN
+timeline output stamps nothing), replaces any provider-chosen commit-plan content hash
+with a deterministic SHA-256 content hash, and adds a blocking `LOW_CONFIDENCE`
+conflict when the draft confidence is below the curator's threshold. The plan-identity
+fields (`commit_plan_id`, `source_proposal_id`) are excluded from the content hash, so
+an identical-content replay reuses the stored candidate plan instead of duplicating it.
 
 StoryBible curation is scoped to an effective-from state library: the curator
 consolidates the reviewed upstream narrative-analysis proposals (entity, event,
@@ -40,7 +41,7 @@ state-change) into profile, state, relationship, and world-rule updates. Every s
 is effective from its anchoring event onward and persists across chapter imports, so
 facts established in earlier chapters stay visible in later ones even when the new
 text never mentions them. The parallel timeline agent owns event ordering; the
-curator consumes it through `event_orders` only.
+curator consumes its `temporal_relation_proposals` output only.
 
 `ContextBuilder` is the agent read boundary. It creates bounded, project-scoped context
 from selected source proposals and existing StoryBible resources; it does not expose a

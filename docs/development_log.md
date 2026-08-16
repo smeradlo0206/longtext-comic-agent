@@ -101,11 +101,13 @@ agent, per the revised pipeline split (narrative-analysis records what happened,
 timeline records event order, StoryBible records what the world is like at each
 moment).
 
-- `StoryBibleContextV1.event_orders` carries the timeline agent's event order as
-  `EventOrderAnchorV1` entries. The curator consumes them to stamp
-  `valid_from_order` / `valid_until_order` on state and relationship updates; it never
-  derives ordering itself. `valid_until_order` uses the until event's order minus one
-  so consecutive states share no boundary moment.
+- The curator consumes the timeline agent's actual output — pairwise
+  `TemporalRelationProposalV1` records via `StoryBibleContextV1
+  .temporal_relation_proposals` — and derives deterministic sequence stamps only from
+  real BEFORE/AFTER edges to fill `valid_from_order` / `valid_until_order`.
+  All-UNKNOWN timeline output stamps nothing, so RULES_ONLY analyses never fabricate
+  ordering or false state conflicts. `valid_until_order` uses the until event's order
+  minus one so consecutive states share no boundary moment.
 - States are effective from their from-event onward and persist across chapter
   imports; the curator prompt now forbids re-asserting inherited canonical states
   unless the batch changes them.

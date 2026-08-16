@@ -488,7 +488,16 @@ def test_state_at_returns_inherited_world_state_across_chapters(
         json={
             "project_id": "project-a",
             "source_chunk_ids": ["chunk-a"],
-            "event_orders": [{"event_id": "event-a", "order": 0}],
+            "temporal_relation_proposals": [
+                {
+                    "proposal_id": "rel-1",
+                    "source_event_id": "event-a",
+                    "target_event_id": "event-b",
+                    "relation": "BEFORE",
+                    "evidence_refs": [{"chunk_id": "chunk-a"}],
+                    "confidence": 0.9,
+                }
+            ],
         },
     )
     assert response.status_code == 200

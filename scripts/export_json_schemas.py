@@ -14,7 +14,6 @@ from comic_agent.schemas import (
     CommitPlanV1,
     ConflictV1,
     EntityProposalV1,
-    EventOrderAnchorV1,
     EventProposalV1,
     EvidenceRefV1,
     PanelSpecV1,
@@ -72,7 +71,6 @@ SCHEMAS: list[type[BaseModel]] = [
     ConflictV1,
     CommitPlanV1,
     StoryBibleCuratorProposalV1,
-    EventOrderAnchorV1,
     ResolvedProfileStateV1,
     StoryBibleSnapshotV1,
 ]

@@ -4,7 +4,8 @@ from typing import Any, TypeVar
 from pydantic import BaseModel
 
 from comic_agent.agents.storybible_curator import StoryBibleCurator
-from comic_agent.schemas.base import RecordStatus
+from comic_agent.schemas.base import EvidenceRefV1, RecordStatus
+from comic_agent.schemas.narrative import TemporalRelation, TemporalRelationProposalV1
 from comic_agent.schemas.storybible import (
     StateUpdateProposalV1,
     StoryBibleContextV1,
@@ -13,6 +14,25 @@ from comic_agent.schemas.storybible import (
 from comic_agent.services.storybible_content_hash import compute_content_hash
 
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
+
+
+def _relation(
+    source: str,
+    target: str,
+    relation_label: TemporalRelation = TemporalRelation.BEFORE,
+) -> TemporalRelationProposalV1:
+    return TemporalRelationProposalV1(
+        proposal_id=f"rel-{source}-{target}",
+        source_event_id=source,
+        target_event_id=target,
+        relation=relation_label,
+        evidence_refs=(
+            []
+            if relation_label == TemporalRelation.UNKNOWN
+            else [EvidenceRefV1(chunk_id="chunk-1")]
+        ),
+        confidence=0.9,
+    )
 
 
 def _candidate_payload(
@@ -137,8 +157,8 @@ def test_identical_drafts_receive_identical_hashes() -> None:
     assert first.commit_plan.content_hash == second.commit_plan.content_hash
 
 
-def test_curator_stamps_state_orders_from_timeline_provided_event_orders() -> None:
-    """The curator consumes timeline ordering; it never derives it itself."""
+def test_curator_stamps_state_orders_from_timeline_relations() -> None:
+    """The curator consumes the timeline agent's relation output; never derives it."""
 
     evidence = {"chunk_id": "chunk-1"}
     payload = _candidate_payload()
@@ -163,9 +183,10 @@ def test_curator_stamps_state_orders_from_timeline_provided_event_orders() -> No
     curator = StoryBibleCurator(provider)
     context = StoryBibleContextV1(
         project_id="project-1",
-        event_orders=[
-            {"event_id": "project-1:event-2", "order": 1},
-            {"event_id": "project-1:event-4", "order": 3},
+        temporal_relation_proposals=[
+            _relation("project-1:event-1", "project-1:event-2"),
+            _relation("project-1:event-2", "project-1:event-3"),
+            _relation("project-1:event-3", "project-1:event-4"),
         ],
     )
 
@@ -182,7 +203,7 @@ def test_curator_stamps_state_orders_from_timeline_provided_event_orders() -> No
     assert state_updates[0].state.valid_until_order == 2
 
 
-def test_curator_keeps_order_fields_null_without_timeline_input() -> None:
+def test_curator_keeps_order_fields_null_without_timeline_relations() -> None:
     evidence = {"chunk_id": "chunk-1"}
     payload = _candidate_payload()
     state = {
@@ -205,6 +226,47 @@ def test_curator_keeps_order_fields_null_without_timeline_input() -> None:
     curator = StoryBibleCurator(provider)
 
     proposal = curator.run(StoryBibleContextV1(project_id="project-1"))
+
+    state_updates = [
+        update
+        for update in proposal.commit_plan.updates
+        if isinstance(update, StateUpdateProposalV1)
+    ]
+    assert len(state_updates) == 1
+    assert state_updates[0].state.valid_from_order is None
+
+
+def test_curator_ignores_unknown_only_timeline_relations() -> None:
+    """All-UNKNOWN timeline output must not stamp fabricated sequence numbers."""
+
+    evidence = {"chunk_id": "chunk-1"}
+    payload = _candidate_payload()
+    state = {
+        "state_id": "project-1:state-a",
+        "project_id": "project-1",
+        "profile_id": "project-1:profile-a",
+        "state": {"location": "market"},
+        "valid_from_event_id": "project-1:event-2",
+        "evidence_refs": [evidence],
+    }
+    payload["commit_plan"]["updates"].append(
+        {
+            "update_id": "project-1:update-state",
+            "project_id": "project-1",
+            "state": state,
+            "evidence_refs": [evidence],
+        }
+    )
+    provider = RecordingProvider(payload)
+    curator = StoryBibleCurator(provider)
+    context = StoryBibleContextV1(
+        project_id="project-1",
+        temporal_relation_proposals=[
+            _relation("project-1:event-1", "project-1:event-2", TemporalRelation.UNKNOWN),
+        ],
+    )
+
+    proposal = curator.run(context)
 
     state_updates = [
         update
@@ -258,7 +320,7 @@ def test_system_prompt_consolidates_reviewed_proposals_and_effective_from_states
     system_content = str(provider.request["messages"][0]["content"])
     assert "CONSOLIDATE" in system_content
     assert "state_change_proposals" in system_content
-    assert "event_orders" in system_content
+    assert "temporal_relation_proposals" in system_content
     assert "CHARACTER -> PERSON" in system_content
     assert "EFFECTIVE-FROM STATES" in system_content
 

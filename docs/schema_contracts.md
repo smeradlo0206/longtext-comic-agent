@@ -108,11 +108,13 @@ is required.
 
 The StoryBible is now an effective-from state library joined with the timeline agent:
 
-- `StoryBibleContextV1` gained `event_orders: list[EventOrderAnchorV1]` — the timeline
-  agent's story order per event id. The curator CONSUMES these anchors to stamp
-  `valid_from_order` / `valid_until_order` on state and relationship updates
-  (`valid_until_order` = until event order minus one, guarded against inversion). It
-  never derives ordering from temporal relations.
+- The timeline agent's actual output — pairwise `TemporalRelationProposalV1` records —
+  is consumed through the existing `StoryBibleContextV1.temporal_relation_proposals`
+  field. The curator derives deterministic sequence stamps only from real
+  BEFORE/AFTER edges and fills missing `valid_from_order` / `valid_until_order`
+  (`valid_until_order` = until event order minus one, guarded against inversion).
+  All-UNKNOWN timeline output (RULES_ONLY mode) stamps nothing, so no fabricated
+  ordering can create false state conflicts.
 - Every state is effective from its from-event onward and persists across chapter
   imports: a chapter that never mentions an established fact does not erase it.
 - `StoryBibleSnapshotV1` / `ResolvedProfileStateV1` are derived read models (never
@@ -120,5 +122,4 @@ The StoryBible is now an effective-from state library joined with the timeline a
   in-effect state intervals into one merged attribute map per profile, grouped by
   entity kind, plus active relationships and world rules. States whose story order is
   unknown are treated as timeless and flagged in `unresolved_state_ids`.
-- No new Alembic revision: the new models are read projections and the event-order
-  anchors exist only inside the versioned context payload.
+- No new Alembic revision: the new models are read projections.
