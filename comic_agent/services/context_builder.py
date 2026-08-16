@@ -19,6 +19,8 @@ from comic_agent.schemas.storybible import (
 )
 
 MAX_STORYBIBLE_CONTEXT_ITEMS = 3
+MAX_STORYBIBLE_CONTEXT_PROPOSALS = 20
+MAX_STORYBIBLE_SOURCE_CHUNKS = 3
 
 
 @dataclass(frozen=True)
@@ -94,7 +96,7 @@ class ContextBuilder:
         for source_chunk in candidate_chunks:
             if source_chunk.chunk_id not in selected_chunk_ids:
                 selected_chunk_ids.append(source_chunk.chunk_id)
-            if len(selected_chunk_ids) == 3:
+            if len(selected_chunk_ids) == MAX_STORYBIBLE_SOURCE_CHUNKS:
                 break
 
         selected_world_rules = list(world_rules)
@@ -103,11 +105,13 @@ class ContextBuilder:
 
         return StoryBibleContextV1(
             project_id=project_id,
-            entity_proposals=list(entity_proposals)[:MAX_STORYBIBLE_CONTEXT_ITEMS],
-            event_proposals=list(event_proposals)[:MAX_STORYBIBLE_CONTEXT_ITEMS],
-            state_change_proposals=list(state_change_proposals)[:MAX_STORYBIBLE_CONTEXT_ITEMS],
+            entity_proposals=list(entity_proposals)[:MAX_STORYBIBLE_CONTEXT_PROPOSALS],
+            event_proposals=list(event_proposals)[:MAX_STORYBIBLE_CONTEXT_PROPOSALS],
+            state_change_proposals=list(state_change_proposals)[
+                :MAX_STORYBIBLE_CONTEXT_PROPOSALS
+            ],
             temporal_relation_proposals=list(temporal_relation_proposals)[
-                :MAX_STORYBIBLE_CONTEXT_ITEMS
+                :MAX_STORYBIBLE_CONTEXT_PROPOSALS
             ],
             profiles=profiles,
             states=states,

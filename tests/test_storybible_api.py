@@ -254,26 +254,59 @@ def test_curation_rebuilds_canonical_context_from_project_scoped_storage(
     assert context["world_rules"] == []
 
 
-def test_curation_rejects_different_proposals_that_reuse_a_content_hash(
+def test_curation_computes_distinct_hashes_for_different_proposals(
     storybible_client: TestClient,
 ) -> None:
-    """A provider hash collision must not substitute another proposal's commit plan."""
+    """The server, not the provider, owns the plan idempotency key."""
 
-    curate(storybible_client)
+    first = curate(storybible_client)
     app = cast(FastAPI, storybible_client.app)
     app.state.storybible_curator = StoryBibleCurator(
         MockLLMProvider(
-            candidate_payload(proposal_id="proposal-b", plan_id="plan-b", content_hash="hash-a")
+            candidate_payload(
+                proposal_id="proposal-b",
+                plan_id="plan-b",
+                content_hash="provider-forged-hash",
+            )
         )
     )
 
-    response = storybible_client.post(
+    second_response = storybible_client.post(
         "/projects/project-a/storybible/curate",
         json={"project_id": "project-a", "source_chunk_ids": ["chunk-a"]},
     )
 
-    assert response.status_code == 422
-    assert "content_hash" in response.json()["detail"]
+    assert second_response.status_code == 200
+    second = second_response.json()
+    assert first["commit_plan"]["content_hash"] != "provider-forged-hash"
+    assert second["commit_plan"]["content_hash"] != "provider-forged-hash"
+    assert first["commit_plan"]["content_hash"] != second["commit_plan"]["content_hash"]
+    assert first["commit_plan"]["commit_plan_id"] == "plan-a"
+    assert second["commit_plan"]["commit_plan_id"] == "plan-b"
+
+
+def test_curation_replay_with_identical_content_reuses_the_same_hash(
+    storybible_client: TestClient,
+) -> None:
+    """Two curations that propose identical updates share one idempotency key."""
+
+    first = curate(storybible_client)
+    app = cast(FastAPI, storybible_client.app)
+    app.state.storybible_curator = StoryBibleCurator(
+        MockLLMProvider(
+            candidate_payload(proposal_id="proposal-a", plan_id="plan-b", content_hash="other")
+        )
+    )
+
+    second_response = storybible_client.post(
+        "/projects/project-a/storybible/curate",
+        json={"project_id": "project-a", "source_chunk_ids": ["chunk-a"]},
+    )
+
+    assert second_response.status_code == 200
+    second = second_response.json()
+    assert first["commit_plan"]["content_hash"] == second["commit_plan"]["content_hash"]
+    assert second["commit_plan"]["commit_plan_id"] == "plan-a"
 
 
 def test_curation_returns_bad_gateway_for_provider_failure(

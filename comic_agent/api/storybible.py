@@ -22,6 +22,7 @@ from comic_agent.schemas.storybible import (
 )
 from comic_agent.services.commit_service import CommitService
 from comic_agent.services.context_builder import ContextBuilder
+from comic_agent.services.storybible_content_hash import with_computed_content_hash
 from comic_agent.services.storybible_validator import StoryBibleValidator
 
 router = APIRouter()
@@ -178,7 +179,9 @@ def curate_storybible(
         raise HTTPException(status_code=409, detail="Curator proposal project mismatch")
     try:
         StoryBibleValidator(source_repository).validate_proposal(proposal)
-        stored_plan = repository.save_candidate_plan(proposal.commit_plan)
+        stored_plan = repository.save_candidate_plan(
+            with_computed_content_hash(proposal.commit_plan)
+        )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     return proposal.model_copy(update={"commit_plan": stored_plan})

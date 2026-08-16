@@ -26,6 +26,7 @@ from comic_agent.schemas.storybible import (
     WorldRuleUpdateProposalV1,
     WorldRuleV1,
 )
+from comic_agent.services.storybible_content_hash import compute_content_hash
 
 type CanonicalResource = (
     StoryEntityProfileV1 | StoryEntityStateV1 | StoryRelationshipV1 | WorldRuleV1
@@ -139,10 +140,17 @@ class StoryBibleRepository:
         existing_row: CandidateCommitPlanModel,
         incoming_plan: CommitPlanV1,
     ) -> CommitPlanV1:
-        """Reuse only an identical plan for a project-scoped content hash."""
+        """Reuse only a content-identical plan for a project-scoped content hash.
+
+        Plan-identity fields (``commit_plan_id`` and ``source_proposal_id``) are not
+        part of the content hash, so an identical-content replay returns the already
+        stored plan instead of creating a duplicate candidate. A stored plan whose
+        content differs from the incoming one is a genuine hash collision and is
+        rejected.
+        """
 
         existing_plan = self._plan_from_row(existing_row)
-        if existing_plan.model_dump(mode="json") != incoming_plan.model_dump(mode="json"):
+        if compute_content_hash(existing_plan) != compute_content_hash(incoming_plan):
             raise ValueError("content_hash already belongs to a different commit plan")
         return existing_plan
 

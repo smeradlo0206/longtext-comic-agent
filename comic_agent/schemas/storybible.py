@@ -219,20 +219,33 @@ class ConflictV1(StrictBaseModel):
 
 
 class CommitPlanV1(StrictBaseModel):
-    """Reviewed list of StoryBible updates eligible for CommitService processing."""
+    """Reviewed list of StoryBible updates eligible for CommitService processing.
+
+    ``content_hash`` is optional on input: the curator and the curation API always
+    replace it with a deterministic SHA-256 hash of the plan content (excluding the
+    hash field itself) before the candidate plan is persisted, so provider output can
+    neither forge nor collide the idempotency key.
+    """
 
     schema_version: Literal["1.0"] = "1.0"
     commit_plan_id: StoryBibleId
     project_id: StoryBibleId
     source_proposal_id: StoryBibleId
-    content_hash: StoryBibleId
+    content_hash: StoryBibleId | None = None
     updates: list[StoryBibleUpdateV1] = Field(min_length=1)
     evidence_refs: list[EvidenceRefV1] = Field(min_length=1)
 
-    @field_validator("commit_plan_id", "project_id", "source_proposal_id", "content_hash")
+    @field_validator("commit_plan_id", "project_id", "source_proposal_id")
     @classmethod
     def required_text_is_not_blank(cls, value: str) -> str:
         return _reject_blank(value)
+
+    @field_validator("content_hash")
+    @classmethod
+    def content_hash_is_not_blank(cls, value: str | None) -> str | None:
+        if value is not None:
+            return _reject_blank(value)
+        return value
 
 
 class StoryBibleContextV1(StrictBaseModel):

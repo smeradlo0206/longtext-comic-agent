@@ -70,6 +70,30 @@ remain evidence-backed through `EvidenceRefV1`.
   because migration `0004_storybible_resources` already carries those storage lengths;
   no database shape or payload representation changed.
 
+### StoryBible curation completion
+
+Closed the remaining gaps between the curator implementation and the design contract.
+
+- `CommitPlanV1.content_hash` is now server-owned: the curator and curation API compute
+  a deterministic SHA-256 hash over the plan content (excluding plan-identity fields)
+  and ignore any provider-chosen value. Identical-content replays reuse the stored
+  candidate plan, and the provider can no longer collide the idempotency key.
+- The curator consolidates the reviewed upstream proposals (entity, event, state-change,
+  temporal-relation) instead of re-extracting from raw chunks, and its output contract
+  now covers all four update kinds (profile, state, relationship, world rule) plus
+  structured `ConflictV1` entries; previously only profile and state updates could be
+  emitted.
+- State and relationship story orders are derived deterministically from confirmed
+  BEFORE/AFTER temporal relations and applied to missing `valid_from_order` /
+  `valid_until_order` fields before the candidate plan is returned, satisfying the
+  "use confirmed temporal relations to order state changes" design requirement.
+- Drafts below the 0.7 confidence threshold are returned with a blocking
+  `LOW_CONFIDENCE` conflict instead of passing silently.
+- Bounded context caps were separated: up to 20 reviewed proposals per kind while
+  source chunks and adjacent states/relationships stay at 3.
+- No new Alembic revision: stored resource shapes are unchanged and the candidate-plan
+  column already stores the computed hash.
+
 ### Test Policy
 
 Normal unit and regression tests use deterministic fakes or `httpx.MockTransport`; they

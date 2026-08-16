@@ -71,3 +71,35 @@ and names longer than 255 characters, values the existing `0004_storybible_resou
 columns could not portably store. No Alembic data migration is required: migration
 `0004` already defines the matching database lengths, and no column or stored-payload
 shape changed.
+
+### StoryBible curation completion note (pre-release V1)
+
+The StoryBible contracts stay at `schema_version = "1.0"`; this wave completes the
+curator behavior without changing stored resource shapes, so no new Alembic revision
+is required.
+
+- `CommitPlanV1.content_hash` is now optional on input. The curator and the curation
+  API always replace it with a deterministic SHA-256 hash of the plan content,
+  excluding the plan-identity fields (`content_hash`, `commit_plan_id`,
+  `source_proposal_id`). Candidate plans therefore persist a server-owned idempotency
+  key: replaying identical updates reuses the stored candidate instead of creating a
+  duplicate, and a provider-chosen key can no longer collide or be forged. The
+  `(project_id, content_hash)` unique constraint from `0004_storybible_resources` is
+  unchanged.
+- The curator deterministically derives story orders from the confirmed
+  `TemporalRelationProposalV1` BEFORE/AFTER chains in `StoryBibleContextV1` and fills
+  missing `valid_from_order` / `valid_until_order` on state and relationship updates
+  before the candidate plan is returned. `valid_until_order` uses the until event's
+  order minus one so consecutively anchored states do not overlap on the shared
+  boundary. Cyclic or unordered events keep their order fields unset.
+- Drafts whose `confidence` is below the curator's `confidence_threshold` (0.7) are
+  returned with an added blocking `LOW_CONFIDENCE` conflict; they remain CANDIDATE and
+  still require explicit approval before any canonical write.
+- The curator's output contract now instructs and validates all four update kinds
+  (profile, state, relationship, world rule) plus structured `ConflictV1` entries, so
+  the model can emit the full design-mandated output instead of only profile and state
+  updates.
+- Bounded context caps were separated: source chunks stay at 3, while the reviewed
+  upstream proposal lists (entity, event, state-change, temporal-relation) may carry
+  up to 20 records each so the curator sees a whole analysis batch instead of three
+  arbitrarily truncated proposals.
