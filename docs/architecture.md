@@ -65,3 +65,10 @@ Gate 2 context and invokes deterministic `ReviewGate2Service`. Gate 2 persists a
 result and route (`APPROVED`, `REJECTED`, `NEEDS_HUMAN_REVIEW`, `FAILED`, or `NOT_READY`)
 without mutating the run, Proposal, AgentRun, or Timeline artifacts. Only a fresh APPROVED
 route exposes its typed approved Proposal bundle through the read-only API.
+Stage B recovery is bounded and append-only. A recovery attempt is reserved by a persistent
+idempotency key, consumes root/proposal/window budgets, and may rerun only the original mode,
+leaf window, and Gate 1-approved source scope. Reservation, resume, and process restart are
+safe to re-enter: one key yields at most one Provider call and one fresh AgentRun/Proposal
+batch. Recovery writes only the non-canonical recovery-attempt audit table (Alembic migration
+`0006_narrative_analysis_recovery_attempts`, after Timeline migration `0005`) and never writes
+StoryBible or invokes CommitService.

@@ -94,3 +94,14 @@ typed `ApprovedProposalBundleV1`; REJECTED carries only sanitized issue summarie
 NEEDS_HUMAN_REVIEW carries held Proposal ids; FAILED carries sanitized execution diagnostics;
 NOT_READY carries no review artifact. Historical run and Proposal payload versions remain
 readable.
+Stage B `RecoveryAttemptV1` is an append-only, non-canonical audit contract. Its directive
+locks the original mode, leaf window, approved source scope, and AgentRun provenance; its
+budget records root/proposal/window counts, tokens, and time. A persistent idempotency key
+allows at most one reserved/running attempt and one Provider execution across re-entry,
+resume, or restart. Fresh Gate 2 artifacts are never written over the original REJECTED run,
+and only a fresh APPROVED recovery route may be returned by the recovery bundle endpoint.
+
+Stage B recovery uses Alembic migration `0006_narrative_analysis_recovery_attempts`,
+downstream of Timeline migration `0005_timeline_analysis_proposals`. Its persistent
+idempotency key is strengthened in application code to include evidence text, prompt,
+agent version, and provider model before any LLM call.

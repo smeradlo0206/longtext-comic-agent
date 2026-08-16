@@ -78,6 +78,15 @@ from comic_agent.schemas.narrative import (
     VerificationStatus,
 )
 from comic_agent.schemas.qa import QAResultV1, RepairPlanV1
+from comic_agent.schemas.recovery import (
+    RecoveryAttemptStatus,
+    RecoveryAttemptV1,
+    RecoveryBudgetUsageV1,
+    RecoveryDirectiveV1,
+    RecoveryOutcomeStatus,
+    RecoveryOutcomeV1,
+    RecoveryPolicyV1,
+)
 from comic_agent.schemas.review import (
     ApprovedProposalBundleV1,
     ApprovedProposalItemV1,
@@ -263,6 +272,13 @@ __all__ = [
     "RealityLayer",
     "RepairPlanV1",
     "RelationshipUpdateProposalV1",
+    "RecoveryAttemptStatus",
+    "RecoveryAttemptV1",
+    "RecoveryBudgetUsageV1",
+    "RecoveryDirectiveV1",
+    "RecoveryOutcomeStatus",
+    "RecoveryOutcomeV1",
+    "RecoveryPolicyV1",
     "ApprovedProposalBundleV1",
     "ApprovedProposalItemV1",
     "ApprovedSourceChunkBundleV1",

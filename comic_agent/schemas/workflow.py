@@ -15,6 +15,7 @@ from comic_agent.schemas.narrative import (
     RelationshipSignalProposalV1,
     StateChangeProposalV1,
 )
+from comic_agent.schemas.recovery import RecoveryOutcomeV1
 from comic_agent.schemas.review import NarrativeAnalysisReviewRouteV1, ReviewGate2ResultV1
 
 
@@ -188,6 +189,10 @@ class NarrativeAnalysisRunV1(StrictBaseModel):
         default=None,
         description="Safe downstream routing record derived from the Gate 2 result.",
     )
+    recovery_outcomes: list[RecoveryOutcomeV1] = Field(
+        default_factory=list,
+        description="Append-only source-free summaries for Stage B recovery decisions.",
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -195,12 +200,15 @@ class NarrativeAnalysisRunV1(StrictBaseModel):
         if not isinstance(value, dict):
             return value
         if "schema_version" in value:
+            if value.get("schema_version") in {"1.0", "1.1"} and "recovery_outcomes" not in value:
+                return {**value, "recovery_outcomes": []}
             return value
         return {
             **value,
             "schema_version": "1.0",
             "review_gate2_result": None,
             "review_gate2_route": None,
+            "recovery_outcomes": [],
         }
 
     @model_validator(mode="after")
@@ -221,6 +229,14 @@ class NarrativeAnalysisRunV1(StrictBaseModel):
                 raise ValueError("Gate 2 artifact analysis_run_id must match the analysis run")
             if result.review_run_id != route.review_run_id or result.status != route.review_status:
                 raise ValueError("Gate 2 route must match the stored review result")
+        outcome_ids = [outcome.outcome_id for outcome in self.recovery_outcomes]
+        if len(outcome_ids) != len(set(outcome_ids)):
+            raise ValueError("recovery_outcomes must have unique outcome ids")
+        if any(
+            outcome.root_analysis_run_id != self.analysis_run_id
+            for outcome in self.recovery_outcomes
+        ):
+            raise ValueError("recovery outcome root_analysis_run_id must match the analysis run")
         return self
 
 
