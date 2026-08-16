@@ -4,9 +4,55 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
-from comic_agent.schemas.base import StrictBaseModel
+from comic_agent.schemas.base import EvidenceRefV1, StrictBaseModel
+from comic_agent.schemas.narrative import (
+    ClaimProposalV1,
+    EntityProposalV1,
+    EventProposalV1,
+    KnowledgeStateProposalV1,
+    RelationshipSignalProposalV1,
+    StateChangeProposalV1,
+)
+from comic_agent.schemas.review import NarrativeAnalysisReviewRouteV1, ReviewGate2ResultV1
+
+
+class AgentRunStatus(StrEnum):
+    """Allowed lifecycle states for one agent execution."""
+
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+class NarrativeAnalysisRunStatus(StrEnum):
+    """Lifecycle states for a whole-document narrative analysis task."""
+
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    PARTIAL_FAILED = "PARTIAL_FAILED"
+    FAILED = "FAILED"
+
+
+class NarrativeAnalysisWindowStatus(StrEnum):
+    """Lifecycle states for one bounded analysis window."""
+
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    SPLIT = "SPLIT"
+
+
+class ProviderType(StrEnum):
+    """Provider execution family."""
+
+    MOCK = "MOCK"
+    LLM = "LLM"
+    IMAGE = "IMAGE"
 
 
 class WorkflowRunV1(StrictBaseModel):
@@ -23,32 +69,461 @@ class WorkflowRunV1(StrictBaseModel):
     )
 
 
-class AgentRunStatus(StrEnum):
-    """Lifecycle outcome of one agent execution."""
+class NarrativeAnalysisWindowPlanV1(StrictBaseModel):
+    """Deterministic source chunk window planned before execution."""
 
-    SUCCEEDED = "SUCCEEDED"
-    FAILED = "FAILED"
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4"] = Field(
+        default="1.4",
+        description=(
+            "Schema version. Historical 1.0 through 1.3 records remain readable; "
+            "1.4 adds deterministic output ownership."
+        ),
+    )
+    window_index: int = Field(ge=0, description="Zero-based window sequence.")
+    chunk_ids: list[str] = Field(min_length=1, description="Ordered source chunk ids.")
+    owned_chunk_ids: list[str] = Field(
+        default_factory=list,
+        description="Source chunks whose proposals this window exclusively owns.",
+    )
+
+
+class NarrativeAnalysisWindowV1(NarrativeAnalysisWindowPlanV1):
+    """Auditable state for one mode over one planned source window."""
+
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4"] = Field(
+        default="1.4",
+        description=(
+            "Schema version. Historical 1.0 through 1.3 window records remain readable; "
+            "1.4 adds deterministic split recovery ownership."
+        ),
+    )
+
+    analysis_window_id: str = Field(description="Persistent analysis window id.")
+    analysis_run_id: str = Field(description="Owning whole-document analysis run id.")
+    mode: str = Field(description="NarrativeAnalyst mode.")
+    status: NarrativeAnalysisWindowStatus = Field(description="Window execution status.")
+    agent_run_id: str | None = Field(
+        default=None, description="Persisted AgentRun id when executed."
+    )
+    error_message: str | None = Field(default=None, description="Sanitized failure reason.")
+    failure_category: str | None = Field(
+        default=None,
+        description="Sanitized failure category for a failed window.",
+    )
+    recommended_action: str | None = Field(
+        default=None,
+        description="Sanitized operator guidance for a failed window.",
+    )
+    provider_error_diagnostics: dict[str, Any] | None = Field(
+        default=None,
+        description="Whitelisted provider diagnostics without response content.",
+    )
+    attempt_count: int = Field(
+        default=0,
+        ge=0,
+        description="Completed execution attempts for this window.",
+    )
+    effective_max_chars_per_chunk: int = Field(
+        default=1200,
+        ge=1,
+        description="Bounded source-text budget used by the latest attempt.",
+    )
+    previous_failure_category: str | None = Field(
+        default=None,
+        description="Failure category that triggered the current retry policy.",
+    )
+    parent_window_id: str | None = Field(
+        default=None,
+        description="Parent window id for a deterministic split child.",
+    )
+    split_reason: str | None = Field(
+        default=None,
+        description="Sanitized reason recorded when this window is split.",
+    )
+
+    @model_validator(mode="after")
+    def normalize_owned_chunk_ids(self) -> "NarrativeAnalysisWindowV1":
+        if not self.owned_chunk_ids:
+            self.owned_chunk_ids = list(self.chunk_ids)
+        if len(self.owned_chunk_ids) != len(set(self.owned_chunk_ids)):
+            raise ValueError("owned_chunk_ids must be unique")
+        if not set(self.owned_chunk_ids).issubset(self.chunk_ids):
+            raise ValueError("owned_chunk_ids must be a subset of chunk_ids")
+        return self
+
+
+class NarrativeAnalysisRunV1(StrictBaseModel):
+    """Persistent, resumable whole-document NarrativeAnalyst task."""
+
+    schema_version: Literal["1.0", "1.1", "1.2"] = Field(
+        default="1.2",
+        description=(
+            "Schema version; v1.0/v1.1 records remain readable and v1.2 adds "
+            "source-free recovery outcomes."
+        ),
+    )
+    analysis_run_id: str = Field(description="Persistent analysis task id.")
+    project_id: str = Field(description="Owning project id.")
+    document_id: str = Field(description="Selected source document id.")
+    modes: list[str] = Field(min_length=1, description="Independent modes selected for the task.")
+    status: NarrativeAnalysisRunStatus = Field(description="Whole-document task status.")
+    window_size: int = Field(default=3, ge=1, description="Maximum chunks per window.")
+    stride: int = Field(default=2, ge=1, description="Chunk offset between windows.")
+    concurrency: Literal[1] = Field(default=1, description="Initial worker concurrency.")
+    real_llm_requested: bool = Field(
+        default=False, description="Explicit request-level real LLM opt-in."
+    )
+    window_ids: list[str] = Field(default_factory=list, description="Persistent window record ids.")
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC), description="Creation timestamp in UTC."
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC), description="Last state update timestamp in UTC."
+    )
+    review_gate2_result: ReviewGate2ResultV1 | None = Field(
+        default=None,
+        description="Completed deterministic Gate 2 audit; absent until automatic review is ready.",
+    )
+    review_gate2_route: NarrativeAnalysisReviewRouteV1 | None = Field(
+        default=None,
+        description="Safe downstream routing record derived from the Gate 2 result.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_legacy_run_version(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        if "schema_version" in value:
+            return value
+        return {
+            **value,
+            "schema_version": "1.0",
+            "review_gate2_result": None,
+            "review_gate2_route": None,
+        }
+
+    @model_validator(mode="after")
+    def validate_review_artifacts(self) -> "NarrativeAnalysisRunV1":
+        if (self.review_gate2_result is None) != (self.review_gate2_route is None):
+            raise ValueError("review_gate2_result and review_gate2_route must be present together")
+        if self.schema_version == "1.0" and (
+            self.review_gate2_result is not None or self.review_gate2_route is not None
+        ):
+            raise ValueError("v1.0 NarrativeAnalysisRun cannot contain Gate 2 artifacts")
+        if self.review_gate2_result is not None and self.review_gate2_route is not None:
+            result = self.review_gate2_result
+            route = self.review_gate2_route
+            if (
+                result.analysis_run_id != self.analysis_run_id
+                or route.analysis_run_id != self.analysis_run_id
+            ):
+                raise ValueError("Gate 2 artifact analysis_run_id must match the analysis run")
+            if result.review_run_id != route.review_run_id or result.status != route.review_status:
+                raise ValueError("Gate 2 route must match the stored review result")
+        return self
+
+
+class NarrativeAnalysisCreateRequestV1(StrictBaseModel):
+    """Chapter-scoped whole-document analysis request."""
+
+    modes: list[str] = Field(
+        default_factory=lambda: [
+            "entity_extraction",
+            "event_extraction",
+            "claim_extraction",
+            "knowledge_state_extraction",
+            "state_change_extraction",
+            "relationship_signal_extraction",
+        ],
+        min_length=1,
+        description="Independent implemented NarrativeAnalyst modes.",
+    )
+    chapter_ids: list[str] | None = Field(
+        default=None,
+        description="Optional chapter selection; chunks are derived from approved Gate 1 output.",
+    )
+    document_revision: int | None = Field(
+        default=None,
+        ge=1,
+        description="Optional source revision assertion.",
+    )
+    real_llm_requested: bool = Field(
+        default=False,
+        description="Explicit request-level opt-in; server settings remain authoritative.",
+    )
+
+
+class NarrativeAnalysisProposalSourceV1(StrictBaseModel):
+    """One proposal with its source AgentRun for deterministic aggregation."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0", description="Schema version.")
+    mode: str = Field(description="NarrativeAnalyst mode that produced the proposal.")
+    agent_run_id: str = Field(description="Auditable AgentRun id.")
+    proposal: (
+        EventProposalV1
+        | EntityProposalV1
+        | ClaimProposalV1
+        | KnowledgeStateProposalV1
+        | StateChangeProposalV1
+        | RelationshipSignalProposalV1
+    ) = (
+        Field(description="Typed proposal to aggregate.")
+    )
+
+
+class AggregatedEventProposalV1(StrictBaseModel):
+    """Conservatively merged event candidate with audit references."""
+
+    proposal: EventProposalV1 = Field(description="Representative event proposal.")
+    agent_run_ids: list[str] = Field(min_length=1, description="Source AgentRun ids.")
+    evidence_refs: list[EvidenceRefV1] = Field(min_length=1, description="All retained evidence.")
+
+
+class AggregatedEntityProposalV1(StrictBaseModel):
+    """Conservatively merged entity candidate with audit references."""
+
+    proposal: EntityProposalV1 = Field(description="Representative entity proposal.")
+    agent_run_ids: list[str] = Field(min_length=1, description="Source AgentRun ids.")
+    evidence_refs: list[EvidenceRefV1] = Field(min_length=1, description="All retained evidence.")
+
+
+class AggregatedClaimProposalV1(StrictBaseModel):
+    """Conservatively merged claim candidate with audit references."""
+
+    proposal: ClaimProposalV1 = Field(description="Representative claim proposal.")
+    agent_run_ids: list[str] = Field(min_length=1, description="Source AgentRun ids.")
+    evidence_refs: list[EvidenceRefV1] = Field(min_length=1, description="All retained evidence.")
+
+
+class AggregatedKnowledgeStateProposalV1(StrictBaseModel):
+    """Conservatively merged knowledge-state candidate with audit references."""
+
+    proposal: KnowledgeStateProposalV1 = Field(
+        description="Representative knowledge-state proposal."
+    )
+    agent_run_ids: list[str] = Field(min_length=1, description="Source AgentRun ids.")
+    evidence_refs: list[EvidenceRefV1] = Field(min_length=1, description="All retained evidence.")
+
+
+class AggregatedStateChangeProposalV1(StrictBaseModel):
+    """Conservatively merged State Change candidate with audit references."""
+
+    proposal: StateChangeProposalV1 = Field(
+        description="Representative State Change proposal."
+    )
+    agent_run_ids: list[str] = Field(min_length=1, description="Source AgentRun ids.")
+    evidence_refs: list[EvidenceRefV1] = Field(min_length=1, description="All retained evidence.")
+
+
+class AggregatedRelationshipSignalProposalV1(StrictBaseModel):
+    """Conservatively merged Relationship Signal candidate with audit references."""
+
+    proposal: RelationshipSignalProposalV1 = Field(
+        description="Representative relationship signal proposal."
+    )
+    agent_run_ids: list[str] = Field(min_length=1, description="Source AgentRun ids.")
+    evidence_refs: list[EvidenceRefV1] = Field(min_length=1, description="All retained evidence.")
+
+
+class NarrativeAnalysisResultV1(StrictBaseModel):
+    """Typed, sanitized aggregate result for one whole-document task."""
+
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4"] = Field(
+        default="1.4", description="Schema version; v1.0-v1.3 results remain readable."
+    )
+    analysis_run_id: str = Field(description="Owning whole-document analysis run id.")
+    events: list[AggregatedEventProposalV1] = Field(default_factory=list)
+    entities: list[AggregatedEntityProposalV1] = Field(default_factory=list)
+    claims: list[AggregatedClaimProposalV1] = Field(default_factory=list)
+    knowledge_states: list[AggregatedKnowledgeStateProposalV1] = Field(default_factory=list)
+    state_changes: list[AggregatedStateChangeProposalV1] = Field(default_factory=list)
+    relationship_signals: list[AggregatedRelationshipSignalProposalV1] = Field(
+        default_factory=list
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_legacy_result_version(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or "schema_version" in value:
+            return value
+        if (
+            "knowledge_states" not in value
+            and "state_changes" not in value
+            and "relationship_signals" not in value
+            and any(field in value for field in ("events", "entities", "claims"))
+        ):
+            return {
+                **value,
+                "schema_version": "1.0",
+                "knowledge_states": [],
+                "state_changes": [],
+                "relationship_signals": [],
+            }
+        if "state_changes" not in value and "knowledge_states" in value:
+            return {
+                **value,
+                "schema_version": "1.1",
+                "state_changes": [],
+                "relationship_signals": [],
+            }
+        if "relationship_signals" not in value:
+            return {**value, "schema_version": "1.3", "relationship_signals": []}
+        return {**value, "schema_version": "1.4"}
+
+
+class AgentInputRefV1(StrictBaseModel):
+    """Reference to one bounded object passed into an agent run."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0", description="Schema version.")
+    object_id: str = Field(description="Input object id, e.g. SourceChunk id.")
+    object_schema: str = Field(description="Input object schema name.")
+    role: str = Field(description="Input role in the agent context.")
+
+
+class AgentOutputRefV1(StrictBaseModel):
+    """Reference to one structured object produced by an agent run."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0", description="Schema version.")
+    object_id: str = Field(description="Output object id, e.g. Proposal id.")
+    object_schema: str = Field(description="Output object schema name.")
+    role: str = Field(description="Output role in the agent result.")
+
+
+class ProviderResultV1(StrictBaseModel):
+    """Auditable result from a provider call, including mock providers."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0", description="Schema version.")
+    provider_result_id: str = Field(description="Provider result id.")
+    provider_name: str = Field(description="Provider adapter name.")
+    provider_type: ProviderType = Field(description="Provider execution family.")
+    model_name: str | None = Field(default=None, description="Optional model name.")
+    output_schema: str = Field(description="Expected structured output schema.")
+    raw_output: str | None = Field(default=None, description="Optional raw provider output.")
+    structured_output: Any | None = Field(
+        default=None,
+        description="Optional parsed structured provider output.",
+    )
+    success: bool = Field(description="Whether the provider call succeeded.")
+    error_message: str | None = Field(default=None, description="Failure message if any.")
+    latency_ms: int | None = Field(default=None, ge=0, description="Optional latency in ms.")
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        description="Created at.",
+    )
+
+    @model_validator(mode="after")
+    def validate_status_consistency(self) -> "ProviderResultV1":
+        """Keep provider success/error state internally consistent."""
+
+        if self.success:
+            if self.error_message is not None:
+                raise ValueError("successful provider results cannot include error_message")
+            has_raw_output = self.raw_output not in (None, "")
+            has_structured_output = self.structured_output is not None
+            if not has_raw_output and not has_structured_output:
+                raise ValueError("successful provider results require output")
+        elif not self.error_message:
+            raise ValueError("failed provider results require error_message")
+        return self
+
+
+class MockProviderResultV1(ProviderResultV1):
+    """Provider result narrowed to deterministic mock provider output."""
+
+    provider_name: str = Field(default="mock", description="Mock provider name.")
+    provider_type: Literal[ProviderType.MOCK] = Field(
+        default=ProviderType.MOCK,
+        description="Mock provider family.",
+    )
 
 
 class AgentRunV1(StrictBaseModel):
-    """Trace record for one agent execution against a chunk or aggregate input."""
+    """One auditable agent execution over bounded source context."""
 
     schema_version: Literal["1.0"] = Field(default="1.0", description="Schema version.")
-    agent_run_id: str = Field(description="Unique agent run id.")
-    project_id: str = Field(description="Project owning the input chunk.")
-    source_chunk_id: str | None = Field(
-        default=None,
-        description="Source chunk supplied to the agent, if the input is a single chunk.",
-    )
-    agent_id: str = Field(description="Agent implementation identifier.")
-    status: AgentRunStatus = Field(description="Execution outcome.")
+    agent_run_id: str = Field(description="Agent run id.")
+    project_id: str = Field(description="Project id.")
+    agent_name: str = Field(description="Agent implementation name.")
+    source_chunk_id: str | None = Field(default=None, description="Legacy single input chunk id.")
+    agent_id: str | None = Field(default=None, description="Legacy agent implementation id.")
     output_proposal_id: str | None = Field(
         default=None,
-        description="Proposal produced by a successful run, if any.",
+        description="Legacy single output proposal id.",
     )
-    error_message: str | None = Field(default=None, description="Error for a failed run, if any.")
-    workflow_run_id: str | None = Field(default=None, description="Optional parent workflow run.")
-    created_at: datetime = Field(
+    workflow_run_id: str | None = Field(default=None, description="Legacy parent workflow id.")
+    input_chunk_ids: list[str] = Field(
+        default_factory=list,
+        description="SourceChunk ids included in the agent context.",
+    )
+    output_proposal_ids: list[str] = Field(
+        default_factory=list,
+        description="Proposal ids produced by the agent.",
+    )
+    output_schema: str = Field(description="Primary output schema name.")
+    provider_result_id: str | None = Field(default=None, description="Provider result id.")
+    provider_result: ProviderResultV1 | None = Field(
+        default=None,
+        description="Inline provider result when not persisted separately.",
+    )
+    input_refs: list[AgentInputRefV1] = Field(
+        default_factory=list,
+        description="Structured input references.",
+    )
+    output_refs: list[AgentOutputRefV1] = Field(
+        default_factory=list,
+        description="Structured output references.",
+    )
+    status: AgentRunStatus = Field(description="Agent run status.")
+    started_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
-        description="Creation timestamp in UTC.",
+        description="Start timestamp.",
     )
+    completed_at: datetime | None = Field(default=None, description="Completion timestamp.")
+    error_message: str | None = Field(default=None, description="Failure message if any.")
+    payload: dict[str, Any] = Field(default_factory=dict, description="Additional audit payload.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_agent_run(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        source_chunk_id = value.get("source_chunk_id")
+        agent_id = value.get("agent_id")
+        output_proposal_id = value.get("output_proposal_id")
+        return {
+            **value,
+            "agent_name": value.get("agent_name") or agent_id,
+            "agent_id": agent_id or value.get("agent_name"),
+            "input_chunk_ids": value.get("input_chunk_ids")
+            or ([source_chunk_id] if source_chunk_id else []),
+            "output_proposal_ids": value.get("output_proposal_ids")
+            or ([output_proposal_id] if output_proposal_id else []),
+            "output_schema": value.get("output_schema") or "EventProposalV1",
+        }
+
+    @property
+    def created_at(self) -> datetime:
+        """Expose the pre-v1 workflow timestamp used by the source repository."""
+
+        return self.started_at
+
+    @model_validator(mode="after")
+    def validate_status_consistency(self) -> "AgentRunV1":
+        """Keep terminal agent run states auditable."""
+
+        if self.status == AgentRunStatus.SUCCEEDED:
+            if not self.input_chunk_ids:
+                raise ValueError("succeeded agent runs require input_chunk_ids")
+            has_output = bool(
+                self.output_proposal_ids or self.provider_result_id or self.provider_result
+            )
+            if not has_output:
+                raise ValueError(
+                    "succeeded agent runs require output_proposal_ids or provider_result"
+                )
+            if self.error_message is not None:
+                raise ValueError("succeeded agent runs cannot include error_message")
+        elif self.status == AgentRunStatus.FAILED and not self.error_message:
+            raise ValueError("failed agent runs require error_message")
+        return self
