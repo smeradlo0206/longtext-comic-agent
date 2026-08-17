@@ -42,6 +42,48 @@ class Settings(BaseSettings):
         gt=0,
         validation_alias="LLM_TIMEOUT_SECONDS",
     )
+    provider_preflight_max_latency_ms: int = Field(
+        default=10_000,
+        ge=100,
+        le=120_000,
+        validation_alias="PROVIDER_PREFLIGHT_MAX_LATENCY_MS",
+    )
+    provider_circuit_failure_threshold: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        validation_alias="PROVIDER_CIRCUIT_FAILURE_THRESHOLD",
+    )
+    provider_circuit_backoff_seconds: int = Field(
+        default=30,
+        ge=1,
+        le=3_600,
+        validation_alias="PROVIDER_CIRCUIT_BACKOFF_SECONDS",
+    )
+    provider_circuit_max_backoff_seconds: int = Field(
+        default=300,
+        ge=1,
+        le=86_400,
+        validation_alias="PROVIDER_CIRCUIT_MAX_BACKOFF_SECONDS",
+    )
+    narrative_batch_max_chunks: int = Field(
+        default=20,
+        ge=1,
+        le=200,
+        validation_alias="NARRATIVE_BATCH_MAX_CHUNKS",
+    )
+    narrative_window_max_call_attempts: int = Field(
+        default=2,
+        ge=1,
+        le=10,
+        validation_alias="NARRATIVE_WINDOW_MAX_CALL_ATTEMPTS",
+    )
+    narrative_window_time_budget_seconds: int = Field(
+        default=300,
+        ge=1,
+        le=86_400,
+        validation_alias="NARRATIVE_WINDOW_TIME_BUDGET_SECONDS",
+    )
     enable_real_llm: bool = Field(default=False, validation_alias="ENABLE_REAL_LLM")
     comic_agent_env: str = Field(default="production", validation_alias="COMIC_AGENT_ENV")
     fake_pipeline_demo: bool = Field(

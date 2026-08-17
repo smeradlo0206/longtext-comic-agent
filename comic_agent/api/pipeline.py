@@ -18,19 +18,24 @@ from comic_agent.api.agent_runs import _require_real_llm_enabled, _run_whole_doc
 from comic_agent.api.dependencies import (
     get_narrative_analysis_recovery_repository,
     get_narrative_analysis_repository,
+    get_provider_circuit_repository,
     get_repository,
     get_timeline_gate3_repository,
 )
 from comic_agent.api.documents import import_document
 from comic_agent.config import get_settings
+from comic_agent.providers.openai_compatible import build_openai_compatible_provider
 from comic_agent.repositories.narrative_analysis_recovery_repository import (
     NarrativeAnalysisRecoveryRepository,
 )
 from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
+from comic_agent.repositories.provider_circuit_repository import ProviderCircuitRepository
 from comic_agent.repositories.source_repository import SourceRepository
 from comic_agent.repositories.timeline_gate3_repository import TimelineGate3Repository
+from comic_agent.schemas.reliability import ProviderHealthResultV1, ProviderHealthStatus
 from comic_agent.schemas.source import FidelityMode, ProjectSpecV1, ProjectType
 from comic_agent.services.narrative_analysis_coordinator import NarrativeAnalysisCoordinator
+from comic_agent.services.provider_health_service import ProviderHealthService
 
 router = APIRouter()
 
@@ -43,10 +48,37 @@ RecoveryRepositoryDep = Annotated[
     NarrativeAnalysisRecoveryRepository,
     Depends(get_narrative_analysis_recovery_repository),
 ]
-TimelineRepositoryDep = Annotated[TimelineGate3Repository, Depends(get_timeline_gate3_repository)]
+TimelineRepositoryDep = Annotated[
+    TimelineGate3Repository, Depends(get_timeline_gate3_repository)
+]
+CircuitRepositoryDep = Annotated[
+    ProviderCircuitRepository, Depends(get_provider_circuit_repository)
+]
 UploadFileDep = Annotated[UploadFile, File(...)]
 
 _SAFE_NARRATIVE_MODES = ["event_extraction"]
+
+
+@router.get("/provider-health", response_model=ProviderHealthResultV1)
+def get_provider_health(circuit_repository: CircuitRepositoryDep) -> ProviderHealthResultV1:
+    """Return persisted Provider availability without probing or exposing configuration."""
+
+    settings = get_settings()
+    state = circuit_repository.get(settings.llm_provider_name)
+    if state is None:
+        return ProviderHealthResultV1(
+            provider_key=settings.llm_provider_name,
+            status=ProviderHealthStatus.AVAILABLE,
+        )
+    return ProviderHealthResultV1(
+        provider_key=state.provider_key,
+        status=state.status,
+        failure_category=state.last_failure_category,
+        safe_issue_codes=(
+            ["PROVIDER_CIRCUIT_OPEN"] if state.status != ProviderHealthStatus.AVAILABLE else []
+        ),
+        next_eligible_retry_at=state.next_eligible_retry_at,
+    )
 
 
 @router.post("/projects/{project_id}/pipeline-runs/import-and-analyze", response_model=None)
@@ -57,12 +89,17 @@ async def import_and_analyze(
     file: UploadFileDep,
     repository: RepositoryDep,
     analysis_repository: AnalysisRepositoryDep,
+    circuit_repository: CircuitRepositoryDep,
     project_name: Annotated[str | None, Form()] = None,
     real_llm_requested: Annotated[bool, Form()] = False,
 ) -> dict[str, object] | JSONResponse:
     """Import once, then schedule the established Gate 1 -> Narrative worker path."""
 
-    _require_real_pipeline_opt_in(real_llm_requested)
+    _require_real_pipeline_opt_in(
+        real_llm_requested,
+        request=request,
+        circuit_repository=circuit_repository,
+    )
     _ensure_project(repository, project_id, project_name)
     imported = await import_document(project_id=project_id, file=file, repository=repository)
     if isinstance(imported, JSONResponse):
@@ -74,6 +111,7 @@ async def import_and_analyze(
         run = NarrativeAnalysisCoordinator(
             source_repository=repository,
             analysis_repository=analysis_repository,
+            settings=get_settings(),
         ).create_run(
             project_id=project_id,
             document_id=document["document_id"],
@@ -107,6 +145,7 @@ def get_pipeline_status(
     analysis_repository: AnalysisRepositoryDep,
     recovery_repository: RecoveryRepositoryDep,
     timeline_repository: TimelineRepositoryDep,
+    circuit_repository: CircuitRepositoryDep,
 ) -> dict[str, object]:
     """Return source-free progress composed from persisted Gate and recovery artifacts."""
 
@@ -114,6 +153,7 @@ def get_pipeline_status(
     if run is None:
         raise HTTPException(status_code=404, detail="NarrativeAnalysisRun not found")
     windows = analysis_repository.list_windows(analysis_run_id)
+    provider_health = get_provider_health(circuit_repository)
     gate1 = repository.get_review_gate1(run.document_id)
     route = run.review_gate2_route
     attempts = recovery_repository.list_attempts(analysis_run_id)
@@ -143,6 +183,9 @@ def get_pipeline_status(
         "gate1": str(gate1.decision) if gate1 is not None else "PENDING",
         "narrative": str(run.status),
         "narrative_failure_summary": _narrative_failure_summary(windows),
+        "batch_summary": _batch_summary(run, windows),
+        "window_summary": _window_summary(windows),
+        "provider_health": provider_health.model_dump(mode="json"),
         "gate2": (
             str(latest_gate2_route.decision)
             if latest_gate2_route is not None
@@ -195,7 +238,12 @@ def _ensure_project(repository: SourceRepository, project_id: str, name: str | N
     )
 
 
-def _require_real_pipeline_opt_in(real_llm_requested: bool) -> None:
+def _require_real_pipeline_opt_in(
+    real_llm_requested: bool,
+    *,
+    request: Request,
+    circuit_repository: ProviderCircuitRepository,
+) -> None:
     """Reject unsafe real-provider requests before importing or scheduling work."""
 
     if not real_llm_requested:
@@ -213,6 +261,15 @@ def _require_real_pipeline_opt_in(real_llm_requested: bool) -> None:
             status_code=409,
             detail="Real LLM requires a configured local API key",
         )
+    provider = getattr(request.app.state, "narrative_analyst_provider", None)
+    if provider is None:
+        provider = build_openai_compatible_provider(settings)
+    result = ProviderHealthService(settings=settings, repository=circuit_repository).preflight(
+        provider_key=settings.llm_provider_name,
+        provider=provider,
+    )
+    if str(result.status) != "AVAILABLE":
+        raise HTTPException(status_code=409, detail=result.model_dump(mode="json"))
 
 
 def _recovery_status(attempts: list[Any]) -> str:
@@ -250,6 +307,51 @@ def _narrative_failure_summary(windows: list[Any]) -> dict[str, object] | None:
         "failure_categories": categories,
         "recommended_actions": recommended_actions,
     }
+
+
+def _window_summary(windows: list[Any]) -> dict[str, object]:
+    """Summarize only execution states/budgets; never return SourceChunk content."""
+
+    counts: dict[str, int] = {}
+    retry_times = []
+    attempts_used = 0
+    for window in windows:
+        status = str(window.status)
+        counts[status] = counts.get(status, 0) + 1
+        attempts_used += int(window.attempt_count)
+        if window.next_eligible_retry_at is not None:
+            retry_times.append(window.next_eligible_retry_at)
+    return {
+        "total": len(windows),
+        "status_counts": counts,
+        "attempts_used": attempts_used,
+        "next_eligible_retry_at": min(retry_times).isoformat() if retry_times else None,
+    }
+
+
+def _batch_summary(run: Any, windows: list[Any]) -> dict[str, object]:
+    """Expose aggregate batch progress without returning chunk ids or source content."""
+
+    counts: dict[str, int] = {}
+    for batch in run.batches:
+        statuses = [str(window.status) for window in windows if window.batch_id == batch.batch_id]
+        if not statuses:
+            status = "PLANNED"
+        elif any(
+            status in {"RESERVED", "RUNNING", "PROVIDER_SUCCEEDED", "REVIEWING"}
+            for status in statuses
+        ):
+            status = "RUNNING"
+        elif any(status == "FAILED" for status in statuses):
+            status = "FAILED"
+        elif all(status == "SUCCEEDED" for status in statuses):
+            status = "SUCCEEDED"
+        elif all(status in {"SPLIT", "EXHAUSTED"} for status in statuses):
+            status = "EXHAUSTED"
+        else:
+            status = "PLANNED"
+        counts[status] = counts.get(status, 0) + 1
+    return {"total": len(run.batches), "status_counts": counts}
 
 
 def _timeline_recovery_status(timeline: Any) -> str:

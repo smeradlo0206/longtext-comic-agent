@@ -1,6 +1,6 @@
 """Sequential in-process worker for resumable whole-document analysis tasks."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from comic_agent.config import Settings
@@ -46,6 +46,9 @@ LENGTH_RETRY_MAX_CHARS_PER_CHUNK = 800
 RETRYABLE_FAILURE_CATEGORIES = {
     "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT",
     "SCHEMA_VALIDATION_FAILED",
+    "PROVIDER_TIMEOUT",
+    "PROVIDER_CONNECTION_ERROR",
+    "PROVIDER_HTTP_ERROR",
 }
 
 
@@ -107,6 +110,10 @@ class NarrativeAnalysisWorker:
             for window in self._analysis_repository.list_windows(analysis_run_id)
             if window.status
             in (NarrativeAnalysisWindowStatus.PENDING, NarrativeAnalysisWindowStatus.FAILED)
+            and (
+                window.next_eligible_retry_at is None
+                or window.next_eligible_retry_at <= datetime.now(UTC)
+            )
         ]
         pending_windows.sort(key=lambda window: (run.modes.index(window.mode), window.window_index))
         for window in pending_windows:
@@ -122,13 +129,27 @@ class NarrativeAnalysisWorker:
     ) -> None:
         current = window
         while True:
+            reserved = current.model_copy(
+                update={
+                    "status": NarrativeAnalysisWindowStatus.RESERVED,
+                    "next_eligible_retry_at": None,
+                }
+            )
+            claim_window = getattr(self._analysis_repository, "claim_window", None)
+            if callable(claim_window):
+                if not claim_window(reserved):
+                    return
+            else:
+                self._analysis_repository.save_window(reserved)
             running = current.model_copy(
                 update={
                     "status": NarrativeAnalysisWindowStatus.RUNNING,
                     "error_message": None,
                     "failure_category": None,
                     "recommended_action": None,
-                    "attempt_count": current.attempt_count + 1,
+                    "attempt_count": reserved.attempt_count + 1,
+                    "next_eligible_retry_at": None,
+                    "started_at": datetime.now(UTC),
                 }
             )
             self._analysis_repository.save_window(running)
@@ -138,6 +159,7 @@ class NarrativeAnalysisWorker:
                 running,
                 real_llm_requested,
             )
+            completed = self._schedule_retry_if_needed(completed)
             self._analysis_repository.save_window(completed)
             if self._should_split(completed):
                 self._split_length_failed_window(workflow, run, completed, real_llm_requested)
@@ -185,6 +207,7 @@ class NarrativeAnalysisWorker:
                         else NarrativeAnalysisWindowStatus.SUCCEEDED
                     ),
                     "agent_run_id": agent_run_id,
+                    "completed_at": datetime.now(UTC),
                     **failure_details,
                 }
             )
@@ -220,7 +243,8 @@ class NarrativeAnalysisWorker:
         return (
             window.status == NarrativeAnalysisWindowStatus.FAILED
             and window.attempt_count < MAX_AUTOMATIC_WINDOW_ATTEMPTS
-            and window.failure_category in RETRYABLE_FAILURE_CATEGORIES
+            and window.failure_category
+            in {"PROVIDER_LENGTH_BEFORE_FINAL_CONTENT", "SCHEMA_VALIDATION_FAILED"}
         )
 
     def _should_split(self, window: NarrativeAnalysisWindowV1) -> bool:
@@ -228,9 +252,42 @@ class NarrativeAnalysisWorker:
 
         return (
             window.status == NarrativeAnalysisWindowStatus.FAILED
-            and window.failure_category == "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT"
+            and window.failure_category
+            in {"PROVIDER_LENGTH_BEFORE_FINAL_CONTENT", "PROVIDER_TIMEOUT"}
             and len(window.chunk_ids) > 1
         )
+
+    def _schedule_retry_if_needed(
+        self, window: NarrativeAnalysisWindowV1
+    ) -> NarrativeAnalysisWindowV1:
+        """Persist a bounded backoff for transient failures; never sleep in a worker."""
+
+        if (
+            window.status != NarrativeAnalysisWindowStatus.FAILED
+            or window.failure_category not in {
+                "PROVIDER_TIMEOUT",
+                "PROVIDER_CONNECTION_ERROR",
+                "PROVIDER_HTTP_ERROR",
+            }
+            or window.attempt_count >= MAX_AUTOMATIC_WINDOW_ATTEMPTS
+            or not self._is_transient_http_failure(window)
+        ):
+            return window.model_copy(update={"completed_at": datetime.now(UTC)})
+        seconds = min(60, 5 * (2 ** max(window.attempt_count - 1, 0)))
+        return window.model_copy(
+            update={
+                "completed_at": datetime.now(UTC),
+                "next_eligible_retry_at": datetime.now(UTC) + timedelta(seconds=seconds),
+            }
+        )
+
+    @staticmethod
+    def _is_transient_http_failure(window: NarrativeAnalysisWindowV1) -> bool:
+        if window.failure_category != "PROVIDER_HTTP_ERROR":
+            return True
+        diagnostics = window.provider_error_diagnostics or {}
+        status_code = diagnostics.get("http_status_code")
+        return status_code == 429 or (isinstance(status_code, int) and status_code >= 500)
 
     def _split_length_failed_window(
         self,
@@ -269,6 +326,10 @@ class NarrativeAnalysisWorker:
                 previous_failure_category=failed_window.failure_category,
                 parent_window_id=failed_window.analysis_window_id,
                 split_reason=failed_window.failure_category,
+                idempotency_key=(
+                    f"{failed_window.idempotency_key or failed_window.analysis_window_id}"
+                    f":split:{index}"
+                ),
             )
             for index, chunk in enumerate(chunks)
         ]
@@ -354,6 +415,33 @@ class NarrativeAnalysisWorker:
         if run is None:
             raise ValueError("NarrativeAnalysisRun not found")
         windows = self._analysis_repository.list_windows(analysis_run_id)
+        now = datetime.now(UTC)
+        if any(
+            window.status
+            in {
+                NarrativeAnalysisWindowStatus.PENDING,
+                NarrativeAnalysisWindowStatus.RESERVED,
+                NarrativeAnalysisWindowStatus.RUNNING,
+                NarrativeAnalysisWindowStatus.PROVIDER_SUCCEEDED,
+                NarrativeAnalysisWindowStatus.REVIEWING,
+            }
+            for window in windows
+        ) or any(
+            window.status == NarrativeAnalysisWindowStatus.FAILED
+            and window.next_eligible_retry_at is not None
+            and window.next_eligible_retry_at > now
+            for window in windows
+        ):
+            # Another worker owns an execution checkpoint. Do not aggregate or
+            # evaluate Gate 2 against a partial run while it is still active.
+            return self._analysis_repository.save_run(
+                run.model_copy(
+                    update={
+                        "status": NarrativeAnalysisRunStatus.RUNNING,
+                        "updated_at": datetime.now(UTC),
+                    }
+                )
+            )
         failed_count = sum(
             window.status == NarrativeAnalysisWindowStatus.FAILED for window in windows
         )

@@ -1,8 +1,10 @@
 """Persistence for resumable whole-document narrative analysis tasks."""
 
 from datetime import UTC, datetime
+from typing import Any, cast
 
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from comic_agent.database.models import NarrativeAnalysisRunModel, NarrativeAnalysisWindowModel
@@ -10,6 +12,7 @@ from comic_agent.schemas.review import NarrativeAnalysisReviewRouteV1, ReviewGat
 from comic_agent.schemas.workflow import (
     NarrativeAnalysisResultV1,
     NarrativeAnalysisRunV1,
+    NarrativeAnalysisWindowStatus,
     NarrativeAnalysisWindowV1,
 )
 
@@ -90,6 +93,33 @@ class NarrativeAnalysisRepository:
         row.updated_at = datetime.now(UTC)
         self._session.commit()
         return window
+
+    def claim_window(self, window: NarrativeAnalysisWindowV1) -> bool:
+        """Atomically claim one eligible window before any Provider invocation."""
+
+        result = cast(
+            CursorResult[Any],
+            self._session.execute(
+            update(NarrativeAnalysisWindowModel)
+            .where(
+                NarrativeAnalysisWindowModel.analysis_window_id == window.analysis_window_id,
+                NarrativeAnalysisWindowModel.status.in_(
+                    [
+                        str(NarrativeAnalysisWindowStatus.PENDING),
+                        str(NarrativeAnalysisWindowStatus.FAILED),
+                    ]
+                ),
+            )
+            .values(
+                status=str(window.status),
+                agent_run_id=window.agent_run_id,
+                payload=window.model_dump(mode="json"),
+                updated_at=datetime.now(UTC),
+            )
+            ),
+        )
+        self._session.commit()
+        return bool(result.rowcount)
 
     def create_windows(self, windows: list[NarrativeAnalysisWindowV1]) -> None:
         """Create deterministic recovery windows idempotently."""

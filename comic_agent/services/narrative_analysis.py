@@ -9,6 +9,7 @@ from comic_agent.agents.narrative_analyst import NarrativeAnalyst
 from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.workflow import (
+    NarrativeAnalysisBatchV1,
     NarrativeAnalysisRunStatus,
     NarrativeAnalysisRunV1,
     NarrativeAnalysisWindowPlanV1,
@@ -85,6 +86,10 @@ def create_narrative_analysis_run(
     modes: list[str],
     window_size: int = DEFAULT_ANALYSIS_WINDOW_SIZE,
     stride: int = DEFAULT_ANALYSIS_STRIDE,
+    batch_max_chunks: int = 20,
+    output_token_budget: int = 2000,
+    time_budget_seconds: int = 300,
+    max_call_attempts: int = 2,
     real_llm_requested: bool = False,
     selected_chunks: list[SourceChunkV1] | None = None,
 ) -> NarrativeAnalysisRunV1:
@@ -94,6 +99,8 @@ def create_narrative_analysis_run(
         raise ValueError("at least one NarrativeAnalyst mode is required")
     if len(set(modes)) != len(modes):
         raise ValueError("NarrativeAnalyst modes must be distinct")
+    if batch_max_chunks < 1:
+        raise ValueError("batch_max_chunks must be at least 1")
     for mode in modes:
         mode_spec = NarrativeAnalyst(_ModeLookupProvider()).get_mode_spec(mode)
         if mode_spec.status != "implemented":
@@ -114,7 +121,10 @@ def create_narrative_analysis_run(
         if any(chunk_id not in available for chunk_id in selected_ids):
             raise ValueError("selected chunk is not part of document")
         chunks = [chunk for chunk in all_chunks if chunk.chunk_id in set(selected_ids)]
-    plans = plan_analysis_windows(chunks, window_size=window_size, stride=stride)
+    batch_chunks = [
+        chunks[index : index + batch_max_chunks]
+        for index in range(0, len(chunks), batch_max_chunks)
+    ]
     analysis_run_id = stable_id(
         "narrative-analysis-run",
         project_id,
@@ -122,6 +132,10 @@ def create_narrative_analysis_run(
         ",".join(modes),
         window_size,
         stride,
+        batch_max_chunks,
+        output_token_budget,
+        time_budget_seconds,
+        max_call_attempts,
         real_llm_requested,
         ",".join(chunk.chunk_id for chunk in chunks),
     )
@@ -129,23 +143,72 @@ def create_narrative_analysis_run(
     if existing is not None:
         return existing
 
+    batches: list[NarrativeAnalysisBatchV1] = []
+    planned_windows: list[tuple[int, str, NarrativeAnalysisWindowPlanV1]] = []
+    for batch_index, current_batch_chunks in enumerate(batch_chunks):
+        batch_id = stable_id(
+            "narrative-analysis-batch",
+            analysis_run_id,
+            batch_index,
+            ",".join(chunk.chunk_id for chunk in current_batch_chunks),
+        )
+        estimated_chars = sum(len(chunk.text) for chunk in current_batch_chunks)
+        batches.append(
+            NarrativeAnalysisBatchV1(
+                batch_id=batch_id,
+                analysis_run_id=analysis_run_id,
+                document_id=document_id,
+                chunk_ids=[chunk.chunk_id for chunk in current_batch_chunks],
+                idempotency_key=stable_id(
+                    "narrative-analysis-batch-execution", analysis_run_id, batch_id
+                ),
+                estimated_input_chars=estimated_chars,
+                estimated_input_tokens=(estimated_chars + 3) // 4,
+                output_token_budget=output_token_budget,
+                time_budget_seconds=time_budget_seconds,
+                max_call_attempts=max_call_attempts,
+            )
+        )
+        for plan in plan_analysis_windows(
+            current_batch_chunks, window_size=window_size, stride=stride
+        ):
+            planned_windows.append((batch_index, batch_id, plan))
+    chunks_by_id = {chunk.chunk_id: chunk for chunk in chunks}
     windows = [
         NarrativeAnalysisWindowV1(
             analysis_window_id=stable_id(
-                "narrative-analysis-window", analysis_run_id, mode, plan.window_index
+                "narrative-analysis-window", analysis_run_id, mode, batch_index, plan.window_index
             ),
             analysis_run_id=analysis_run_id,
             mode=mode,
-            window_index=plan.window_index,
+            window_index=(batch_index * 100_000) + plan.window_index,
             chunk_ids=plan.chunk_ids,
             owned_chunk_ids=plan.owned_chunk_ids,
             status=NarrativeAnalysisWindowStatus.PENDING,
+            idempotency_key=stable_id(
+                "narrative-window-execution",
+                analysis_run_id,
+                mode,
+                ",".join(plan.chunk_ids),
+            ),
+            batch_id=batch_id,
+            estimated_input_chars=sum(
+                len(chunks_by_id[chunk_id].text) for chunk_id in plan.chunk_ids
+            ),
+            estimated_input_tokens=(
+                sum(len(chunks_by_id[chunk_id].text) for chunk_id in plan.chunk_ids) + 3
+            )
+            // 4,
+            output_token_budget=output_token_budget,
+            time_budget_seconds=time_budget_seconds,
+            max_call_attempts=max_call_attempts,
         )
+        for batch_index, batch_id, plan in planned_windows
         for mode in modes
-        for plan in plans
     ]
     now = datetime.now(UTC)
     run = NarrativeAnalysisRunV1(
+        schema_version="1.3",
         analysis_run_id=analysis_run_id,
         project_id=project_id,
         document_id=document_id,
@@ -155,6 +218,7 @@ def create_narrative_analysis_run(
         stride=stride,
         real_llm_requested=real_llm_requested,
         window_ids=[window.analysis_window_id for window in windows],
+        batches=batches,
         created_at=now,
         updated_at=now,
     )

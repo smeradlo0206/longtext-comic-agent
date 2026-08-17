@@ -43,10 +43,24 @@ class NarrativeAnalysisWindowStatus(StrEnum):
     """Lifecycle states for one bounded analysis window."""
 
     PENDING = "PENDING"
+    RESERVED = "RESERVED"
+    RUNNING = "RUNNING"
+    PROVIDER_SUCCEEDED = "PROVIDER_SUCCEEDED"
+    REVIEWING = "REVIEWING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    EXHAUSTED = "EXHAUSTED"
+    SPLIT = "SPLIT"
+
+
+class NarrativeAnalysisBatchStatus(StrEnum):
+    """Source-free lifecycle state for a bounded document batch."""
+
+    PLANNED = "PLANNED"
     RUNNING = "RUNNING"
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
-    SPLIT = "SPLIT"
+    EXHAUSTED = "EXHAUSTED"
 
 
 class ProviderType(StrEnum):
@@ -74,11 +88,12 @@ class WorkflowRunV1(StrictBaseModel):
 class NarrativeAnalysisWindowPlanV1(StrictBaseModel):
     """Deterministic source chunk window planned before execution."""
 
-    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4"] = Field(
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6"] = Field(
         default="1.4",
         description=(
             "Schema version. Historical 1.0 through 1.3 records remain readable; "
-            "1.4 adds deterministic output ownership."
+            "1.4 adds deterministic output ownership; 1.5 adds execution checkpoints; "
+            "1.6 adds batch budgets."
         ),
     )
     window_index: int = Field(ge=0, description="Zero-based window sequence.")
@@ -92,11 +107,12 @@ class NarrativeAnalysisWindowPlanV1(StrictBaseModel):
 class NarrativeAnalysisWindowV1(NarrativeAnalysisWindowPlanV1):
     """Auditable state for one mode over one planned source window."""
 
-    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4"] = Field(
-        default="1.4",
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6"] = Field(
+        default="1.6",
         description=(
             "Schema version. Historical 1.0 through 1.3 window records remain readable; "
-            "1.4 adds deterministic split recovery ownership."
+            "1.5 adds source-free retry scheduling and Provider checkpoints; 1.6 adds "
+            "planned batch and execution-budget audit fields."
         ),
     )
 
@@ -142,6 +158,45 @@ class NarrativeAnalysisWindowV1(NarrativeAnalysisWindowPlanV1):
         default=None,
         description="Sanitized reason recorded when this window is split.",
     )
+    idempotency_key: str | None = Field(
+        default=None,
+        description="Stable execution identity for this exact mode/window/scope.",
+    )
+    batch_id: str | None = Field(
+        default=None,
+        description="Stable parent batch id; absent on historical records.",
+    )
+    estimated_input_chars: int = Field(
+        default=0,
+        ge=0,
+        description="Conservative source-character estimate; never exact token accounting.",
+    )
+    estimated_input_tokens: int = Field(
+        default=0,
+        ge=0,
+        description="Conservative estimated input-token budget for this window.",
+    )
+    output_token_budget: int = Field(
+        default=2000,
+        ge=1,
+        description="Configured upper bound for structured Provider output tokens.",
+    )
+    time_budget_seconds: int = Field(
+        default=300,
+        ge=1,
+        description="Configured elapsed-time budget for this window's controlled attempts.",
+    )
+    max_call_attempts: int = Field(
+        default=2,
+        ge=1,
+        description="Configured maximum Provider calls for this exact window.",
+    )
+    next_eligible_retry_at: datetime | None = Field(
+        default=None,
+        description="Source-free earliest time for a bounded retry.",
+    )
+    started_at: datetime | None = Field(default=None)
+    completed_at: datetime | None = Field(default=None)
 
     @model_validator(mode="after")
     def normalize_owned_chunk_ids(self) -> "NarrativeAnalysisWindowV1":
@@ -154,14 +209,31 @@ class NarrativeAnalysisWindowV1(NarrativeAnalysisWindowPlanV1):
         return self
 
 
+class NarrativeAnalysisBatchV1(StrictBaseModel):
+    """Stable, source-free manifest for one bounded segment of a document run."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0")
+    batch_id: str = Field(description="Persistent stable batch id.")
+    analysis_run_id: str = Field(description="Owning Narrative analysis run id.")
+    document_id: str = Field(description="Source document identifier.")
+    chunk_ids: list[str] = Field(min_length=1, description="Ordered approved SourceChunk ids.")
+    status: NarrativeAnalysisBatchStatus = Field(default=NarrativeAnalysisBatchStatus.PLANNED)
+    idempotency_key: str = Field(description="Stable identity for this exact batch scope.")
+    estimated_input_chars: int = Field(ge=0)
+    estimated_input_tokens: int = Field(ge=0)
+    output_token_budget: int = Field(ge=1)
+    time_budget_seconds: int = Field(ge=1)
+    max_call_attempts: int = Field(ge=1)
+
+
 class NarrativeAnalysisRunV1(StrictBaseModel):
     """Persistent, resumable whole-document NarrativeAnalyst task."""
 
-    schema_version: Literal["1.0", "1.1", "1.2"] = Field(
-        default="1.2",
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3"] = Field(
+        default="1.3",
         description=(
             "Schema version; v1.0/v1.1 records remain readable and v1.2 adds "
-            "source-free recovery outcomes."
+            "source-free recovery outcomes; v1.3 adds deterministic batch manifests."
         ),
     )
     analysis_run_id: str = Field(description="Persistent analysis task id.")
@@ -176,6 +248,10 @@ class NarrativeAnalysisRunV1(StrictBaseModel):
         default=False, description="Explicit request-level real LLM opt-in."
     )
     window_ids: list[str] = Field(default_factory=list, description="Persistent window record ids.")
+    batches: list[NarrativeAnalysisBatchV1] = Field(
+        default_factory=list,
+        description="Stable long-document batch manifests without source text.",
+    )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC), description="Creation timestamp in UTC."
     )
@@ -201,8 +277,13 @@ class NarrativeAnalysisRunV1(StrictBaseModel):
         if not isinstance(value, dict):
             return value
         if "schema_version" in value:
+            updates: dict[str, Any] = {}
             if value.get("schema_version") in {"1.0", "1.1"} and "recovery_outcomes" not in value:
-                return {**value, "recovery_outcomes": []}
+                updates["recovery_outcomes"] = []
+            if value.get("schema_version") in {"1.0", "1.1", "1.2"} and "batches" not in value:
+                updates["batches"] = []
+            if updates:
+                return {**value, **updates}
             return value
         return {
             **value,
@@ -210,6 +291,7 @@ class NarrativeAnalysisRunV1(StrictBaseModel):
             "review_gate2_result": None,
             "review_gate2_route": None,
             "recovery_outcomes": [],
+            "batches": [],
         }
 
     @model_validator(mode="after")

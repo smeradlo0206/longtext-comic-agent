@@ -57,6 +57,11 @@ class LocalSafeDemoProvider:
         self._event_calls = 0
         self._timeline_calls = 0
 
+    def preflight(self) -> None:
+        """Satisfy local health checks without consuming a narrative generation call."""
+
+        return None
+
     def structured_generate(
         self,
         request: dict[str, object],

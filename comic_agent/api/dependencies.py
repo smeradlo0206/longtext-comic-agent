@@ -11,6 +11,7 @@ from comic_agent.repositories.narrative_analysis_recovery_repository import (
     NarrativeAnalysisRecoveryRepository,
 )
 from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
+from comic_agent.repositories.provider_circuit_repository import ProviderCircuitRepository
 from comic_agent.repositories.source_repository import SourceRepository
 from comic_agent.repositories.timeline_gate3_repository import TimelineGate3Repository
 
@@ -59,3 +60,9 @@ def get_timeline_gate3_repository(session: SessionDep) -> TimelineGate3Repositor
     """Return read/write Timeline Gate 3 persistence bound to the request session."""
 
     return TimelineGate3Repository(session)
+
+
+def get_provider_circuit_repository(session: SessionDep) -> ProviderCircuitRepository:
+    """Return durable, source-free Provider circuit persistence."""
+
+    return ProviderCircuitRepository(session)
