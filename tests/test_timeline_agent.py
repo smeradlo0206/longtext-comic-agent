@@ -1,3 +1,5 @@
+import pytest
+
 from comic_agent.agents.timeline_agent import TimelineAgent
 from comic_agent.providers.mocks import MockLLMProvider
 from comic_agent.schemas.base import EvidenceRefV1, RealityLayer
@@ -105,22 +107,19 @@ def source_chunk() -> SourceChunkV1:
 
 
 def llm_response(
-    relation: str, quote: str | None = "Chen leaves before Lin arrives."
+    relation: str, evidence_ids: list[str] | None = None, confidence: float = 0.9
 ) -> dict[str, object]:
     return {
-        "proposal_id": "provider-proposal",
-        "source_event_id": "event-1",
-        "target_event_id": "event-2",
         "relation": relation,
-        "evidence_refs": []
-        if relation == "UNKNOWN"
-        else [{"chunk_id": "chunk-1", "quote_text": quote}],
-        "confidence": 0.9,
+        "supporting_evidence_ids": evidence_ids
+        if evidence_ids is not None
+        else ([] if relation == "UNKNOWN" else ["event_a_evidence_0"]),
+        "confidence": confidence,
         "reasoning_summary": "The supplied sentence explicitly states the ordering.",
     }
 
 
-def test_timeline_agent_llm_infers_explicit_before() -> None:
+def test_timeline_agent_llm_infers_explicit_before_from_selected_evidence() -> None:
     analysis = TimelineAgent(MockLLMProvider(llm_response("BEFORE"))).run(
         TimelineAnalysisInputV1(
             project_id="project-1",
@@ -135,10 +134,7 @@ def test_timeline_agent_llm_infers_explicit_before() -> None:
 
 
 def test_timeline_agent_preserves_requested_reverse_order_for_after() -> None:
-    response = llm_response("AFTER")
-    response["source_event_id"] = "event-2"
-    response["target_event_id"] = "event-1"
-    analysis = TimelineAgent(MockLLMProvider(response)).run(
+    analysis = TimelineAgent(MockLLMProvider(llm_response("AFTER"))).run(
         TimelineAnalysisInputV1(
             project_id="project-1",
             mode="LLM",
@@ -152,7 +148,7 @@ def test_timeline_agent_preserves_requested_reverse_order_for_after() -> None:
 
 def test_timeline_agent_llm_allows_explicit_simultaneous_and_unknown() -> None:
     simultaneous = TimelineAgent(
-        MockLLMProvider(llm_response("SIMULTANEOUS", "They meet simultaneously at noon."))
+        MockLLMProvider(llm_response("SIMULTANEOUS", ["event_b_evidence_0"]))
     ).run(
         TimelineAnalysisInputV1(
             project_id="project-1",
@@ -161,7 +157,7 @@ def test_timeline_agent_llm_allows_explicit_simultaneous_and_unknown() -> None:
         ),
         source_chunks=[source_chunk()],
     )
-    unknown = TimelineAgent(MockLLMProvider(llm_response("UNKNOWN", None))).run(
+    unknown = TimelineAgent(MockLLMProvider(llm_response("UNKNOWN", [], 0.98))).run(
         TimelineAnalysisInputV1(
             project_id="project-1",
             mode="LLM",
@@ -172,3 +168,31 @@ def test_timeline_agent_llm_allows_explicit_simultaneous_and_unknown() -> None:
 
     assert simultaneous.temporal_relations[0].relation == "SIMULTANEOUS"
     assert unknown.temporal_relations[0].relation == "UNKNOWN"
+    assert unknown.temporal_relations[0].confidence == 0.98
+
+
+def test_timeline_agent_rejects_unknown_evidence_id() -> None:
+    with pytest.raises(ValueError, match="unknown evidence id"):
+        TimelineAgent(MockLLMProvider(llm_response("BEFORE", ["invented_evidence_id"]))).run(
+            TimelineAnalysisInputV1(
+                project_id="project-1",
+                mode="LLM",
+                event_proposals=[event("event-1"), event("event-2")],
+            ),
+            source_chunks=[source_chunk()],
+        )
+
+
+def test_timeline_agent_llm_disabled_falls_back_to_rules() -> None:
+    analysis = TimelineAgent(
+        MockLLMProvider(llm_response("BEFORE")), llm_enabled=False
+    ).run(
+        TimelineAnalysisInputV1(
+            project_id="project-1",
+            mode="LLM",
+            event_proposals=[event("event-1"), event("event-2")],
+        ),
+        source_chunks=[source_chunk()],
+    )
+
+    assert analysis.temporal_relations[0].relation == "UNKNOWN"

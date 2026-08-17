@@ -17,6 +17,7 @@ from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.timeline import (
     DuplicateCandidateType,
     DuplicateCandidateV1,
+    TemporalRelationLLMResultV1,
     TimelineAnalysisInputV1,
     TimelineAnalysisMode,
     TimelineAnalysisProposalV1,
@@ -89,10 +90,12 @@ class TimelineAgent:
         provider: LLMProvider | None = None,
         *,
         provider_model: str = "unconfigured",
+        llm_enabled: bool = True,
         pair_selector: EventPairSelector | None = None,
     ) -> None:
         self._provider = provider
         self._provider_model = provider_model
+        self._llm_enabled = llm_enabled
         self._pair_selector = pair_selector or EventPairSelector()
 
     @property
@@ -104,6 +107,7 @@ class TimelineAgent:
             "agent_version": self.spec.version,
             "prompt_version": self.PROMPT_VERSION,
             "provider_model": self._provider_model,
+            "llm_enabled": str(self._llm_enabled),
         }
 
     def run(
@@ -117,7 +121,10 @@ class TimelineAgent:
         chunks_by_id = {chunk.chunk_id: chunk for chunk in source_chunks}
         temporal_relations = (
             self._unknown_relations(input_context.event_proposals)
-            if input_context.mode == TimelineAnalysisMode.RULES_ONLY
+            if (
+                input_context.mode == TimelineAnalysisMode.RULES_ONLY
+                or not self._llm_enabled
+            )
             else self._llm_relations(input_context.event_proposals, chunks_by_id)
         )
         return TimelineAnalysisProposalV1(
@@ -152,67 +159,77 @@ class TimelineAgent:
         chunks_by_id: dict[str, SourceChunkV1],
     ) -> TemporalRelationProposalV1:
         assert self._provider is not None
+        evidence_by_id = self._evidence_by_id(first, second)
         response = self._provider.structured_generate(
-            self._request_for_pair(first, second, chunks_by_id),
-            TemporalRelationProposalV1,
+            self._request_for_pair(first, second, evidence_by_id),
+            TemporalRelationLLMResultV1,
         )
-        if (
-            response.source_event_id != first.proposal_id
-            or response.target_event_id != second.proposal_id
-        ):
-            raise ValueError("LLM temporal relation must preserve the requested event order")
-        if response.relation not in {
-            TemporalRelation.BEFORE,
-            TemporalRelation.AFTER,
-            TemporalRelation.SIMULTANEOUS,
-            TemporalRelation.OVERLAPS,
-            TemporalRelation.UNKNOWN,
-        }:
-            raise ValueError("TimelineAgent V2 returned an unsupported temporal relation")
-        return response.model_copy(
-            update={
-                "proposal_id": stable_id(
-                    "temporal-v2", first.proposal_id, second.proposal_id, response.relation
-                )
-            }
+        selected_evidence = []
+        for evidence_id in response.supporting_evidence_ids:
+            evidence_ref = evidence_by_id.get(evidence_id)
+            if evidence_ref is None:
+                raise ValueError(f"LLM selected unknown evidence id: {evidence_id}")
+            if evidence_ref not in selected_evidence:
+                selected_evidence.append(evidence_ref)
+        return TemporalRelationProposalV1(
+            proposal_id=stable_id(
+                "temporal-v2", first.proposal_id, second.proposal_id, response.relation
+            ),
+            source_event_id=first.proposal_id,
+            target_event_id=second.proposal_id,
+            relation=response.relation,
+            evidence_refs=selected_evidence,
+            confidence=response.confidence,
+            reasoning_summary=response.reasoning_summary,
         )
+
+    @staticmethod
+    def _evidence_by_id(
+        first: EventProposalV1,
+        second: EventProposalV1,
+    ) -> dict[str, EvidenceRefV1]:
+        """Give the provider stable choices while retaining original evidence locally."""
+
+        evidence_by_id: dict[str, EvidenceRefV1] = {}
+        for event_label, event in (("event_a", first), ("event_b", second)):
+            for index, evidence_ref in enumerate(event.evidence_refs):
+                evidence_by_id[f"{event_label}_evidence_{index}"] = evidence_ref
+        return evidence_by_id
 
     def _request_for_pair(
         self,
         first: EventProposalV1,
         second: EventProposalV1,
-        chunks_by_id: dict[str, SourceChunkV1],
+        evidence_by_id: dict[str, EvidenceRefV1],
     ) -> dict[str, object]:
-        evidence_chunks: list[dict[str, str]] = []
-        seen_chunk_ids: set[str] = set()
-        for event in (first, second):
-            for evidence_ref in event.evidence_refs:
-                chunk_id = evidence_ref.chunk_id
-                if chunk_id not in seen_chunk_ids and chunk_id in chunks_by_id:
-                    seen_chunk_ids.add(chunk_id)
-                    evidence_chunks.append(
-                        {"chunk_id": chunk_id, "text": chunks_by_id[chunk_id].text}
-                    )
+        evidence_options = [
+            {
+                "evidence_id": evidence_id,
+                "chunk_id": evidence_ref.chunk_id,
+                "quote_text": evidence_ref.quote_text,
+            }
+            for evidence_id, evidence_ref in evidence_by_id.items()
+        ]
         return {
             "messages": [
                 {
                     "role": "system",
                     "content": (
                         "You are TimelineAgent V2. Judge ONLY Event A relative to Event B from "
-                        "the supplied records and exact evidence chunks. Narrative or chapter "
-                        "order is not story-time evidence. Never invent facts, dates, or "
-                        "causal order. Claims are not established events. If evidence is "
-                        "insufficient, ambiguous, "
+                        "the supplied records and existing evidence options. You may only select "
+                        "supporting_evidence_ids from those options; never create chunk ids, "
+                        "offsets, quotes, or evidence ids. Narrative, chapter, chunk, and input "
+                        "order are not story-time evidence. Never invent facts, dates, or causal "
+                        "order. Claims are "
+                        "not established events. If evidence is insufficient, ambiguous, "
                         "or an unanchored flashback, return UNKNOWN. Allowed relation values are "
                         "BEFORE, AFTER, SIMULTANEOUS, OVERLAPS, UNKNOWN. A non-UNKNOWN relation "
-                        "must cite exact EvidenceRef values from supplied chunks; quote_text "
-                        "must copy "
-                        "source text exactly. Preserve Event A as source_event_id and Event B as "
-                        "target_event_id. reasoning_summary must be a short evidence-grounded "
+                        "must select one or more supporting_evidence_ids. UNKNOWN may select none. "
+                        "reasoning_summary must be a short evidence-grounded "
                         "summary, "
                         "not hidden reasoning. Return only one JSON object matching: "
                         + json.dumps(
-                            TemporalRelationProposalV1.model_json_schema(),
+                            TemporalRelationLLMResultV1.model_json_schema(),
                             ensure_ascii=False,
                             separators=(",", ":"),
                         )
@@ -222,9 +239,24 @@ class TimelineAgent:
                     "role": "user",
                     "content": json.dumps(
                         {
-                            "event_a": first.model_dump(mode="json"),
-                            "event_b": second.model_dump(mode="json"),
-                            "evidence_chunks": evidence_chunks,
+                            "event_a": {
+                                "event_id": first.proposal_id,
+                                "summary": first.summary,
+                                "evidence": [
+                                    option
+                                    for option in evidence_options
+                                    if str(option["evidence_id"]).startswith("event_a_")
+                                ],
+                            },
+                            "event_b": {
+                                "event_id": second.proposal_id,
+                                "summary": second.summary,
+                                "evidence": [
+                                    option
+                                    for option in evidence_options
+                                    if str(option["evidence_id"]).startswith("event_b_")
+                                ],
+                            },
                         },
                         ensure_ascii=False,
                         separators=(",", ":"),
@@ -250,10 +282,13 @@ class TimelineAgent:
                     evidence_refs.append(evidence_ref)
         return evidence_refs
 
-    @staticmethod
-    def _input_key(input_context: TimelineAnalysisInputV1) -> tuple[object, ...]:
+    def _input_key(self, input_context: TimelineAnalysisInputV1) -> tuple[object, ...]:
         return (
             input_context.mode,
+            self.PROMPT_VERSION,
+            self.spec.version,
+            self._provider_model,
+            self._llm_enabled,
             tuple(proposal.proposal_id for proposal in input_context.event_proposals),
             tuple(proposal.claim_id for proposal in input_context.claim_proposals),
             tuple(proposal.proposal_id for proposal in input_context.state_change_proposals),

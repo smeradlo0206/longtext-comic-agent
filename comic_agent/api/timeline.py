@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from typing import Annotated, cast
 from uuid import uuid4
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from comic_agent.agents.timeline_agent import TimelineAgent
@@ -57,7 +58,7 @@ def analyze_timeline(
         for relation in proposal.temporal_relations:
             validator.validate_temporal_relation_evidence(relation, project_id)
         stored_proposal = repository.save_timeline_analysis(proposal, input_hash)
-    except (TimeoutError, ValueError, RuntimeError) as exc:
+    except (httpx.HTTPError, TimeoutError, ValueError, RuntimeError) as exc:
         repository.save_agent_run(
             AgentRunV1(
                 agent_run_id=f"agent-run-{uuid4().hex}",

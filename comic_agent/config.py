@@ -37,6 +37,21 @@ class Settings(BaseSettings):
         validation_alias="TIMELINE_MODEL",
         description="Optional TimelineAgent model; defaults to STORYBIBLE_MODEL.",
     )
+    timeline_llm_enabled: bool = Field(
+        default=False,
+        validation_alias="TIMELINE_LLM_ENABLED",
+    )
+    timeline_llm_timeout_seconds: float = Field(
+        default=60,
+        gt=0,
+        validation_alias="TIMELINE_LLM_TIMEOUT_SECONDS",
+    )
+    timeline_llm_max_retries: int = Field(
+        default=1,
+        ge=0,
+        le=1,
+        validation_alias="TIMELINE_LLM_MAX_RETRIES",
+    )
     llm_timeout_seconds: float = Field(
         default=60,
         gt=0,

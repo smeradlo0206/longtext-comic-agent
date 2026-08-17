@@ -76,6 +76,32 @@ def test_openai_provider_validates_message_content_through_output_model() -> Non
         )
 
 
+def test_openai_provider_retries_one_http_failure_when_configured() -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx.Response(503, request=request)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"answer":"ok"}'}}]},
+            request=request,
+        )
+
+    provider = OpenAICompatibleProvider(
+        base_url="https://api.example/v1",
+        api_key=SecretStr("test-api-key"),
+        model="deepseek-v4-pro",
+        max_retries=1,
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert provider.structured_generate({"messages": []}, OutputModel) == OutputModel(answer="ok")
+    assert attempts == 2
+
+
 def test_settings_load_openai_compatible_provider_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -88,6 +114,8 @@ def test_settings_load_openai_compatible_provider_environment(
     assert settings.llm_api_key.get_secret_value() == "test-api-key"
     assert settings.storybible_model == "deepseek-v4-pro"
     assert settings.llm_timeout_seconds == 60.0
+    assert settings.timeline_llm_enabled is False
+    assert settings.timeline_llm_max_retries == 1
 
 
 def test_settings_redacts_llm_api_key_from_repr_and_model_dump(

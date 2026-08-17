@@ -1,3 +1,4 @@
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -138,16 +139,13 @@ class CountingMockLLMProvider(MockLLMProvider):
 
 
 def llm_payload(
-    *, relation: str = "BEFORE", quote: str | None = "Chen leaves before Lin arrives."
+    *, relation: str = "BEFORE", evidence_ids: list[str] | None = None
 ) -> dict[str, object]:
     return {
-        "proposal_id": "provider-proposal",
-        "source_event_id": "event-1",
-        "target_event_id": "event-2",
         "relation": relation,
-        "evidence_refs": []
-        if relation == "UNKNOWN"
-        else [{"chunk_id": "chunk-a", "quote_text": quote}],
+        "supporting_evidence_ids": evidence_ids
+        if evidence_ids is not None
+        else ([] if relation == "UNKNOWN" else ["event_a_evidence_0"]),
         "confidence": 0.9,
         "reasoning_summary": "The source explicitly gives the ordering.",
     }
@@ -185,12 +183,32 @@ def test_timeline_api_llm_validates_evidence_and_reuses_cache(tmp_path) -> None:
     assert provider.calls == 1
 
 
+def test_timeline_api_does_not_reuse_cache_after_model_changes(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    app = create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'timeline.db'}")
+    seed_chunk(app, chunk_id="chunk-a", project_id="project-a")
+    first_provider = CountingMockLLMProvider(llm_payload())
+    app.state.timeline_agent = TimelineAgent(first_provider, provider_model="model-a")
+
+    with TestClient(app) as client:
+        first = client.post("/projects/project-a/timeline/analyze", json=llm_request_payload())
+
+    second_provider = CountingMockLLMProvider(llm_payload())
+    app.state.timeline_agent = TimelineAgent(second_provider, provider_model="model-b")
+    with TestClient(app) as client:
+        second = client.post("/projects/project-a/timeline/analyze", json=llm_request_payload())
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first_provider.calls == 1
+    assert second_provider.calls == 1
+
+
 def test_timeline_api_rejects_invalid_llm_evidence_and_records_failure(tmp_path) -> None:  # type: ignore[no-untyped-def]
     app = create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'timeline.db'}")
     seed_chunk(
         app, chunk_id="chunk-a", project_id="project-a", text="Chen leaves before Lin arrives."
     )
-    bad = llm_payload(quote="not present")
+    bad = llm_payload(evidence_ids=["invented_evidence_id"])
     app.state.timeline_agent = TimelineAgent(MockLLMProvider(bad), provider_model="mock-v2")
 
     with TestClient(app) as client:
@@ -198,8 +216,31 @@ def test_timeline_api_rejects_invalid_llm_evidence_and_records_failure(tmp_path)
         runs = client.get("/projects/project-a/agent-runs")
 
     assert response.status_code == 422
-    assert "quote_text does not match" in response.json()["detail"]
+    assert "unknown evidence id" in response.json()["detail"]
     assert runs.json()[-1]["status"] == "FAILED"
+
+
+def test_timeline_api_rejects_mismatched_existing_quote(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    app = create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'timeline.db'}")
+    seed_chunk(
+        app,
+        chunk_id="chunk-a",
+        project_id="project-a",
+        text="Chen leaves before Lin arrives.",
+    )
+    app.state.timeline_agent = TimelineAgent(
+        MockLLMProvider(llm_payload()), provider_model="mock-v2"
+    )
+    payload = llm_request_payload()
+    events = payload["event_proposals"]
+    assert isinstance(events, list)
+    events[0]["evidence_refs"] = [{"chunk_id": "chunk-a", "quote_text": "not present"}]
+
+    with TestClient(app) as client:
+        result = client.post("/projects/project-a/timeline/analyze", json=payload)
+
+    assert result.status_code == 422
+    assert "quote_text does not match" in result.json()["detail"]
 
 
 def test_timeline_api_records_timeout_and_rejects_malformed_provider_output(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -231,13 +272,16 @@ def test_timeline_api_rejects_out_of_bounds_llm_quote(tmp_path) -> None:  # type
     app = create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'timeline.db'}")
     seed_chunk(app, chunk_id="chunk-a", project_id="project-a", text="short source")
     response = llm_payload()
-    response["evidence_refs"] = [
-        {"chunk_id": "chunk-a", "quote_start": 0, "quote_end": 100, "quote_text": "short source"}
-    ]
     app.state.timeline_agent = TimelineAgent(MockLLMProvider(response), provider_model="mock-v2")
 
+    payload = llm_request_payload()
+    events = payload["event_proposals"]
+    assert isinstance(events, list)
+    events[0]["evidence_refs"] = [
+        {"chunk_id": "chunk-a", "quote_start": 0, "quote_end": 100, "quote_text": "short source"}
+    ]
     with TestClient(app) as client:
-        result = client.post("/projects/project-a/timeline/analyze", json=llm_request_payload())
+        result = client.post("/projects/project-a/timeline/analyze", json=payload)
 
     assert result.status_code == 422
     assert "quote range exceeds" in result.json()["detail"]
@@ -247,7 +291,9 @@ def test_timeline_api_rejects_out_of_bounds_llm_quote(tmp_path) -> None:  # type
     "response",
     [
         {**llm_payload(), "confidence": 1.1},
+        {**llm_payload(), "confidence": -0.1},
         {**llm_payload(), "relation": "DURING"},
+        {**llm_payload(), "relation": "MAYBE_BEFORE"},
     ],
 )
 def test_timeline_api_rejects_invalid_llm_schema(
@@ -266,6 +312,28 @@ def test_timeline_api_rejects_invalid_llm_schema(
         result = client.post("/projects/project-a/timeline/analyze", json=llm_request_payload())
 
     assert result.status_code == 422
+
+
+class HttpErrorProvider:
+    def structured_generate(self, request, output_model):  # type: ignore[no-untyped-def]
+        request_for_error = httpx.Request("POST", "https://api.example/v1/chat/completions")
+        response = httpx.Response(503, request=request_for_error)
+        raise httpx.HTTPStatusError(
+            "provider unavailable", request=request_for_error, response=response
+        )
+
+
+def test_timeline_api_records_http_provider_failure(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    app = create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'timeline.db'}")
+    seed_chunk(app, chunk_id="chunk-a", project_id="project-a")
+    app.state.timeline_agent = TimelineAgent(HttpErrorProvider(), provider_model="mock-http")
+
+    with TestClient(app) as client:
+        result = client.post("/projects/project-a/timeline/analyze", json=llm_request_payload())
+        runs = client.get("/projects/project-a/agent-runs")
+
+    assert result.status_code == 422
+    assert runs.json()[-1]["status"] == "FAILED"
 
 
 def test_timeline_api_rejects_missing_input_evidence_chunk(tmp_path) -> None:  # type: ignore[no-untyped-def]

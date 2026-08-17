@@ -38,9 +38,11 @@ def create_app(database_url: str | None = None) -> FastAPI:
             base_url=settings.llm_base_url,
             api_key=settings.llm_api_key,
             model=timeline_model,
-            timeout_seconds=settings.llm_timeout_seconds,
+            timeout_seconds=settings.timeline_llm_timeout_seconds,
+            max_retries=settings.timeline_llm_max_retries,
         ),
         provider_model=timeline_model,
+        llm_enabled=settings.timeline_llm_enabled,
     )
     app.include_router(health_router)
     app.include_router(projects_router)

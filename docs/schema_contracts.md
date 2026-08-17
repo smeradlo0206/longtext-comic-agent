@@ -87,3 +87,8 @@ No new Alembic migration is required: V2 continues to store the versioned Pydant
 payload in the JSON column introduced by `0005_timeline_analysis_proposals`. Its
 idempotency key is strengthened in application code to include evidence text, prompt,
 agent version, and provider model before any LLM call.
+
+TimelineAgent V2's provider-facing `TemporalRelationLLMResultV1` is an internal schema:
+the model may choose only `supporting_evidence_ids` supplied by the program. The program
+then restores the existing `EvidenceRefV1` values and validates them before persisting a
+candidate relation. No LLM output can create a new source quotation or offset.

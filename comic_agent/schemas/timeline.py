@@ -10,8 +10,42 @@ from comic_agent.schemas.narrative import (
     ClaimProposalV1,
     EventProposalV1,
     StateChangeProposalV1,
+    TemporalRelation,
     TemporalRelationProposalV1,
 )
+
+
+class TemporalRelationLLMResultV1(StrictBaseModel):
+    """Internal structured LLM result that can select, but never create, evidence."""
+
+    relation: TemporalRelation = Field(description="Event A relative to Event B.")
+    confidence: float = Field(ge=0, le=1, description="Confidence in this relation judgment.")
+    supporting_evidence_ids: list[str] = Field(
+        default_factory=list,
+        description="Evidence ids selected from the prompt-provided set.",
+    )
+    reasoning_summary: str | None = Field(
+        default=None,
+        max_length=400,
+        description="Brief evidence-grounded summary, never chain-of-thought.",
+    )
+
+    @model_validator(mode="after")
+    def validate_supported_relation(self) -> "TemporalRelationLLMResultV1":
+        """Keep V2 deliberately smaller than the legacy temporal enum."""
+
+        allowed = {
+            TemporalRelation.BEFORE,
+            TemporalRelation.AFTER,
+            TemporalRelation.SIMULTANEOUS,
+            TemporalRelation.OVERLAPS,
+            TemporalRelation.UNKNOWN,
+        }
+        if self.relation not in allowed:
+            raise ValueError("TimelineAgent V2 returned an unsupported temporal relation")
+        if self.relation != TemporalRelation.UNKNOWN and not self.supporting_evidence_ids:
+            raise ValueError("known temporal relations require supporting_evidence_ids")
+        return self
 
 
 class TimelineConflictCategory(StrEnum):

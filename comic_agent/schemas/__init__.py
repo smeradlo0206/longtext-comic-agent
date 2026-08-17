@@ -35,6 +35,7 @@ from comic_agent.schemas.storybible import (
 from comic_agent.schemas.storyboard import SceneSpecV1, StoryBeatV1
 from comic_agent.schemas.timeline import (
     DuplicateCandidateV1,
+    TemporalRelationLLMResultV1,
     TimelineAnalysisInputV1,
     TimelineAnalysisMode,
     TimelineAnalysisProposalV1,
@@ -77,6 +78,7 @@ __all__ = [
     "StoryEntityStateV1",
     "StoryRelationshipV1",
     "TemporalRelationProposalV1",
+    "TemporalRelationLLMResultV1",
     "TimelineAnalysisInputV1",
     "TimelineAnalysisMode",
     "TimelineAnalysisProposalV1",

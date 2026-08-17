@@ -20,7 +20,15 @@ LLM_BASE_URL=https://api.llm.ustc.edu.cn/v1
 LLM_API_KEY=你的密钥
 STORYBIBLE_MODEL=deepseek-v4-pro
 LLM_TIMEOUT_SECONDS=120
+TIMELINE_LLM_ENABLED=false
+TIMELINE_MODEL=deepseek-v4-pro
+TIMELINE_LLM_TIMEOUT_SECONDS=60
+TIMELINE_LLM_MAX_RETRIES=1
 ```
+
+`TIMELINE_LLM_ENABLED=false` keeps Timeline analysis in safe rule-only mode. Set it
+to `true` only after supplying a local `LLM_API_KEY`; the Timeline model can then be
+changed through `TIMELINE_MODEL` without changing application code.
 
 为减小 LLM 调用延迟，关闭 VPN 通常可以直接连接。
 

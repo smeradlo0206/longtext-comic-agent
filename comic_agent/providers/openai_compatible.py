@@ -18,12 +18,14 @@ class OpenAICompatibleProvider:
         api_key: SecretStr,
         model: str,
         timeout_seconds: float = 60,
+        max_retries: int = 0,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self._endpoint = f"{base_url.rstrip('/')}/chat/completions"
         self._api_key = api_key
         self._model = model
         self._timeout_seconds = timeout_seconds
+        self._max_retries = max_retries
         self._transport = transport
 
     def structured_generate(
@@ -41,15 +43,29 @@ class OpenAICompatibleProvider:
             "Content-Type": "application/json",
         }
 
-        with httpx.Client(
-            timeout=self._timeout_seconds,
-            transport=self._transport,
-        ) as client:
-            response = client.post(self._endpoint, headers=headers, json=payload)
-            response.raise_for_status()
+        response = self._post_with_retry(headers, payload)
 
         content = self._message_content(response.json())
         return output_model.model_validate_json(content)
+
+    def _post_with_retry(
+        self, headers: dict[str, str], payload: dict[str, object]
+    ) -> httpx.Response:
+        """Retry transport and HTTP failures a bounded number of times."""
+
+        for attempt in range(self._max_retries + 1):
+            try:
+                with httpx.Client(
+                    timeout=self._timeout_seconds,
+                    transport=self._transport,
+                ) as client:
+                    response = client.post(self._endpoint, headers=headers, json=payload)
+                    response.raise_for_status()
+                    return response
+            except (httpx.RequestError, httpx.HTTPStatusError):
+                if attempt == self._max_retries:
+                    raise
+        raise RuntimeError("unreachable provider retry state")
 
     @staticmethod
     def _message_content(response_payload: object) -> str:
