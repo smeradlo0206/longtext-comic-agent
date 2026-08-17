@@ -216,6 +216,8 @@ def test_web_console_exposes_whole_document_analysis_as_the_normal_flow() -> Non
     assert 'id="safePipelineProjectName"' in html
     assert 'id="safePipelineFile"' in html
     assert 'id="safePipelineRealLlmRequested"' in html
+    assert html.index('id="safePipelineFile"') < html.index('id="safePipelineRealLlmRequested"')
+    assert html.index('id="safePipelineRealLlmRequested"') < html.index('id="startSafePipeline"')
     assert 'id="useOfficialSafePipelineText"' in html
     assert 'id="startSafePipeline"' in html
     assert 'id="refreshSafePipeline"' in html
