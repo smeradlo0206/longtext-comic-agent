@@ -619,35 +619,60 @@
     </aside>
 
     <main>
-      <div class="topbar">
-        <label>API Base URL
-          <input id="apiBase" value="http://127.0.0.1:8080" />
-        </label>
-        <label>Project ID
-          <input id="projectId" placeholder="manual-eval-YYYYMMDD" />
-        </label>
-        <label>访问码
-          <input id="accessCode" type="password" autocomplete="off" />
-        </label>
-        <button id="verifyAccess" class="primary">验证访问码</button>
-        <button id="refreshStatus">刷新状态</button>
-      </div>
-
-      <section id="status">
+      <section id="safePipeline">
         <div class="section-head">
           <div>
-            <h2>Demo Status</h2>
-            <p>后端只返回脱敏配置状态，不返回访问码或模型密钥。</p>
+            <h2>一键安全分析</h2>
+            <p>仅启动既有 Gate 1 → Narrative → Gate 2 → Timeline → Gate 3 流水线。</p>
           </div>
-          <span id="accessBadge" class="pill warn">Access 未验证</span>
         </div>
         <div class="body">
-          <div class="matrix" id="capabilityMatrix"></div>
-          <pre id="demoStatus">{}</pre>
+          <div class="form-grid">
+            <label>项目名称（可选）
+              <input id="safePipelineProjectName" placeholder="留空则使用安全默认名称" />
+            </label>
+            <label>TXT 文件
+              <input id="safePipelineFile" type="file" accept=".txt,text/plain" />
+            </label>
+          </div>
+          <div class="row">
+            <button id="useOfficialSafePipelineText">使用官方示例文本</button>
+            <button id="startSafePipeline" class="primary">开始安全分析</button>
+            <button id="refreshSafePipeline">刷新状态</button>
+          </div>
+          <pre id="safePipelineStatus">{"state":"NOT_STARTED"}</pre>
         </div>
       </section>
 
-      <div class="grid">
+      <details id="advancedDevelopmentDiagnostics">
+        <summary>高级/开发诊断</summary>
+        <div class="topbar">
+          <label>API Base URL
+            <input id="apiBase" value="" placeholder="Same origin" />
+          </label>
+          <label>Project ID
+            <input id="projectId" placeholder="manual-eval-YYYYMMDD" />
+          </label>
+          <label>访问码
+            <input id="accessCode" type="password" autocomplete="off" />
+          </label>
+          <button id="verifyAccess" class="primary">验证访问码</button>
+          <button id="refreshStatus">刷新状态</button>
+        </div>
+        <section id="status">
+          <div class="section-head">
+            <div>
+              <h2>Demo Status</h2>
+              <p>后端只返回脱敏配置状态，不返回访问码或模型密钥。</p>
+            </div>
+            <span id="accessBadge" class="pill warn">Access 未验证</span>
+          </div>
+          <div class="body">
+            <div class="matrix" id="capabilityMatrix"></div>
+            <pre id="demoStatus">{}</pre>
+          </div>
+        </section>
+        <div class="grid">
         <div class="stack">
           <section id="import">
             <div class="section-head">
@@ -970,7 +995,8 @@
             </div>
           </section>
         </div>
-      </div>
+        </div>
+      </details>
     </main>
   </div>
   <div id="log" class="log"></div>
@@ -999,11 +1025,14 @@
       knowledgeEvaluationBatches: new Map(),
       knowledgeEvaluationRunFailures: new Map(),
       knowledgeEvaluationReport: null,
-      knowledgeEvaluationRunInProgress: false
+      knowledgeEvaluationRunInProgress: false,
+      safePipelineFile: null,
+      safePipelineRunId: null,
+      safePipelinePoll: null
     };
 
     const $ = (id) => document.getElementById(id);
-    const api = () => $("apiBase").value.replace(/\/$/, "");
+    const api = () => $("apiBase").value.trim().replace(/\/$/, "") || window.location.origin;
     const projectId = () => $("projectId").value.trim();
     const accessCode = () => $("accessCode").value;
     const projectStorageKey = "comic-agent-project-id";
@@ -1051,6 +1080,75 @@
         throw error;
       }
       return data;
+    }
+
+    function safePipelineProjectId() {
+      if (projectId()) return projectId();
+      const id = `local-safe-${Date.now().toString(36)}`;
+      $("projectId").value = id;
+      rememberProjectId();
+      return id;
+    }
+
+    function renderSafePipelineStatus(data) {
+      $("safePipelineStatus").textContent = pretty({
+        import_and_gate1: data.gate1 ?? data.pipeline_status ?? "PENDING",
+        narrative: data.narrative ?? "PENDING",
+        gate2: data.gate2 ?? "NOT_READY",
+        narrative_recovery: data.narrative_recovery ?? "NOT_STARTED",
+        timeline: data.timeline ?? "NOT_READY",
+        timeline_recovery: data.timeline_recovery ?? "NOT_STARTED",
+        gate3: data.gate3 ?? "NOT_READY",
+        approved_timeline_bundle: data.approved_timeline_bundle_id ?? null,
+        issue_count: data.gate3_issue_count ?? 0,
+        safe_issue_codes: data.safe_issue_codes ?? [],
+        next_step: data.gate3 === "APPROVED"
+          ? "已生成已审核时间线包，可供未来设定库整合使用。"
+          : "系统只会在既有安全规则允许时自动继续。"
+      });
+    }
+
+    async function useOfficialSafePipelineText() {
+      const response = await fetch(`${window.location.origin}/console/official_safe_pipeline_demo.txt`);
+      if (!response.ok) throw new Error("无法加载官方示例文本");
+      state.safePipelineFile = new File(
+        [await response.text()],
+        "official_safe_pipeline_demo.txt",
+        {type: "text/plain;charset=utf-8"}
+      );
+      $("safePipelineStatus").textContent = pretty({state: "SAMPLE_READY"});
+    }
+
+    async function refreshSafePipeline() {
+      if (!state.safePipelineRunId) return;
+      const data = await request(`/pipeline-runs/${encodeURIComponent(state.safePipelineRunId)}`);
+      renderSafePipelineStatus(data);
+      const terminal = ["APPROVED", "REJECTED", "NEEDS_HUMAN_REVIEW", "FAILED"];
+      const stoppedAtGate2 = ["REJECTED", "NEEDS_HUMAN_REVIEW", "FAILED"].includes(data.gate2);
+      if (terminal.includes(data.gate3) || stoppedAtGate2) {
+        clearInterval(state.safePipelinePoll);
+        state.safePipelinePoll = null;
+      }
+    }
+
+    async function startSafePipeline() {
+      const selected = $("safePipelineFile").files[0] || state.safePipelineFile;
+      if (!selected) throw new Error("请选择 TXT 文件或使用官方示例文本");
+      const body = new FormData();
+      body.append("file", selected);
+      const name = $("safePipelineProjectName").value.trim();
+      if (name) body.append("project_name", name);
+      const data = await request(
+        `/projects/${encodeURIComponent(safePipelineProjectId())}/pipeline-runs/import-and-analyze`,
+        {method: "POST", body}
+      );
+      state.safePipelineRunId = data.analysis_run_id;
+      renderSafePipelineStatus(data);
+      clearInterval(state.safePipelinePoll);
+      state.safePipelinePoll = setInterval(() => {
+        refreshSafePipeline().catch((error) => showLog(error.message));
+      }, 1000);
+      await refreshSafePipeline();
     }
 
     function showLog(message) {
@@ -2835,6 +2933,9 @@
     }
 
     $("refreshStatus").addEventListener("click", () => refreshStatus().catch((error) => showLog(error.message)));
+    $("useOfficialSafePipelineText").addEventListener("click", () => useOfficialSafePipelineText().catch((error) => showLog(error.message)));
+    $("startSafePipeline").addEventListener("click", () => startSafePipeline().catch((error) => showLog(error.message)));
+    $("refreshSafePipeline").addEventListener("click", () => refreshSafePipeline().catch((error) => showLog(error.message)));
     $("verifyAccess").addEventListener("click", () => verifyAccess().catch((error) => showLog(error.message)));
     $("createProject").addEventListener("click", () => createProject().catch((error) => showLog(error.message)));
     $("importTxt").addEventListener("click", () => importTxt().catch((error) => showLog(error.message)));

@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from pydantic import AliasChoices, Field, SecretStr
+from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -43,6 +43,15 @@ class Settings(BaseSettings):
         validation_alias="LLM_TIMEOUT_SECONDS",
     )
     enable_real_llm: bool = Field(default=False, validation_alias="ENABLE_REAL_LLM")
+    comic_agent_env: str = Field(default="production", validation_alias="COMIC_AGENT_ENV")
+    fake_pipeline_demo: bool = Field(
+        default=False,
+        validation_alias="COMIC_AGENT_FAKE_PIPELINE_DEMO",
+    )
+    fake_pipeline_scenario: str = Field(
+        default="success",
+        validation_alias="COMIC_AGENT_FAKE_PIPELINE_SCENARIO",
+    )
     llm_provider_name: str = Field(
         default="ustc-openai-compatible",
         validation_alias="LLM_PROVIDER_NAME",
@@ -73,6 +82,20 @@ class Settings(BaseSettings):
         default=20000,
         validation_alias="INTERNAL_DEMO_MAX_IMPORT_CHARS",
     )
+
+    @model_validator(mode="after")
+    def validate_fake_pipeline_demo(self) -> "Settings":
+        """Keep the deterministic demo provider unavailable in production or real-LLM mode."""
+
+        if not self.fake_pipeline_demo:
+            return self
+        if self.comic_agent_env not in {"development", "test"}:
+            raise ValueError("COMIC_AGENT_FAKE_PIPELINE_DEMO requires development or test")
+        if self.enable_real_llm:
+            raise ValueError("COMIC_AGENT_FAKE_PIPELINE_DEMO cannot enable real LLM")
+        if self.fake_pipeline_scenario not in {"success", "recover_gate2", "recover_gate3"}:
+            raise ValueError("COMIC_AGENT_FAKE_PIPELINE_SCENARIO is not supported")
+        return self
 
 
 @lru_cache

@@ -11,6 +11,7 @@ from comic_agent.repositories.narrative_analysis_recovery_repository import (
 )
 from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
 from comic_agent.repositories.source_repository import SourceRepository
+from comic_agent.schemas.timeline import TimelineGate3RunStatus
 from comic_agent.schemas.workflow import (
     AgentRunStatus,
     NarrativeAnalysisProposalSourceV1,
@@ -66,6 +67,7 @@ class NarrativeAnalysisWorker:
         recovery_repository: NarrativeAnalysisRecoveryRepository | None = None,
         provider: LLMProvider | None = None,
         timeline_coordinator: NarrativeTimelineCoordinator | None = None,
+        allow_fake_provider: bool = False,
     ) -> None:
         self._settings = settings
         self._source_repository = source_repository
@@ -74,6 +76,7 @@ class NarrativeAnalysisWorker:
         self._recovery_repository = recovery_repository
         self._provider = provider
         self._timeline_coordinator = timeline_coordinator
+        self._allow_fake_provider = allow_fake_provider
 
     def run_pending(
         self,
@@ -167,6 +170,7 @@ class NarrativeAnalysisWorker:
                 output_recovery=self._output_recovery(running),
                 output_recovery_rule_codes=self._output_recovery_rule_codes(running),
                 real_llm_requested=real_llm_requested,
+                allow_fake_provider=self._allow_fake_provider,
             )
             agent_run_id = result.agent_run.agent_run_id if result.agent_run is not None else None
             failed = (
@@ -382,6 +386,7 @@ class NarrativeAnalysisWorker:
                         max_chars_per_chunk=directive.max_chars_per_chunk,
                         execution_nonce=attempt_id,
                         real_llm_requested=real_llm_requested,
+                        allow_fake_provider=self._allow_fake_provider,
                     )
                     return result.agent_run
 
@@ -440,7 +445,17 @@ class NarrativeAnalysisWorker:
             for chunk in self._source_repository.list_document_chunks(run.document_id)
             if chunk.chunk_id in selected_ids
         ]
-        self._timeline_coordinator.run_if_approved(route=route, source_chunks=source_chunks)
+        timeline_run = self._timeline_coordinator.run_if_approved(
+            route=route,
+            source_chunks=source_chunks,
+        )
+        if timeline_run is not None and timeline_run.status == TimelineGate3RunStatus.REJECTED:
+            # Gate 3 itself decides whether every recorded issue is recoverable and
+            # atomically consumes its single persisted retry budget.
+            self._timeline_coordinator.recover(
+                timeline_run_id=timeline_run.timeline_run_id,
+                source_chunks=source_chunks,
+            )
 
     def _run_recovery_timelines(self, root_analysis_run_id: str) -> None:
         """Send only fresh Stage B-approved bundles to Timeline; retain the root rejection."""
