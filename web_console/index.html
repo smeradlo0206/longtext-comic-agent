@@ -646,6 +646,10 @@
             <button id="startSafePipeline" class="primary">开始安全分析</button>
             <button id="refreshSafePipeline">刷新状态</button>
           </div>
+          <div class="row" aria-live="polite">
+            <span id="safePipelineRunBadge" class="pill warn">尚未开始</span>
+            <span id="safePipelineRunMessage" class="muted">选择 TXT 后开始；真实 LLM 需要显式勾选。</span>
+          </div>
           <pre id="safePipelineStatus">{"state":"NOT_STARTED"}</pre>
         </div>
       </section>
@@ -1034,7 +1038,8 @@
       knowledgeEvaluationRunInProgress: false,
       safePipelineFile: null,
       safePipelineRunId: null,
-      safePipelinePoll: null
+      safePipelinePoll: null,
+      safePipelineSubmitting: false
     };
 
     const $ = (id) => document.getElementById(id);
@@ -1097,6 +1102,7 @@
     }
 
     function renderSafePipelineStatus(data) {
+      renderSafePipelineRunState(data);
       $("safePipelineStatus").textContent = pretty({
         import_and_gate1: data.gate1 ?? data.pipeline_status ?? "PENDING",
         narrative: data.narrative ?? "PENDING",
@@ -1114,6 +1120,35 @@
       });
     }
 
+    function setSafePipelineRunState(label, message, tone = "warn") {
+      $("safePipelineRunBadge").textContent = label;
+      $("safePipelineRunBadge").className = tone === "bad" ? "pill bad" : tone === "ok" ? "pill" : "pill warn";
+      $("safePipelineRunMessage").textContent = message;
+    }
+
+    function renderSafePipelineRunState(data) {
+      if (data.gate3 === "APPROVED") {
+        setSafePipelineRunState("已成功", "Gate 3 已批准；已生成可供下游使用的时间线包。", "ok");
+      } else if (["REJECTED", "NEEDS_HUMAN_REVIEW", "FAILED"].includes(data.gate2)) {
+        setSafePipelineRunState("已停止", `Gate 2 为 ${data.gate2}；Timeline 没有运行。`, data.gate2 === "NEEDS_HUMAN_REVIEW" ? "warn" : "bad");
+      } else if (["REJECTED", "NEEDS_HUMAN_REVIEW", "FAILED"].includes(data.gate3)) {
+        setSafePipelineRunState("已停止", `Gate 3 为 ${data.gate3}；不会进入下游。`, data.gate3 === "NEEDS_HUMAN_REVIEW" ? "warn" : "bad");
+      } else if (data.narrative === "FAILED" || data.narrative === "PARTIAL_FAILED") {
+        setSafePipelineRunState("分析失败", `Narrative 状态为 ${data.narrative}；请查看安全 issue code。`, "bad");
+      } else {
+        setSafePipelineRunState("处理中", "已接收请求，正在执行 Gate 1、Narrative、Gate 2、Timeline 与 Gate 3。", "warn");
+      }
+    }
+
+    function describeSafePipelineStartError(error) {
+      if (error.status === 409) return "真实 LLM 启动前检查未通过：确认服务器已启用真实 LLM、关闭 Fake Mode，并配置本地 Key。";
+      if (error.status === 422 && error.payload?.gate1) return "Gate 1 拒绝了导入文本；请查看 Gate 1 审核结果。";
+      if (error.status === 413) return "TXT 超过当前导入上限，尚未创建分析任务。";
+      if (error.status === 415) return "只允许上传 UTF-8 TXT 文件。";
+      if (error.status === 400) return "导入文本未通过基础校验，尚未创建分析任务。";
+      return `启动请求失败（${error.status ?? "网络"}）。请查看服务端终端的同一时刻日志。`;
+    }
+
     async function useOfficialSafePipelineText() {
       const response = await fetch(`${window.location.origin}/console/official_safe_pipeline_demo.txt`);
       if (!response.ok) throw new Error("无法加载官方示例文本");
@@ -1123,41 +1158,64 @@
         {type: "text/plain;charset=utf-8"}
       );
       $("safePipelineStatus").textContent = pretty({state: "SAMPLE_READY"});
+      setSafePipelineRunState("样例已就绪", "官方示例文本已准备；点击“开始安全分析”提交。", "ok");
     }
 
     async function refreshSafePipeline() {
       if (!state.safePipelineRunId) return;
-      const data = await request(`/pipeline-runs/${encodeURIComponent(state.safePipelineRunId)}`);
-      renderSafePipelineStatus(data);
-      const terminal = ["APPROVED", "REJECTED", "NEEDS_HUMAN_REVIEW", "FAILED"];
-      const stoppedAtGate2 = ["REJECTED", "NEEDS_HUMAN_REVIEW", "FAILED"].includes(data.gate2);
-      if (terminal.includes(data.gate3) || stoppedAtGate2) {
-        clearInterval(state.safePipelinePoll);
-        state.safePipelinePoll = null;
+      try {
+        const data = await request(`/pipeline-runs/${encodeURIComponent(state.safePipelineRunId)}`);
+        renderSafePipelineStatus(data);
+        const terminal = ["APPROVED", "REJECTED", "NEEDS_HUMAN_REVIEW", "FAILED"];
+        const stoppedAtGate2 = ["REJECTED", "NEEDS_HUMAN_REVIEW", "FAILED"].includes(data.gate2);
+        if (terminal.includes(data.gate3) || stoppedAtGate2) {
+          clearInterval(state.safePipelinePoll);
+          state.safePipelinePoll = null;
+        }
+      } catch (error) {
+        setSafePipelineRunState("状态读取失败", "无法读取持久化进度；请查看服务端终端日志。", "bad");
+        throw error;
       }
     }
 
     async function startSafePipeline() {
       const selected = $("safePipelineFile").files[0] || state.safePipelineFile;
       if (!selected) throw new Error("请选择 TXT 文件或使用官方示例文本");
+      if (state.safePipelineSubmitting) return;
       const realLlmRequested = $("safePipelineRealLlmRequested").checked;
-      if (realLlmRequested) await ensureSafePipelineRealLlmEnabled();
-      const body = new FormData();
-      body.append("file", selected);
-      const name = $("safePipelineProjectName").value.trim();
-      if (name) body.append("project_name", name);
-      body.append("real_llm_requested", String(realLlmRequested));
-      const data = await request(
-        `/projects/${encodeURIComponent(safePipelineProjectId())}/pipeline-runs/import-and-analyze`,
-        {method: "POST", body}
-      );
-      state.safePipelineRunId = data.analysis_run_id;
-      renderSafePipelineStatus(data);
-      clearInterval(state.safePipelinePoll);
-      state.safePipelinePoll = setInterval(() => {
-        refreshSafePipeline().catch((error) => showLog(error.message));
-      }, 1000);
-      await refreshSafePipeline();
+      state.safePipelineSubmitting = true;
+      $("startSafePipeline").disabled = true;
+      setSafePipelineRunState("正在提交", realLlmRequested ? "正在验证真实 LLM 配置并提交文本。" : "正在提交文本。", "warn");
+      try {
+        if (realLlmRequested) await ensureSafePipelineRealLlmEnabled();
+        const body = new FormData();
+        body.append("file", selected);
+        const name = $("safePipelineProjectName").value.trim();
+        if (name) body.append("project_name", name);
+        body.append("real_llm_requested", String(realLlmRequested));
+        const data = await request(
+          `/projects/${encodeURIComponent(safePipelineProjectId())}/pipeline-runs/import-and-analyze`,
+          {method: "POST", body}
+        );
+        state.safePipelineRunId = data.analysis_run_id;
+        renderSafePipelineStatus(data);
+        clearInterval(state.safePipelinePoll);
+        state.safePipelinePoll = setInterval(() => {
+          refreshSafePipeline().catch((error) => showLog(error.message));
+        }, 1000);
+        await refreshSafePipeline();
+      } catch (error) {
+        setSafePipelineRunState("启动失败", describeSafePipelineStartError(error), "bad");
+        $("safePipelineStatus").textContent = pretty({
+          state: "START_FAILED",
+          http_status: error.status ?? null,
+          detail: describeSafePipelineStartError(error)
+        });
+        throw error;
+      } finally {
+        state.safePipelineSubmitting = false;
+        $("startSafePipeline").disabled = false;
+      }
     }
 
     function showLog(message) {
