@@ -21,6 +21,7 @@ from comic_agent.repositories.narrative_analysis_recovery_repository import (
 )
 from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
 from comic_agent.repositories.source_repository import SourceRepository
+from comic_agent.repositories.timeline_gate3_repository import TimelineGate3Repository
 from comic_agent.schemas.base import RealityLayer
 from comic_agent.schemas.narrative import EventProposalBatchV1
 from comic_agent.schemas.source import SourceChunkV1
@@ -33,6 +34,7 @@ from comic_agent.schemas.workflow import (
 from comic_agent.services.id_service import checksum_text, stable_id
 from comic_agent.services.narrative_analysis_coordinator import NarrativeAnalysisCoordinator
 from comic_agent.services.narrative_analysis_worker import NarrativeAnalysisWorker
+from comic_agent.services.narrative_timeline_coordinator import NarrativeTimelineCoordinator
 from comic_agent.workflows.mock_event_workflow import MockEventWorkflow
 from comic_agent.workflows.narrative_analyst_workflow import NarrativeAnalystWorkflow
 from comic_agent.workflows.real_event_workflow import RealEventWorkflow
@@ -427,6 +429,11 @@ def _run_whole_document_analysis(
             analysis_repository=NarrativeAnalysisRepository(session),
             recovery_repository=NarrativeAnalysisRecoveryRepository(session),
             provider=getattr(app_state, "narrative_analyst_provider", None),
+            timeline_coordinator=NarrativeTimelineCoordinator(
+                repository=TimelineGate3Repository(session),
+                timeline_runner=getattr(app_state, "timeline_runner", app_state.timeline_agent),
+                agent_run_repository=AgentRunRepository(session),
+            ),
         )
         worker.run_pending(analysis_run_id, real_llm_requested=real_llm_requested)
     finally:
