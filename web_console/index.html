@@ -634,6 +634,10 @@
             <label>TXT 文件
               <input id="safePipelineFile" type="file" accept=".txt,text/plain" />
             </label>
+            <label class="checkline">
+              <input id="safePipelineRealLlmRequested" type="checkbox" />
+              使用真实 LLM（会消耗额度；默认不调用真实模型）
+            </label>
           </div>
           <div class="row">
             <button id="useOfficialSafePipelineText">使用官方示例文本</button>
@@ -1134,10 +1138,13 @@
     async function startSafePipeline() {
       const selected = $("safePipelineFile").files[0] || state.safePipelineFile;
       if (!selected) throw new Error("请选择 TXT 文件或使用官方示例文本");
+      const realLlmRequested = $("safePipelineRealLlmRequested").checked;
+      if (realLlmRequested) await ensureSafePipelineRealLlmEnabled();
       const body = new FormData();
       body.append("file", selected);
       const name = $("safePipelineProjectName").value.trim();
       if (name) body.append("project_name", name);
+      body.append("real_llm_requested", String(realLlmRequested));
       const data = await request(
         `/projects/${encodeURIComponent(safePipelineProjectId())}/pipeline-runs/import-and-analyze`,
         {method: "POST", body}
@@ -1432,6 +1439,15 @@
       if (llmStatus.enable_real_llm !== true) {
         throw new Error(
           "Real LLM is disabled by server settings. Restart the API with ENABLE_REAL_LLM=true."
+        );
+      }
+    }
+
+    async function ensureSafePipelineRealLlmEnabled() {
+      const llmStatus = await request("/settings/llm/status");
+      if (llmStatus.real_pipeline_opt_in_available !== true) {
+        throw new Error(
+          "真实 LLM 尚未就绪：请关闭 Fake 演示模式，并确认服务端已启用 ENABLE_REAL_LLM=true 且配置了本地 API Key。"
         );
       }
     }

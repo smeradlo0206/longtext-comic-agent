@@ -14,7 +14,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse
 
-from comic_agent.api.agent_runs import _run_whole_document_analysis
+from comic_agent.api.agent_runs import _require_real_llm_enabled, _run_whole_document_analysis
 from comic_agent.api.dependencies import (
     get_narrative_analysis_recovery_repository,
     get_narrative_analysis_repository,
@@ -22,6 +22,7 @@ from comic_agent.api.dependencies import (
     get_timeline_gate3_repository,
 )
 from comic_agent.api.documents import import_document
+from comic_agent.config import get_settings
 from comic_agent.repositories.narrative_analysis_recovery_repository import (
     NarrativeAnalysisRecoveryRepository,
 )
@@ -57,9 +58,11 @@ async def import_and_analyze(
     repository: RepositoryDep,
     analysis_repository: AnalysisRepositoryDep,
     project_name: Annotated[str | None, Form()] = None,
+    real_llm_requested: Annotated[bool, Form()] = False,
 ) -> dict[str, object] | JSONResponse:
     """Import once, then schedule the established Gate 1 -> Narrative worker path."""
 
+    _require_real_pipeline_opt_in(real_llm_requested)
     _ensure_project(repository, project_id, project_name)
     imported = await import_document(project_id=project_id, file=file, repository=repository)
     if isinstance(imported, JSONResponse):
@@ -76,7 +79,7 @@ async def import_and_analyze(
             document_id=document["document_id"],
             chapter_ids=None,
             modes=_SAFE_NARRATIVE_MODES,
-            real_llm_requested=False,
+            real_llm_requested=real_llm_requested,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -85,7 +88,7 @@ async def import_and_analyze(
         request.app.state.session_factory,
         request.app.state,
         run.analysis_run_id,
-        False,
+        real_llm_requested,
     )
     return {
         "project_id": project_id,
@@ -93,6 +96,7 @@ async def import_and_analyze(
         "analysis_run_id": run.analysis_run_id,
         "pipeline_status": "NARRATIVE_QUEUED",
         "status_url": f"/pipeline-runs/{run.analysis_run_id}",
+        "real_llm_requested": real_llm_requested,
     }
 
 
@@ -187,6 +191,26 @@ def _ensure_project(repository: SourceRepository, project_id: str, name: str | N
             budget_limit=None,
         )
     )
+
+
+def _require_real_pipeline_opt_in(real_llm_requested: bool) -> None:
+    """Reject unsafe real-provider requests before importing or scheduling work."""
+
+    if not real_llm_requested:
+        return
+    settings = get_settings()
+    _require_real_llm_enabled(True, settings)
+    if settings.fake_pipeline_demo:
+        raise HTTPException(
+            status_code=409,
+            detail="Real LLM cannot run while the local Fake pipeline demo is enabled",
+        )
+    api_key = settings.llm_api_key.get_secret_value() if settings.llm_api_key else ""
+    if not api_key:
+        raise HTTPException(
+            status_code=409,
+            detail="Real LLM requires a configured local API key",
+        )
 
 
 def _recovery_status(attempts: list[Any]) -> str:

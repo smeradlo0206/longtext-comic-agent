@@ -1,11 +1,15 @@
 """HTTP acceptance coverage for the development-only one-click safe pipeline."""
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from comic_agent.agents.timeline_agent import TimelineAgent
 from comic_agent.config import Settings, get_settings
 from comic_agent.main import create_app
+from comic_agent.providers.mocks import LocalSafeDemoProvider
 
 _OFFICIAL_TEXT = """下午四点，小林先到学校礼堂，在公告栏张贴志愿者招募海报。
 十分钟后，天下起雨；小周撑着一把蓝色雨伞赶到礼堂。
@@ -30,6 +34,23 @@ def _client(tmp_path, monkeypatch, *, scenario: str = "success") -> TestClient: 
     return TestClient(create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'pipeline.db'}"))
 
 
+def _real_llm_client(tmp_path, monkeypatch) -> TestClient:  # type: ignore[no-untyped-def]
+    """Exercise the real-request route with injected, network-free providers."""
+
+    monkeypatch.setenv("COMIC_AGENT_ENV", "development")
+    monkeypatch.setenv("COMIC_AGENT_FAKE_PIPELINE_DEMO", "false")
+    monkeypatch.setenv("ENABLE_REAL_LLM", "true")
+    monkeypatch.setenv("LLM_API_KEY", "test-local-key")
+    monkeypatch.setenv("INTERNAL_DEMO_REQUIRE_ACCESS_CODE", "false")
+    get_settings.cache_clear()
+    app = create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'real-pipeline.db'}")
+    app.state.narrative_analyst_provider = LocalSafeDemoProvider()
+    app.state.timeline_agent = TimelineAgent(
+        LocalSafeDemoProvider(), provider_model="test-real-llm-provider"
+    )
+    return TestClient(app)
+
+
 def test_one_click_pipeline_imports_and_reaches_gate3_approved(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     client = _client(tmp_path, monkeypatch)
 
@@ -45,7 +66,8 @@ def test_one_click_pipeline_imports_and_reaches_gate3_approved(tmp_path, monkeyp
     assert 'id="safePipeline"' in console.text
     assert "window.location.origin" in console.text
     assert fixture.status_code == 200
-    assert fixture.text.strip() == _OFFICIAL_TEXT
+    assert fixture.headers["content-type"].startswith("text/plain")
+    assert fixture.content == Path("web_console/official_safe_pipeline_demo.txt").read_bytes()
     assert started.status_code == 200
     run_id = started.json()["analysis_run_id"]
     status = client.get(f"/pipeline-runs/{run_id}")
@@ -69,6 +91,51 @@ def test_one_click_pipeline_imports_and_reaches_gate3_approved(tmp_path, monkeyp
     assert approved.status_code == 200
     assert approved.json()["source_approved_proposal_bundle_id"] == source_bundle_id
     assert "quote_text" not in approved.text
+
+
+def test_one_click_pipeline_only_uses_real_provider_after_explicit_opt_in(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    client = _real_llm_client(tmp_path, monkeypatch)
+    narrative_provider = client.app.state.narrative_analyst_provider
+
+    status = client.get("/settings/llm/status")
+    started = client.post(
+        "/projects/real-opt-in/pipeline-runs/import-and-analyze",
+        data={"real_llm_requested": "true"},
+        files={"file": ("official.txt", _OFFICIAL_TEXT.encode("utf-8"), "text/plain")},
+    )
+
+    assert status.status_code == 200
+    assert status.json()["real_pipeline_opt_in_available"] is True
+    assert "test-local-key" not in status.text
+    assert started.status_code == 200
+    assert started.json()["real_llm_requested"] is True
+    assert narrative_provider.calls == 1
+    run_id = started.json()["analysis_run_id"]
+    assert client.get(f"/pipeline-runs/{run_id}").json()["gate3"] == "APPROVED"
+
+
+def test_one_click_real_llm_opt_in_requires_a_local_key_before_import(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("COMIC_AGENT_ENV", "development")
+    monkeypatch.setenv("COMIC_AGENT_FAKE_PIPELINE_DEMO", "false")
+    monkeypatch.setenv("ENABLE_REAL_LLM", "true")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    get_settings.cache_clear()
+    client = TestClient(create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'no-key.db'}"))
+
+    response = client.post(
+        "/projects/no-key/pipeline-runs/import-and-analyze",
+        data={"real_llm_requested": "true"},
+        files={"file": ("official.txt", _OFFICIAL_TEXT.encode("utf-8"), "text/plain")},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Real LLM requires a configured local API key"
+    assert client.get("/projects/no-key/documents").json() == []
 
 
 def test_gate1_rejection_stops_one_click_pipeline_before_narrative(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

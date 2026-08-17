@@ -338,6 +338,30 @@ Narrative Analyst. Omitted modes default to all six implemented extraction modes
 the coordinator computes the exact approved chunk intersection server-side. Rejected or
 human-review imports cannot start analysis; this flow remains proposal-only.
 
+## One-click local real-LLM pilot
+
+The local Console's **一键安全分析** card never requests a real provider unless
+the checkbox is selected. A deterministic Fake pipeline remains available only
+when the local server is explicitly configured for it. To make a small,
+explicit real-provider pilot, first stop the server and configure the local
+environment only:
+
+```powershell
+$env:COMIC_AGENT_ENV = 'development'
+$env:COMIC_AGENT_FAKE_PIPELINE_DEMO = 'false'
+$env:ENABLE_REAL_LLM = 'true'
+$env:LLM_API_KEY = 'your-local-key'
+uv run uvicorn comic_agent.main:app --host 127.0.0.1 --port 8080
+```
+
+Open `http://127.0.0.1:8080/console/`, select a short authorized TXT, check
+**使用真实 LLM**, then click **开始安全分析**. The browser never sends or displays
+the API key. The server rejects a real request before import if real LLM is
+disabled, Fake mode remains enabled, or no local key is configured. The same
+Gate 1 → Narrative → Gate 2 → Timeline → Gate 3 and recovery boundaries apply;
+this entry never writes StoryBible or calls image providers. Start with a short
+text and inspect only the source-free status/result APIs.
+
 ## Future Review Gate 1 source-quality boundary
 
 After TXT import and chunking, a future worker may build `ReviewGate1InputV1` from the parsed

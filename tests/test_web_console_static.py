@@ -215,6 +215,7 @@ def test_web_console_exposes_whole_document_analysis_as_the_normal_flow() -> Non
     assert 'id="safePipeline"' in html
     assert 'id="safePipelineProjectName"' in html
     assert 'id="safePipelineFile"' in html
+    assert 'id="safePipelineRealLlmRequested"' in html
     assert 'id="useOfficialSafePipelineText"' in html
     assert 'id="startSafePipeline"' in html
     assert 'id="refreshSafePipeline"' in html
@@ -222,6 +223,8 @@ def test_web_console_exposes_whole_document_analysis_as_the_normal_flow() -> Non
     assert 'id="advancedDevelopmentDiagnostics"' in html
     assert 'id="advancedDevelopmentDiagnostics" open' not in html
     assert "/pipeline-runs/import-and-analyze" in html
+    assert "ensureSafePipelineRealLlmEnabled" in html
+    assert 'body.append("real_llm_requested", String(realLlmRequested))' in html
     assert "const stoppedAtGate2" in html
     assert 'id="analysisDocumentId"' in html
     assert 'id="loadAnalysisDocuments"' in html
