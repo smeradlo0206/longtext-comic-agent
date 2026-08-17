@@ -7,7 +7,17 @@ from comic_agent.agents.timeline_agent import TimelineAgent
 from comic_agent.database.models import SourceChunkModel
 from comic_agent.main import create_app
 from comic_agent.providers.mocks import MockLLMProvider, MockMode
+from comic_agent.repositories.timeline_gate3_repository import TimelineGate3Repository
+from comic_agent.schemas.base import EvidenceRefV1, RealityLayer
+from comic_agent.schemas.narrative import EventProposalV1
 from comic_agent.schemas.source import SourceChunkV1
+from comic_agent.schemas.timeline import (
+    TimelineAnalysisInputV1,
+    TimelineAnalysisProposalV1,
+    TimelineGate3RunStatus,
+    TimelineGate3RunV1,
+)
+from comic_agent.services.review_gate3_service import ReviewGate3Service
 
 
 def seed_chunk(
@@ -276,3 +286,83 @@ def test_timeline_api_rejects_missing_input_evidence_chunk(tmp_path) -> None:  #
         result = client.post("/projects/project-a/timeline/analyze", json=payload)
 
     assert result.status_code == 409
+
+
+def test_gate3_read_only_api_exposes_only_fresh_approved_bundle(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    app = create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'timeline-gate3.db'}")
+    evidence = EvidenceRefV1(chunk_id="chunk-a", quote_text="bell rings")
+    event = EventProposalV1(
+        proposal_id="event-1",
+        event_type="BELL",
+        summary="The bell rings.",
+        participant_ids=[],
+        location_id=None,
+        evidence_refs=[evidence],
+        confidence=0.9,
+        reality_layer=RealityLayer.PRIMARY,
+    )
+    timeline_input = TimelineAnalysisInputV1(
+        schema_version="1.3",
+        project_id="project-a",
+        source_approved_bundle_id="gate2-bundle-1",
+        source_review_run_id="gate2-review-1",
+        event_proposals=[event],
+    )
+    proposal = TimelineAnalysisProposalV1(
+        proposal_id="timeline-proposal-1",
+        project_id="project-a",
+        temporal_relations=[],
+        conflicts=[],
+        duplicate_candidates=[],
+        evidence_refs=[evidence],
+        confidence=0.9,
+    )
+    result, route = ReviewGate3Service().review(
+        project_id="project-a",
+        source_approved_proposal_bundle_id="gate2-bundle-1",
+        timeline_run_id="timeline-run-1",
+        reviewer_agent_run_id="gate3-agent-run-1",
+        event_ids=["event-1"],
+        temporal_relations=[],
+        evidence_refs=[evidence],
+        source_gate2_review_id="gate2-review-1",
+        source_gate2_route_id="analysis-1",
+    )
+    session: Session = app.state.session_factory()
+    try:
+        TimelineGate3Repository(session).reserve_run(
+            TimelineGate3RunV1(
+                timeline_run_id="timeline-run-1",
+                project_id="project-a",
+                source_approved_proposal_bundle_id="gate2-bundle-1",
+                source_gate2_review_id="gate2-review-1",
+                source_gate2_route_id="analysis-1",
+                idempotency_key="timeline-gate3-key-1",
+                status=TimelineGate3RunStatus.APPROVED,
+                timeline_input=timeline_input,
+                timeline_proposal=proposal,
+                timeline_agent_run_id="timeline-agent-run-1",
+                gate3_result=result,
+                gate3_route=route,
+                approved_timeline_bundle=route.approved_timeline_bundle,
+                provider_request_count=1,
+            )
+        )
+    finally:
+        session.close()
+
+    with TestClient(app) as client:
+        summary = client.get("/projects/project-a/timeline-gate3/gate2-bundle-1")
+        review = client.get("/projects/project-a/timeline-gate3/gate2-bundle-1/review")
+        bundle = client.get("/projects/project-a/timeline-gate3/gate2-bundle-1/approved-bundle")
+        absent = client.get("/projects/project-a/timeline-gate3/missing/approved-bundle")
+
+    assert summary.status_code == 200
+    assert summary.json()["gate3_route"] == "APPROVED"
+    assert review.status_code == 200
+    assert review.json()["route"]["approved_timeline_bundle_id"]
+    assert "quote_text" not in str(review.json())
+    assert bundle.status_code == 200
+    assert bundle.json()["bundle_id"] == route.approved_timeline_bundle_id
+    assert "quote_text" not in str(bundle.json())
+    assert absent.status_code == 409

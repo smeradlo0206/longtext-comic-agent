@@ -776,6 +776,10 @@
                 <pre id="wholeDocumentGate2">{"state":"NOT_READY"}</pre>
               </div>
               <div>
+                <h3>Timeline / Review Gate 3 (read-only)</h3>
+                <pre id="wholeDocumentTimelineGate3">{"state":"NOT_READY"}</pre>
+              </div>
+              <div>
                 <h3>Automatic Recovery (read-only)</h3>
                 <pre id="wholeDocumentRecovery">{"state":"NOT_STARTED"}</pre>
               </div>
@@ -1270,6 +1274,26 @@
         $("wholeDocumentRecovery").textContent = pretty(recovery);
       } catch (error) {
         $("wholeDocumentRecovery").textContent = pretty({ state: "NOT_STARTED" });
+      }
+      const bundleId = audit?.route?.approved_proposal_bundle?.bundle_id;
+      if (!bundleId) {
+        $("wholeDocumentTimelineGate3").textContent = pretty({ state: "NOT_READY" });
+        return;
+      }
+      try {
+        const gate3 = await request(
+          `/projects/${encodeURIComponent(audit.route.approved_proposal_bundle.project_id)}`
+          + `/timeline-gate3/${encodeURIComponent(bundleId)}`
+        );
+        $("wholeDocumentTimelineGate3").textContent = pretty({
+          timeline_status: gate3.timeline_status,
+          gate3_ready: gate3.gate3_ready,
+          gate3_route: gate3.gate3_route,
+          gate3_issue_count: gate3.gate3_issue_count,
+          gate3_safe_issue_codes: gate3.gate3_safe_issue_codes
+        });
+      } catch (error) {
+        $("wholeDocumentTimelineGate3").textContent = pretty({ state: "NOT_READY" });
       }
     }
 

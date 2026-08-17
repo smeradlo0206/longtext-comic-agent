@@ -296,6 +296,15 @@ def test_web_console_exposes_readonly_recovery_summary_without_actions() -> None
     assert "forceRecovery" not in html
 
 
+def test_web_console_exposes_readonly_timeline_gate3_summary() -> None:
+    html = Path("web_console/index.html").read_text(encoding="utf-8")
+
+    assert 'id="wholeDocumentTimelineGate3"' in html
+    assert "/timeline-gate3/" in html
+    assert "runTimelineGate3" not in html
+    assert "forceTimelineGate3" not in html
+
+
 def test_web_console_exposes_a_separate_offline_knowledge_state_evaluation_area() -> None:
     html = Path("web_console/index.html").read_text(encoding="utf-8")
 
