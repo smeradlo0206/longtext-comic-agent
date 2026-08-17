@@ -1,5 +1,17 @@
 # Schema Contracts
 
+## Local Asset Manifest Contract v1.0
+
+`AssetManifestV1` records a locally reviewed public-reference candidate, not a
+StoryBible entity, prompt input, or generated image. It carries source, license,
+attribution, controlled pose/expression/era/composition tags, portable relative
+paths, checksum, local byte count, and a human review state. It rejects undeclared
+fields and unsafe/absolute/traversal paths; it intentionally has no credential,
+cookie, login, raw API response, or screenshot field. CC0/PDM, CC BY, reference-only,
+and rejected license states remain explicit. Schema v1.0 is new and introduces no
+database migration because manifests are mutable local JSON under the ignored asset
+library root.
+
 All V1 schemas use `schema_version = "1.0"` and live in `comic_agent/schemas`.
 
 | Schema | Purpose | Required Fields | Evidence | Readers | Proposal Producer | Canonical Commit |

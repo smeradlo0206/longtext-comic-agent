@@ -1,5 +1,12 @@
 """Public schema exports."""
 
+from comic_agent.schemas.assets import (
+    AssetManifestV1,
+    AssetType,
+    ReviewStatus,
+    RightsStatus,
+    UseMode,
+)
 from comic_agent.schemas.base import EvidenceRefV1, RealityLayer, RecordStatus
 from comic_agent.schemas.continuity import CharacterStateV1
 from comic_agent.schemas.evaluation import (
@@ -197,6 +204,8 @@ from comic_agent.schemas.workflow import (
 )
 
 __all__ = [
+    "AssetManifestV1",
+    "AssetType",
     "ActorResolutionStatus",
     "CampusAudience",
     "CampusComicTone",
@@ -283,8 +292,10 @@ __all__ = [
     "ProviderType",
     "QAResultV1",
     "RecordStatus",
+    "ReviewStatus",
     "RealityLayer",
     "RepairPlanV1",
+    "RightsStatus",
     "RelationshipUpdateProposalV1",
     "RecoveryAttemptStatus",
     "RecoveryAttemptV1",
@@ -379,5 +390,6 @@ __all__ = [
     "WorldRuleUpdateProposalV1",
     "WorldRuleV1",
     "VerificationStatus",
+    "UseMode",
     "WorkflowRunV1",
 ]

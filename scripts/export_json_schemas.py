@@ -16,6 +16,7 @@ from comic_agent.schemas import (
     AggregatedStateChangeProposalV1,
     ApprovedProposalBundleV1,
     ApprovedSourceChunkBundleV1,
+    AssetManifestV1,
     CampusContentProfileProposalV1,
     CharacterStateV1,
     ClaimProposalBatchV1,
@@ -117,6 +118,7 @@ from comic_agent.schemas import (
 )
 
 SCHEMAS: list[type[BaseModel]] = [
+    AssetManifestV1,
     AgentRunV1,
     EvidenceRefV1,
     ProjectSpecV1,
