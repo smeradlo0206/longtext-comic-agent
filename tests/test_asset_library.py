@@ -19,8 +19,6 @@ from comic_agent.services.asset_library import (
     AssetIntakeError,
     AssetLibraryPaths,
     AssetLibraryService,
-    ControlledQuery,
-    WikimediaCommonsSource,
     classify_license,
 )
 
@@ -72,6 +70,7 @@ def manifest(**overrides: object) -> AssetManifestV1:
             "standing",
             "modern",
             "single_person",
+            "style:manga_line_art",
             "source:wikimedia_commons",
             "license:cc0_1_0",
         ],
@@ -122,105 +121,25 @@ def test_manifest_requires_controlled_tag_dimensions() -> None:
         manifest(tags=["standing", "single_person", "source:x", "license:cc0"])
 
 
-def test_discovery_uses_only_metadata_and_rejects_missing_license_details() -> None:
-    api_url = "https://commons.wikimedia.org/w/api.php"
-    page = {
-        "title": "File:Pose.jpg",
-        "imageinfo": [
-            {
-                "mime": "image/jpeg",
-                "url": "https://upload.wikimedia.org/example/pose.jpg",
-                "size": 123,
-                "extmetadata": {
-                    "LicenseShortName": {"value": "CC0 1.0"},
-                    "LicenseUrl": {"value": "https://creativecommons.org/publicdomain/zero/1.0/"},
-                    "Artist": {"value": "<b>A creator</b>"},
-                },
-            }
-        ],
-    }
-    client = FakeClient(
-        {
-            api_url: httpx.Response(
-                200, json={"query": {"pages": {"1": page}}}, request=httpx.Request("GET", api_url)
-            )
-        }
-    )
-    query = ControlledQuery(
-        "pose", ("standing", "modern", "single_person"), AssetType.POSE_REFERENCE
-    )
-    records = WikimediaCommonsSource(client).discover(query, 1)
-    assert records[0].rights_status == RightsStatus.NEEDS_HUMAN_REVIEW
-    assert records[0].creator == "A creator"
-    invalid = {
-        **page,
-        "imageinfo": [
-            {**page["imageinfo"][0], "extmetadata": {"LicenseShortName": {"value": "CC0"}}}
-        ],
-    }
-    client = FakeClient(
-        {
-            api_url: httpx.Response(
-                200,
-                json={"query": {"pages": {"1": invalid}}},
-                request=httpx.Request("GET", api_url),
-            )
-        }
-    )
-    assert WikimediaCommonsSource(client).discover(query, 1) == []
+def test_anime_style_tag_is_required() -> None:
+    with pytest.raises(ValidationError, match="visual-style"):
+        manifest(tags=["standing", "modern", "single_person", "source:x", "license:cc0"])
 
 
-def test_discovery_bounds_long_official_metadata_before_manifest_storage() -> None:
-    api_url = "https://commons.wikimedia.org/w/api.php"
-    page = {
-        "title": "File:Pose.jpg",
-        "imageinfo": [
-            {
-                "mime": "image/jpeg",
-                "url": "https://upload.wikimedia.org/example/pose.jpg",
-                "size": 123,
-                "extmetadata": {
-                    "LicenseShortName": {"value": "CC0 1.0"},
-                    "LicenseUrl": {"value": "https://creativecommons.org/publicdomain/zero/1.0/"},
-                    "Artist": {"value": "A creator"},
-                    "ImageDescription": {"value": "x" * 1000},
-                },
-            }
-        ],
-    }
-    client = FakeClient(
-        {
-            api_url: httpx.Response(
-                200,
-                json={"query": {"pages": {"1": page}}},
-                request=httpx.Request("GET", api_url),
-            )
-        }
-    )
-    query = ControlledQuery(
-        "pose", ("standing", "modern", "single_person"), AssetType.POSE_REFERENCE
-    )
-    records = WikimediaCommonsSource(client).discover(query, 1)
-    assert records[0].title is not None and len(records[0].title) == 500
-
-
-def test_discovery_sanitizes_official_http_failure_without_persisting_response_details() -> None:
-    api_url = "https://commons.wikimedia.org/w/api.php"
-    client = FakeClient(
-        {
-            api_url: httpx.Response(
-                429,
-                content=b"rate-limit source response must not surface",
-                request=httpx.Request("GET", api_url),
-            )
-        }
-    )
-    query = ControlledQuery(
-        "pose", ("standing", "modern", "single_person"), AssetType.POSE_REFERENCE
-    )
-    with pytest.raises(AssetIntakeError, match="metadata request failed") as error:
-        WikimediaCommonsSource(client).discover(query, 1)
-    assert "rate-limit" not in str(error.value)
+def test_discover_builds_link_only_manga_catalog_without_http_or_binary_files(
+    tmp_path: Path,
+) -> None:
+    client = FakeClient({})
+    library = service(tmp_path, client)
+    records = library.discover(dry_run=False)
+    assert len(records) == 3
+    assert client.calls == []
+    assert all(record.use_mode == UseMode.REFERENCE_ONLY for record in records)
+    assert all(record.original_asset_url is None for record in records)
+    assert all("style:manga_line_art" in record.tags for record in records)
+    assert library.report()["total_files"] == 0
+    with pytest.raises(AssetIntakeError, match="no automatic image-download source"):
+        library.discover(source="wikimedia_commons")
 
 
 def test_download_blocks_unknown_host_redirect_mime_and_per_file_limit(tmp_path: Path) -> None:

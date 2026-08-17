@@ -4,11 +4,14 @@
 
 `AssetManifestV1` records a locally reviewed public-reference candidate, not a
 StoryBible entity, prompt input, or generated image. It carries source, license,
-attribution, controlled pose/expression/era/composition tags, portable relative
+attribution, controlled pose/expression/era/composition tags, a mandatory approved
+anime/manga visual-style tag, portable relative
 paths, checksum, local byte count, and a human review state. It rejects undeclared
 fields and unsafe/absolute/traversal paths; it intentionally has no credential,
 cookie, login, raw API response, or screenshot field. CC0/PDM, CC BY, reference-only,
-and rejected license states remain explicit. Schema v1.0 is new and introduces no
+and rejected license states remain explicit. Real-person photos, statues, and
+realistic portraits are not valid entries for this contract's anime/manga intake
+policy. Schema v1.0 is new and introduces no
 database migration because manifests are mutable local JSON under the ignored asset
 library root.
 

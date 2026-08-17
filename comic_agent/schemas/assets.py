@@ -63,6 +63,9 @@ _COMPOSITION_TAGS = frozenset(
         "group",
     }
 )
+_VISUAL_STYLE_TAGS = frozenset(
+    {"style:anime_2d", "style:manga_line_art", "style:chibi_2d", "style:anime_3d"}
+)
 _ACTION_OR_EXPRESSION_TAGS = frozenset(
     {
         "standing",
@@ -178,6 +181,8 @@ class AssetManifestV1(StrictBaseModel):
             raise ValueError("tags require one modern, ancient, or neutral era tag")
         if not tag_set & _COMPOSITION_TAGS:
             raise ValueError("tags require one composition tag")
+        if not tag_set & _VISUAL_STYLE_TAGS:
+            raise ValueError("tags require an approved anime or manga visual-style tag")
         if not tag_set & _ACTION_OR_EXPRESSION_TAGS:
             raise ValueError("tags require one controlled action or expression tag")
         if not any(tag.startswith("source:") for tag in tag_set):

@@ -27,7 +27,7 @@ def _parser() -> argparse.ArgumentParser:
     subcommands = parser.add_subparsers(dest="command", required=True)
     discover = subcommands.add_parser("discover", help="Discover official-API candidates")
     discover.add_argument("--limit", type=int, default=150)
-    discover.add_argument("--source", default="wikimedia_commons")
+    discover.add_argument("--source", default="reference_only_catalog")
     discover.add_argument("--tag", action="append", default=[])
     discover.add_argument(
         "--write", action="store_true", help="Persist manifests; default is dry-run"

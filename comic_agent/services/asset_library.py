@@ -46,48 +46,58 @@ class ControlledQuery:
     asset_type: AssetType
 
 
-CONTROLLED_QUERIES: tuple[ControlledQuery, ...] = (
-    ControlledQuery(
-        "human pose standing", ("standing", "modern", "single_person"), AssetType.POSE_REFERENCE
+CONTROLLED_QUERIES: tuple[ControlledQuery, ...] = ()
+"""No real-person/photo fallback is approved for anime/manga reference intake."""
+
+
+@dataclass(frozen=True)
+class ReferenceCatalogEntry:
+    """A manually reviewable manga-material source page; no binary is downloaded."""
+
+    source_site: str
+    source_page_url: str
+    creator: str
+    title: str
+    search_query: str
+    tags: tuple[str, ...]
+    note: str
+
+
+REFERENCE_ONLY_CATALOG: tuple[ReferenceCatalogEntry, ...] = (
+    ReferenceCatalogEntry(
+        source_site="BOOTH / illust-pose",
+        source_page_url="https://booth.pm/ja/items/3500935",
+        creator="illust-pose",
+        title="漫画用の女の子立ち姿ポーズ集（手动取得のみ）",
+        search_query="anime manga girl standing pose reference",
+        tags=("standing", "modern", "single_person", "style:manga_line_art"),
+        note=(
+            "Account/purchaser-scoped terms and redistribution restrictions: "
+            "link only; no automation."
+        ),
     ),
-    ControlledQuery(
-        "human pose walking", ("walking", "modern", "side_view"), AssetType.POSE_REFERENCE
+    ReferenceCatalogEntry(
+        source_site="BOOTH / illust-pose",
+        source_page_url="https://booth.pm/en/items/3513807",
+        creator="illust-pose",
+        title="漫画用の男性表情集（手动取得のみ）",
+        search_query="anime manga male expression reference",
+        tags=("focused", "modern", "close_up", "style:manga_line_art"),
+        note=(
+            "Account/purchaser-scoped terms and redistribution restrictions: "
+            "link only; no automation."
+        ),
     ),
-    ControlledQuery(
-        "human pose sitting", ("sitting", "modern", "single_person"), AssetType.POSE_REFERENCE
-    ),
-    ControlledQuery(
-        "human facial expression happy",
-        ("happy", "neutral", "close_up"),
-        AssetType.EXPRESSION_REFERENCE,
-    ),
-    ControlledQuery(
-        "human facial expression angry",
-        ("angry", "neutral", "close_up"),
-        AssetType.EXPRESSION_REFERENCE,
-    ),
-    ControlledQuery(
-        "human facial expression sad",
-        ("sad", "neutral", "close_up"),
-        AssetType.EXPRESSION_REFERENCE,
-    ),
-    ControlledQuery(
-        "historical person bowing", ("bowing", "ancient", "single_person"), AssetType.POSE_REFERENCE
-    ),
-    ControlledQuery(
-        "historical person holding sword",
-        ("holding_sword", "ancient", "single_person"),
-        AssetType.POSE_REFERENCE,
-    ),
-    ControlledQuery(
-        "historical person kneeling",
-        ("kneeling", "ancient", "single_person"),
-        AssetType.POSE_REFERENCE,
-    ),
-    ControlledQuery(
-        "two people confrontation",
-        ("two_person_confrontation", "neutral", "two_person"),
-        AssetType.POSE_REFERENCE,
+    ReferenceCatalogEntry(
+        source_site="Lambda Delta Pose Archive",
+        source_page_url="https://lambdadelta.gumroad.com/",
+        creator="Lambda Delta",
+        title="少女漫画/动画线稿姿势档案（手动取得和许可核查）",
+        search_query="manga webtoon anime line art pose reference",
+        tags=("holding_scroll", "ancient", "single_person", "style:manga_line_art"),
+        note=(
+            "Zero-price checkout and individual product terms may apply: link only; no automation."
+        ),
     ),
 )
 
@@ -219,7 +229,7 @@ class AssetLibraryPaths:
 
 
 class WikimediaCommonsSource:
-    """Official MediaWiki Action API adapter; it never scrapes Commons HTML."""
+    """Retired source adapter retained only for compatibility imports."""
 
     source_site = "Wikimedia Commons"
     source_api_or_package_url = WIKIMEDIA_API_URL
@@ -228,7 +238,12 @@ class WikimediaCommonsSource:
         self._client = client
 
     def discover(self, controlled_query: ControlledQuery, limit: int) -> list[AssetManifestV1]:
-        """Discover licensed image candidates using ImageInfo/extmetadata only."""
+        """Return no result: photographic Commons assets are outside the anime policy."""
+
+        return []
+
+        # Historical parsing stays private until a breaking cleanup release;
+        # AssetLibraryService no longer calls this adapter.
 
         try:
             response = self._client.get(
@@ -376,31 +391,31 @@ class AssetLibraryService:
         self,
         *,
         limit: int = 150,
-        source: str = "wikimedia_commons",
+        source: str = "reference_only_catalog",
         tags: set[str] | None = None,
         dry_run: bool = True,
     ) -> list[AssetManifestV1]:
-        """Discover only official-API candidates; dry-run does not write manifests."""
+        """Build link-only records for reviewed manga-material source pages."""
 
-        if source != "wikimedia_commons":
-            raise AssetIntakeError("only the Wikimedia Commons official API is enabled")
+        if source != "reference_only_catalog":
+            raise AssetIntakeError(
+                "no automatic image-download source is approved for anime/manga reference assets"
+            )
         if not 1 <= limit <= 300:
             raise AssetIntakeError("limit must be between 1 and 300")
-        adapter = WikimediaCommonsSource(self._client)
-        per_query = max(
-            1, min(30, (limit + len(CONTROLLED_QUERIES) - 1) // len(CONTROLLED_QUERIES))
-        )
-        found: dict[str, AssetManifestV1] = {}
-        for controlled_query in CONTROLLED_QUERIES:
-            if tags is not None and not tags.intersection(controlled_query.tags):
-                continue
-            for manifest in adapter.discover(controlled_query, per_query):
-                found.setdefault(manifest.asset_id, manifest)
-                if len(found) >= limit:
-                    break
-            if len(found) >= limit:
-                break
-        manifests = list(found.values())
+        manifests = [
+            reference_only_manifest(
+                source_site=entry.source_site,
+                original_page_url=entry.source_page_url,
+                search_query=entry.search_query,
+                note=entry.note,
+                creator=entry.creator,
+                title=entry.title,
+                tags=list(entry.tags),
+            )
+            for entry in REFERENCE_ONLY_CATALOG
+            if tags is None or tags.intersection(entry.tags)
+        ][:limit]
         if not dry_run:
             self.paths.ensure_layout()
             for manifest in manifests:
@@ -697,7 +712,14 @@ class AssetLibraryService:
 
 
 def reference_only_manifest(
-    *, source_site: str, original_page_url: str, search_query: str, note: str
+    *,
+    source_site: str,
+    original_page_url: str,
+    search_query: str,
+    note: str,
+    creator: str,
+    title: str,
+    tags: list[str],
 ) -> AssetManifestV1:
     """Create a no-download link record for sources outside the verified intake path."""
 
@@ -708,19 +730,17 @@ def reference_only_manifest(
         source_site=source_site,
         source_api_or_package_url=original_page_url,
         original_page_url=original_page_url,
+        creator=creator,
+        title=title,
         asset_type=AssetType.OTHER_REFERENCE,
         use_mode=UseMode.REFERENCE_ONLY,
         rights_status=RightsStatus.NEEDS_HUMAN_REVIEW,
-        review_status=ReviewStatus.REFERENCE_ONLY,
         tags=[
-            "standing",
-            "neutral",
-            "single_person",
-            f"source:{source_site.lower().replace(' ', '_')}",
-            "license:unverified",
+            *tags,
+            f"source:{source_site.lower().replace(' ', '_').replace('/', '_')}",
+            "license:manual_review",
         ],
         search_query=search_query,
         collected_at=_now(),
-        reviewed_at=_now(),
         reviewer_note=note,
     )
