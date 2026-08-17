@@ -37,6 +37,7 @@ from comic_agent.services.narrative_analyst_summary import (
     sanitize_provider_diagnostics,
     set_failure,
 )
+from comic_agent.services.narrative_timeline_coordinator import NarrativeTimelineCoordinator
 from comic_agent.workflows.narrative_analyst_workflow import NarrativeAnalystWorkflow
 
 MAX_AUTOMATIC_WINDOW_ATTEMPTS = 2
@@ -64,6 +65,7 @@ class NarrativeAnalysisWorker:
         analysis_repository: NarrativeAnalysisRepository,
         recovery_repository: NarrativeAnalysisRecoveryRepository | None = None,
         provider: LLMProvider | None = None,
+        timeline_coordinator: NarrativeTimelineCoordinator | None = None,
     ) -> None:
         self._settings = settings
         self._source_repository = source_repository
@@ -71,6 +73,7 @@ class NarrativeAnalysisWorker:
         self._analysis_repository = analysis_repository
         self._recovery_repository = recovery_repository
         self._provider = provider
+        self._timeline_coordinator = timeline_coordinator
 
     def run_pending(
         self,
@@ -368,6 +371,7 @@ class NarrativeAnalysisWorker:
                 source_repository=self._source_repository,
                 analysis_repository=self._analysis_repository,
             ).review_if_ready(saved.analysis_run_id)
+            self._run_timeline_if_approved(reviewed, windows)
             if self._recovery_repository is not None:
                 def rerun(directive, attempt_id):  # type: ignore[no-untyped-def]
                     result = workflow.run(
@@ -393,8 +397,68 @@ class NarrativeAnalysisWorker:
                     ).recover_if_eligible(
                         reviewed.analysis_run_id, real_llm_requested=real_llm_requested
                     )
+                    self._run_recovery_timelines(reviewed.analysis_run_id)
             return reviewed
         return saved
+
+    def _run_timeline_if_approved(
+        self,
+        run: NarrativeAnalysisRunV1,
+        windows: list[NarrativeAnalysisWindowV1],
+        *,
+        source_chunk_ids: list[str] | None = None,
+    ) -> None:
+        """Invoke Timeline only from the persisted, Gate 2-approved bundle boundary."""
+
+        if self._timeline_coordinator is None or run.status != NarrativeAnalysisRunStatus.SUCCEEDED:
+            return
+        route = run.review_gate2_route
+        bundle = route.approved_proposal_bundle if route is not None else None
+        if route is None or bundle is None:
+            return
+        if not any(
+            item.source.proposal_schema
+            in {"EventProposalV1", "ClaimProposalV1", "StateChangeProposalV1"}
+            for item in bundle.approved_proposals
+        ):
+            return
+        used_chunk_ids = source_chunk_ids or [
+            chunk_id
+            for window in windows
+            if window.status == NarrativeAnalysisWindowStatus.SUCCEEDED
+            for chunk_id in window.chunk_ids
+        ]
+        gate1 = self._source_repository.get_review_gate1(run.document_id)
+        approved_chunk_ids = (
+            set(gate1.approved_chunk_bundle.chunk_ids)
+            if gate1 is not None and gate1.approved_chunk_bundle is not None
+            else set()
+        )
+        selected_ids = set(used_chunk_ids) & approved_chunk_ids
+        source_chunks = [
+            chunk
+            for chunk in self._source_repository.list_document_chunks(run.document_id)
+            if chunk.chunk_id in selected_ids
+        ]
+        self._timeline_coordinator.run_if_approved(route=route, source_chunks=source_chunks)
+
+    def _run_recovery_timelines(self, root_analysis_run_id: str) -> None:
+        """Send only fresh Stage B-approved bundles to Timeline; retain the root rejection."""
+
+        if self._timeline_coordinator is None or self._recovery_repository is None:
+            return
+        root = self._analysis_repository.get_run(root_analysis_run_id)
+        if root is None:
+            return
+        for attempt in self._recovery_repository.list_attempts(root_analysis_run_id):
+            route = attempt.fresh_route
+            if route is None or route.approved_proposal_bundle is None:
+                continue
+            self._run_timeline_if_approved(
+                root.model_copy(update={"review_gate2_route": route}),
+                [],
+                source_chunk_ids=attempt.directive.approved_source_chunk_ids,
+            )
 
     def _save_aggregate_result(
         self,

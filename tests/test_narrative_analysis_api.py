@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from comic_agent.config import get_settings
 from comic_agent.main import create_app
+from comic_agent.schemas.timeline import TimelineAnalysisInputV1, TimelineAnalysisProposalV1
 from comic_agent.workflows.narrative_analyst_workflow import NarrativeAnalystWorkflow
 
 
@@ -171,6 +172,159 @@ class _FakeEventProvider:
         )
 
 
+class _FakeOrderedNarrativeProvider:
+    """Produces two evidence-backed events through the real Narrative workflow."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def structured_generate(self, request, output_model):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        chunk = request["input_context"]["source_chunks"][0]
+        return output_model.model_validate(
+            {
+                "batch_id": "ordered-events-batch",
+                "events": [
+                    {
+                        "proposal_id": "event-poster",
+                        "event_type": "arrival",
+                        "summary": "Xiaolin posts a poster.",
+                        "participant_ids": [],
+                        "actor_resolution_status": "UNKNOWN",
+                        "evidence_refs": [
+                            {
+                                "chunk_id": chunk["chunk_id"],
+                                "quote_text": "小林先到礼堂张贴海报",
+                            }
+                        ],
+                        "confidence": 0.9,
+                        "reality_layer": "PRIMARY",
+                    },
+                    {
+                        "proposal_id": "event-umbrella",
+                        "event_type": "arrival",
+                        "summary": "Xiaozhou arrives with an umbrella.",
+                        "participant_ids": [],
+                        "actor_resolution_status": "UNKNOWN",
+                        "evidence_refs": [
+                            {
+                                "chunk_id": chunk["chunk_id"],
+                                "quote_text": "十分钟后，小周带着雨伞赶来",
+                            }
+                        ],
+                        "confidence": 0.9,
+                        "reality_layer": "PRIMARY",
+                    },
+                ],
+            }
+        )
+
+
+class _FakeTimelineRunner:
+    """Timeline interface fake that proves the worker supplied Gate 2 provenance only."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.source_bundle_ids: list[str | None] = []
+
+    def run(
+        self,
+        input_context: TimelineAnalysisInputV1,
+        *,
+        source_chunks: list[object],
+    ) -> TimelineAnalysisProposalV1:
+        self.calls += 1
+        self.source_bundle_ids.append(input_context.source_approved_bundle_id)
+        assert [event.proposal_id for event in input_context.event_proposals] == [
+            "event-poster",
+            "event-umbrella",
+        ]
+        assert len(source_chunks) == 1
+        evidence = input_context.event_proposals[0].evidence_refs
+        return TimelineAnalysisProposalV1(
+            proposal_id="timeline-ordered-1",
+            project_id=input_context.project_id,
+            temporal_relations=[
+                {
+                    "proposal_id": "relation-ordered-1",
+                    "source_event_id": "event-poster",
+                    "target_event_id": "event-umbrella",
+                    "relation": "BEFORE",
+                    "evidence_refs": evidence,
+                    "confidence": 0.9,
+                }
+            ],
+            conflicts=[],
+            duplicate_candidates=[],
+            evidence_refs=evidence,
+            confidence=0.9,
+        )
+
+
+def test_import_to_narrative_gate2_timeline_gate3_uses_only_approved_provenance(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("ENABLE_REAL_LLM", "true")
+    monkeypatch.setenv("INTERNAL_DEMO_REQUIRE_ACCESS_CODE", "false")
+    get_settings.cache_clear()
+    narrative_provider = _FakeOrderedNarrativeProvider()
+    timeline_runner = _FakeTimelineRunner()
+    app = create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'full_chain.db'}")
+    app.state.narrative_analyst_provider = narrative_provider
+    app.state.timeline_runner = timeline_runner
+    client = TestClient(app)
+    created = client.post(
+        "/projects",
+        json={"project_id": "project-1", "name": "Timeline Chain Project"},
+    )
+    assert created.status_code == 201
+    imported = client.post(
+        "/projects/project-1/documents/import",
+        files={
+            "file": (
+                "ordered.txt",
+                "第一章\n\n小林先到礼堂张贴海报。十分钟后，小周带着雨伞赶来。".encode(),
+                "text/plain",
+            )
+        },
+    )
+    assert imported.status_code == 201
+    document_id = imported.json()["document"]["document_id"]
+
+    started = client.post(
+        f"/projects/project-1/documents/{document_id}/narrative-analysis-runs",
+        json={"modes": ["event_extraction"], "real_llm_requested": True},
+    )
+    assert started.status_code == 201
+    run_id = started.json()["analysis_run_id"]
+    gate2_bundle = client.get(
+        f"/narrative-analysis-runs/{run_id}/approved-proposal-bundle"
+    )
+    assert gate2_bundle.status_code == 200
+    bundle_id = gate2_bundle.json()["bundle_id"]
+    summary = client.get(f"/projects/project-1/timeline-gate3/{bundle_id}")
+    review = client.get(f"/projects/project-1/timeline-gate3/{bundle_id}/review")
+    approved = client.get(
+        f"/projects/project-1/timeline-gate3/{bundle_id}/approved-bundle"
+    )
+
+    assert narrative_provider.calls == 1
+    assert timeline_runner.calls == 1
+    assert timeline_runner.source_bundle_ids == [bundle_id]
+    assert summary.status_code == 200
+    assert summary.json()["timeline_status"] == "APPROVED"
+    assert review.status_code == 200
+    assert review.json()["route"]["route"] == "APPROVED"
+    assert "quote_text" not in review.text
+    assert approved.status_code == 200
+    assert approved.json()["source_approved_proposal_bundle_id"] == bundle_id
+    assert "quote_text" not in approved.text
+
+    resumed = client.post(f"/narrative-analysis-runs/{run_id}/resume")
+    assert resumed.status_code == 202
+    assert timeline_runner.calls == 1
+
+
 def test_whole_document_worker_uses_the_same_injected_provider_as_manual_mode(
     tmp_path, monkeypatch
 ) -> None:
@@ -254,12 +408,38 @@ def test_recovery_endpoint_exposes_only_fresh_approved_bundle(tmp_path, monkeypa
                 }
             )
 
+    class _RecoveryTimelineRunner:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.bundle_ids: list[str | None] = []
+
+        def run(
+            self,
+            input_context: TimelineAnalysisInputV1,
+            *,
+            source_chunks: list[object],
+        ) -> TimelineAnalysisProposalV1:
+            self.calls += 1
+            self.bundle_ids.append(input_context.source_approved_bundle_id)
+            evidence = input_context.event_proposals[0].evidence_refs
+            return TimelineAnalysisProposalV1(
+                proposal_id="timeline-fresh-recovery",
+                project_id=input_context.project_id,
+                temporal_relations=[],
+                conflicts=[],
+                duplicate_candidates=[],
+                evidence_refs=evidence,
+                confidence=0.9,
+            )
+
     monkeypatch.setenv("ENABLE_REAL_LLM", "true")
     monkeypatch.setenv("INTERNAL_DEMO_REQUIRE_ACCESS_CODE", "false")
     get_settings.cache_clear()
     provider = _RecoveryProvider()
+    timeline_runner = _RecoveryTimelineRunner()
     app = create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'recovery_api.db'}")
     app.state.narrative_analyst_provider = provider
+    app.state.timeline_runner = timeline_runner
     client = TestClient(app)
     document_id = _import_document(client)
 
@@ -273,6 +453,7 @@ def test_recovery_endpoint_exposes_only_fresh_approved_bundle(tmp_path, monkeypa
     root_review = client.get(f"/narrative-analysis-runs/{run_id}/review-gate2")
 
     assert provider.calls == 2
+    assert timeline_runner.calls == 1
     assert recovery.status_code == 200
     assert recovery.json()["approved_bundle_available"] is True
     assert bundle.status_code == 200
@@ -282,3 +463,4 @@ def test_recovery_endpoint_exposes_only_fresh_approved_bundle(tmp_path, monkeypa
     assert "Synthetic sentence." not in bundle.text
     assert "raw_output" not in bundle.text
     assert root_review.json()["route"]["decision"] == "REJECTED"
+    assert timeline_runner.bundle_ids == [bundle.json()["bundle_id"]]

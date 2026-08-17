@@ -275,3 +275,22 @@ class NarrativeAnalysisRecoveryAttemptModel(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class TimelineGate3RunModel(Base):
+    """Idempotent non-canonical Timeline/Gate 3 work record."""
+
+    __tablename__ = "timeline_gate3_runs"
+    __table_args__ = (
+        UniqueConstraint("project_id", "source_bundle_id", name="uq_timeline_gate3_project_bundle"),
+        UniqueConstraint("idempotency_key", name="uq_timeline_gate3_idempotency"),
+    )
+
+    timeline_run_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    source_bundle_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

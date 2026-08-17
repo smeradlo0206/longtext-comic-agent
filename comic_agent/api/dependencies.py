@@ -12,6 +12,7 @@ from comic_agent.repositories.narrative_analysis_recovery_repository import (
 )
 from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
 from comic_agent.repositories.source_repository import SourceRepository
+from comic_agent.repositories.timeline_gate3_repository import TimelineGate3Repository
 
 
 def get_session(request: Request) -> Iterator[Session]:
@@ -52,3 +53,9 @@ def get_narrative_analysis_recovery_repository(
     """Return append-only Stage B recovery persistence bound to the request session."""
 
     return NarrativeAnalysisRecoveryRepository(session)
+
+
+def get_timeline_gate3_repository(session: SessionDep) -> TimelineGate3Repository:
+    """Return read/write Timeline Gate 3 persistence bound to the request session."""
+
+    return TimelineGate3Repository(session)

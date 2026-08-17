@@ -163,11 +163,21 @@ from comic_agent.schemas.storybible import (
 )
 from comic_agent.schemas.storyboard import SceneSpecV1, StoryBeatV1
 from comic_agent.schemas.timeline import (
+    ApprovedTimelineBundleV1,
     DuplicateCandidateV1,
+    NarrativeTimelineReviewRouteV1,
+    ReviewGate3Decision,
+    ReviewGate3ResultV1,
     TimelineAnalysisInputV1,
     TimelineAnalysisMode,
     TimelineAnalysisProposalV1,
     TimelineConflictV1,
+    TimelineGate3IssueCode,
+    TimelineGate3IssueSeverity,
+    TimelineGate3IssueV1,
+    TimelineGate3RunStatus,
+    TimelineGate3RunV1,
+    TimelineRecoveryBudgetV1,
 )
 from comic_agent.schemas.visual import PanelSpecV1
 from comic_agent.schemas.workflow import (
@@ -380,4 +390,14 @@ __all__ = [
     "WorldRuleV1",
     "VerificationStatus",
     "WorkflowRunV1",
+    "ApprovedTimelineBundleV1",
+    "NarrativeTimelineReviewRouteV1",
+    "ReviewGate3Decision",
+    "ReviewGate3ResultV1",
+    "TimelineGate3IssueCode",
+    "TimelineGate3IssueSeverity",
+    "TimelineGate3IssueV1",
+    "TimelineGate3RunStatus",
+    "TimelineGate3RunV1",
+    "TimelineRecoveryBudgetV1",
 ]

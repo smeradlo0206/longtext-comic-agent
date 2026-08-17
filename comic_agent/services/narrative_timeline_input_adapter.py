@@ -14,6 +14,7 @@ from comic_agent.schemas import (
     StateChangeProposalV1,
     TimelineAnalysisInputV1,
 )
+from comic_agent.schemas.base import EvidenceRefV1
 
 
 class NarrativeTimelineInputAdapter:
@@ -36,6 +37,74 @@ class NarrativeTimelineInputAdapter:
         if bundle is None:
             raise ValueError("NarrativeTimelineInputAdapter requires an approved proposal bundle")
         return self._from_bundle(bundle=bundle, profile_id=profile_id, source_chunks=source_chunks)
+
+    def build_from_approved_bundle(
+        self,
+        *,
+        route: NarrativeAnalysisReviewRouteV1,
+        source_chunks: Sequence[SourceChunkV1],
+    ) -> TimelineAnalysisInputV1:
+        """Build normal Timeline input from Gate 2's typed approved bundle only."""
+
+        if not isinstance(route, NarrativeAnalysisReviewRouteV1):
+            raise ValueError("NarrativeTimelineInputAdapter accepts only a Gate 2 route")
+        if route.decision != ReviewGate2RoutingDecision.APPROVED:
+            raise ValueError("NarrativeTimelineInputAdapter requires a Gate 2 APPROVED route")
+        bundle = route.approved_proposal_bundle
+        if bundle is None:
+            raise ValueError("NarrativeTimelineInputAdapter requires an approved proposal bundle")
+        chunks = {chunk.chunk_id: chunk for chunk in source_chunks}
+        if len(chunks) != len(source_chunks):
+            raise ValueError("NarrativeTimelineInputAdapter source chunk ids must be unique")
+        events: list[EventProposalV1] = [
+            item.source.proposal
+            for item in bundle.approved_proposals
+            if isinstance(item.source.proposal, EventProposalV1)
+        ]
+        claims: list[ClaimProposalV1] = [
+            item.source.proposal
+            for item in bundle.approved_proposals
+            if isinstance(item.source.proposal, ClaimProposalV1)
+            and item.source.proposal.claim_type == ClaimType.FACTUAL_ASSERTION
+        ]
+        changes: list[StateChangeProposalV1] = [
+            item.source.proposal
+            for item in bundle.approved_proposals
+            if isinstance(item.source.proposal, StateChangeProposalV1)
+        ]
+        for event in events:
+            self._validate_evidence_scope(event.evidence_refs, chunks)
+        for claim in claims:
+            self._validate_evidence_scope(claim.evidence_refs, chunks)
+        for change in changes:
+            self._validate_evidence_scope(change.evidence_refs, chunks)
+        return TimelineAnalysisInputV1(
+            schema_version="1.3",
+            project_id=bundle.project_id,
+            source_approved_bundle_id=bundle.bundle_id,
+            source_review_run_id=bundle.review_run_id,
+            event_proposals=events,
+            claim_proposals=claims,
+            state_change_proposals=changes,
+        )
+
+    @staticmethod
+    def _validate_evidence_scope(
+        evidence_refs: Sequence[object],
+        chunks: dict[str, SourceChunkV1],
+    ) -> None:
+        for evidence in evidence_refs:
+            if not isinstance(evidence, EvidenceRefV1):
+                raise ValueError("Approved proposal evidence must use EvidenceRefV1")
+            chunk = chunks.get(evidence.chunk_id)
+            if (
+                chunk is None
+                or evidence.quote_text is None
+                or evidence.quote_text not in chunk.text
+            ):
+                raise ValueError(
+                    "Approved proposal evidence must be present in supplied source provenance"
+                )
 
     @staticmethod
     def _from_bundle(
