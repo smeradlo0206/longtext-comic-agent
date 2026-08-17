@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from comic_agent.agents.timeline_agent import TimelineAgent
 from comic_agent.config import Settings, get_settings
 from comic_agent.main import create_app
-from comic_agent.providers.mocks import LocalSafeDemoProvider
+from comic_agent.providers.mocks import LocalSafeDemoProvider, MockLLMProvider
 
 _OFFICIAL_TEXT = """下午四点，小林先到学校礼堂，在公告栏张贴志愿者招募海报。
 十分钟后，天下起雨；小周撑着一把蓝色雨伞赶到礼堂。
@@ -136,6 +136,32 @@ def test_one_click_real_llm_opt_in_requires_a_local_key_before_import(
     assert response.status_code == 409
     assert response.json()["detail"] == "Real LLM requires a configured local API key"
     assert client.get("/projects/no-key/documents").json() == []
+
+
+def test_one_click_pipeline_exposes_sanitized_narrative_failure_summary(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    client = _client(tmp_path, monkeypatch)
+    client.app.state.narrative_analyst_provider = MockLLMProvider(response={})
+
+    started = client.post(
+        "/projects/failure-summary/pipeline-runs/import-and-analyze",
+        files={"file": ("official.txt", _OFFICIAL_TEXT.encode("utf-8"), "text/plain")},
+    )
+
+    assert started.status_code == 200
+    status = client.get(f"/pipeline-runs/{started.json()['analysis_run_id']}")
+
+    assert status.status_code == 200
+    payload = status.json()
+    assert payload["narrative"] == "FAILED"
+    assert payload["narrative_failure_summary"] == {
+        "failed_window_count": 1,
+        "failure_categories": ["SCHEMA_VALIDATION_FAILED"],
+        "recommended_actions": ["inspect provider JSON shape and mode boundary"],
+    }
+    assert "error_message" not in status.text
+    assert "raw_output" not in status.text
 
 
 def test_gate1_rejection_stops_one_click_pipeline_before_narrative(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

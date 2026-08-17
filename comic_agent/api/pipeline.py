@@ -113,6 +113,7 @@ def get_pipeline_status(
     run = analysis_repository.get_run(analysis_run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="NarrativeAnalysisRun not found")
+    windows = analysis_repository.list_windows(analysis_run_id)
     gate1 = repository.get_review_gate1(run.document_id)
     route = run.review_gate2_route
     attempts = recovery_repository.list_attempts(analysis_run_id)
@@ -141,6 +142,7 @@ def get_pipeline_status(
         "document_id": run.document_id,
         "gate1": str(gate1.decision) if gate1 is not None else "PENDING",
         "narrative": str(run.status),
+        "narrative_failure_summary": _narrative_failure_summary(windows),
         "gate2": (
             str(latest_gate2_route.decision)
             if latest_gate2_route is not None
@@ -221,6 +223,33 @@ def _recovery_status(attempts: list[Any]) -> str:
     if any(str(attempt.outcome.status) == "APPROVED" for attempt in attempts if attempt.outcome):
         return "SUCCEEDED"
     return "STOPPED"
+
+
+def _narrative_failure_summary(windows: list[Any]) -> dict[str, object] | None:
+    """Expose only persisted, source-free failure categories for the one-click Console."""
+
+    failed_windows = [window for window in windows if str(window.status) == "FAILED"]
+    if not failed_windows:
+        return None
+    categories = sorted(
+        {
+            str(window.failure_category)
+            for window in failed_windows
+            if isinstance(window.failure_category, str) and window.failure_category
+        }
+    )
+    recommended_actions = sorted(
+        {
+            str(window.recommended_action)
+            for window in failed_windows
+            if isinstance(window.recommended_action, str) and window.recommended_action
+        }
+    )
+    return {
+        "failed_window_count": len(failed_windows),
+        "failure_categories": categories,
+        "recommended_actions": recommended_actions,
+    }
 
 
 def _timeline_recovery_status(timeline: Any) -> str:

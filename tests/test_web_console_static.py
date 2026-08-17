@@ -224,6 +224,7 @@ def test_web_console_exposes_whole_document_analysis_as_the_normal_flow() -> Non
     assert 'id="safePipelineStatus"' in html
     assert 'id="safePipelineRunBadge"' in html
     assert 'id="safePipelineRunMessage"' in html
+    assert "narrative_failure_summary" in html
     assert 'id="advancedDevelopmentDiagnostics"' in html
     assert 'id="advancedDevelopmentDiagnostics" open' not in html
     assert "/pipeline-runs/import-and-analyze" in html

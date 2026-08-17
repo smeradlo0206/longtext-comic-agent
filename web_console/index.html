@@ -1106,6 +1106,7 @@
       $("safePipelineStatus").textContent = pretty({
         import_and_gate1: data.gate1 ?? data.pipeline_status ?? "PENDING",
         narrative: data.narrative ?? "PENDING",
+        narrative_failure_summary: data.narrative_failure_summary ?? null,
         gate2: data.gate2 ?? "NOT_READY",
         narrative_recovery: data.narrative_recovery ?? "NOT_STARTED",
         timeline: data.timeline ?? "NOT_READY",
@@ -1134,7 +1135,18 @@
       } else if (["REJECTED", "NEEDS_HUMAN_REVIEW", "FAILED"].includes(data.gate3)) {
         setSafePipelineRunState("已停止", `Gate 3 为 ${data.gate3}；不会进入下游。`, data.gate3 === "NEEDS_HUMAN_REVIEW" ? "warn" : "bad");
       } else if (data.narrative === "FAILED" || data.narrative === "PARTIAL_FAILED") {
-        setSafePipelineRunState("分析失败", `Narrative 状态为 ${data.narrative}；请查看安全 issue code。`, "bad");
+        const failure = data.narrative_failure_summary ?? {};
+        const categories = Array.isArray(failure.failure_categories) && failure.failure_categories.length
+          ? failure.failure_categories.join(", ")
+          : "未提供类别";
+        const actions = Array.isArray(failure.recommended_actions) && failure.recommended_actions.length
+          ? failure.recommended_actions.join("；")
+          : "查看服务端同一时刻的安全日志。";
+        setSafePipelineRunState(
+          "分析失败",
+          `Narrative 状态为 ${data.narrative}（${categories}）。建议：${actions}`,
+          "bad"
+        );
       } else {
         setSafePipelineRunState("处理中", "已接收请求，正在执行 Gate 1、Narrative、Gate 2、Timeline 与 Gate 3。", "warn");
       }
