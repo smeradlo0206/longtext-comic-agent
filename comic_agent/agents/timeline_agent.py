@@ -290,7 +290,10 @@ class TimelineAgent:
             self._provider_model,
             self._llm_enabled,
             tuple(proposal.proposal_id for proposal in input_context.event_proposals),
-            tuple(proposal.claim_id for proposal in input_context.claim_proposals),
+            tuple(
+                getattr(proposal, "claim_id", proposal.proposal_id)
+                for proposal in input_context.claim_proposals
+            ),
             tuple(proposal.proposal_id for proposal in input_context.state_change_proposals),
         )
 

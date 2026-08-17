@@ -1,0 +1,264 @@
+{
+  "schema_version": "1.0",
+  "fixture_type": "STATE_CHANGE_HIGH_DENSITY_CHALLENGE_V1",
+  "source_file": "tests/fixtures/state_change/state_change_high_density_challenge_v1.txt",
+  "origin": "project-original-synthetic-text",
+  "purpose": "Deterministic FakeProvider oracle for State Change v1.3 boundaries.",
+  "cases": [
+    {
+      "case_id": "hd-injury-bandage",
+      "source_chunk_id": "hd-01",
+      "context_chunk_ids": ["hd-01"],
+      "text": "昨夜的箭伤又裂开了，周砚的左臂渗出血珠；他咬紧牙关，用清水洗净伤口，重新缠上布带，血色才渐渐止住。",
+      "category": "MULTI_CANDIDATE",
+      "risk_tags": ["repeated_state", "persistence_false"],
+      "expected_changes": [
+        {"target_mention": "周砚", "target_kind": "CHARACTER", "attribute_path": "health.injury", "old_value": null, "new_value": "渗出血珠", "persistent": false, "evidence_quote": "周砚的左臂渗出血珠"},
+        {"target_mention": "周砚", "target_kind": "CHARACTER", "attribute_path": "health.injury", "old_value": "渗出血珠", "new_value": "血色渐渐止住", "persistent": false, "evidence_quote": "血色才渐渐止住"}
+      ],
+      "forbidden_changes": [{"attribute_path": "health.injury", "new_value": "永久痊愈", "reason": "no explicit permanence"}],
+      "expects_empty_batch": false,
+      "notes": "同一连续片段包含伤势加重与包扎后改善，FakeProvider 仍保留两个独立结果。"
+    },
+    {
+      "case_id": "hd-clothing-hairstyle",
+      "source_chunk_id": "hd-02",
+      "context_chunk_ids": ["hd-02"],
+      "text": "周砚脱下湿透的外袍，换上灰衣，随后解开发绳，让长发披在肩后。",
+      "category": "CANDIDATE",
+      "risk_tags": ["appearance", "character_only"],
+      "expected_changes": [
+        {"target_mention": "周砚", "target_kind": "CHARACTER", "attribute_path": "appearance.clothing", "old_value": "湿透的外袍", "new_value": "灰衣", "persistent": false, "evidence_quote": "换上灰衣"},
+        {"target_mention": "周砚", "target_kind": "CHARACTER", "attribute_path": "appearance.hairstyle", "old_value": null, "new_value": "长发披在肩后", "persistent": false, "evidence_quote": "解开发绳，让长发披在肩后"}
+      ],
+      "forbidden_changes": [{"attribute_path": "appearance.face_color", "new_value": "苍白", "reason": "path is not in v1.3"}],
+      "expects_empty_batch": false,
+      "notes": "完成的换衣和解开发绳分别有逐字证据。"
+    },
+    {
+      "case_id": "hd-movement",
+      "source_chunk_id": "hd-03",
+      "context_chunk_ids": ["hd-03"],
+      "text": "周砚先穿过东院，走廊尽头的铜牌在雾里发亮。他沿着长廊走到档案室门前，确认门闩后才推门进去。",
+      "category": "MULTI_CANDIDATE",
+      "risk_tags": ["location_sequence", "same_character"],
+      "expected_changes": [
+        {"target_mention": "周砚", "target_kind": "CHARACTER", "attribute_path": "location", "old_value": null, "new_value": "东院", "persistent": false, "evidence_quote": "穿过东院"},
+        {"target_mention": "周砚", "target_kind": "CHARACTER", "attribute_path": "location", "old_value": "东院", "new_value": "走廊", "persistent": false, "evidence_quote": "沿着长廊走到"},
+        {"target_mention": "周砚", "target_kind": "CHARACTER", "attribute_path": "location", "old_value": "走廊", "new_value": "档案室", "persistent": false, "evidence_quote": "推门进去"}
+      ],
+      "forbidden_changes": [{"attribute_path": "location", "target_mention": "档案室", "reason": "location is the destination, not the moving target"}],
+      "expects_empty_batch": false,
+      "notes": "位置变化的 target 始终是人物。"
+    },
+    {
+      "case_id": "hd-box-repair-redamage",
+      "source_chunk_id": "hd-04",
+      "context_chunk_ids": ["hd-04"],
+      "text": "最上面的木箱原本完好，他用肩膀撞开锁扣，木箱的箱角立刻裂开。阿葵找来细铁片和胶带，把木箱的裂口一层层压紧，箱板重新合拢；周砚收起工具时不慎碰倒油灯，火舌舔过木箱，木箱再次焦黑并塌下一角。",
+      "category": "MULTI_CANDIDATE",
+      "risk_tags": ["repeated_state", "intermediate_state"],
+      "expected_changes": [
+        {"target_mention": "木箱", "target_kind": "OBJECT", "attribute_path": "physical.condition", "old_value": "完好", "new_value": "箱角裂开", "persistent": false, "evidence_quote": "木箱的箱角立刻裂开"},
+        {"target_mention": "木箱", "target_kind": "OBJECT", "attribute_path": "physical.condition", "old_value": "箱角裂开", "new_value": "箱板重新合拢", "persistent": false, "evidence_quote": "箱板重新合拢"},
+        {"target_mention": "木箱", "target_kind": "OBJECT", "attribute_path": "physical.condition", "old_value": "箱板重新合拢", "new_value": "再次焦黑并塌下一角", "persistent": false, "evidence_quote": "木箱再次焦黑并塌下一角"}
+      ],
+      "forbidden_changes": [{"attribute_path": "physical.condition", "new_value": "撞击", "reason": "action alone is not a state result"}],
+      "expects_empty_batch": false,
+      "notes": "破损、修复、再损坏均有独立后果。"
+    },
+    {
+      "case_id": "hd-door-open-close-open",
+      "source_chunk_id": "hd-05",
+      "context_chunk_ids": ["hd-05"],
+      "text": "档案室的铁门被风撞得合上，周砚插入铜钥匙，门锁咔哒一声弹开，铁门向内开启。取完地图，他又把铁门关上，随后听见墙后的齿轮停转；他拨动机关，铁门再次打开。",
+      "category": "MULTI_CANDIDATE",
+      "risk_tags": ["repeated_state", "event_result_separation"],
+      "expected_changes": [
+        {"target_mention": "铁门", "target_kind": "OBJECT", "attribute_path": "accessibility", "old_value": null, "new_value": "合上", "persistent": false, "evidence_quote": "铁门被风撞得合上"},
+        {"target_mention": "铁门", "target_kind": "OBJECT", "attribute_path": "accessibility", "old_value": "合上", "new_value": "向内开启", "persistent": false, "evidence_quote": "铁门向内开启"},
+        {"target_mention": "铁门", "target_kind": "OBJECT", "attribute_path": "accessibility", "old_value": "向内开启", "new_value": "关上", "persistent": false, "evidence_quote": "又把铁门关上"},
+        {"target_mention": "铁门", "target_kind": "OBJECT", "attribute_path": "accessibility", "old_value": "关上", "new_value": "再次打开", "persistent": false, "evidence_quote": "铁门再次打开"}
+      ],
+      "forbidden_changes": [{"attribute_path": "accessibility", "new_value": "永久开启", "reason": "no permanence"}],
+      "expects_empty_batch": false,
+      "notes": "门的动作与状态结果分开表达。"
+    },
+    {
+      "case_id": "hd-possession-transfer",
+      "source_chunk_id": "hd-06",
+      "context_chunk_ids": ["hd-06"],
+      "text": "地图卷轴先在阿葵手中。她把卷轴交给周砚，周砚走下台阶后又递给守在廊下的沈策。沈策看完路线，把卷轴转交给陆衡保管。",
+      "category": "MULTI_CANDIDATE",
+      "risk_tags": ["possession_chain", "target_object"],
+      "expected_changes": [
+        {"target_mention": "卷轴", "target_kind": "OBJECT", "attribute_path": "possession.holder", "old_value": "阿葵", "new_value": "周砚", "persistent": false, "evidence_quote": "把卷轴交给周砚"},
+        {"target_mention": "卷轴", "target_kind": "OBJECT", "attribute_path": "possession.holder", "old_value": "周砚", "new_value": "沈策", "persistent": false, "evidence_quote": "递给守在廊下的沈策"},
+        {"target_mention": "卷轴", "target_kind": "OBJECT", "attribute_path": "possession.holder", "old_value": "沈策", "new_value": "陆衡", "persistent": false, "evidence_quote": "转交给陆衡保管"}
+      ],
+      "forbidden_changes": [{"attribute_path": "possession.holder", "target_mention": "周砚", "reason": "the object, not the person, is the target"}],
+      "expects_empty_batch": false,
+      "notes": "持有人多次转移，target 始终是卷轴。"
+    },
+    {
+      "case_id": "hd-quantity",
+      "source_chunk_id": "hd-07",
+      "context_chunk_ids": ["hd-07"],
+      "text": "旁边的药瓶数量也从六瓶减到四瓶，周砚取走两瓶放进布袋，剩下的四瓶仍在箱中。",
+      "category": "CANDIDATE",
+      "risk_tags": ["numeric_scalar", "quantity"],
+      "expected_changes": [
+        {"target_mention": "药瓶", "target_kind": "OBJECT", "attribute_path": "quantity", "old_value": 6, "new_value": 4, "persistent": false, "evidence_quote": "从六瓶减到四瓶"}
+      ],
+      "forbidden_changes": [{"attribute_path": "quantity", "new_value": "4", "reason": "new_value must be a JSON number"}],
+      "expects_empty_batch": false,
+      "notes": "数量值使用 number 而非数字字符串。"
+    },
+    {
+      "case_id": "hd-crack-collapse-continuous",
+      "source_chunk_id": "hd-08",
+      "context_chunk_ids": ["hd-08"],
+      "text": "周砚抬掌重拍石面，表面先浮出一道裂纹，紧接着整块假山轰然崩塌，碎石堵住窄门。",
+      "category": "BOUNDARY",
+      "risk_tags": ["intermediate_state", "collapse"],
+      "expected_changes": [
+        {"target_mention": "假山", "target_kind": "OBJECT", "attribute_path": "physical.condition", "old_value": null, "new_value": "崩塌", "persistent": false, "evidence_quote": "整块假山轰然崩塌"}
+      ],
+      "forbidden_changes": [{"attribute_path": "physical.condition", "new_value": "裂纹", "reason": "same uninterrupted action; intermediate result"}],
+      "expects_empty_batch": false,
+      "notes": "只允许最终叙事结果崩塌。"
+    },
+    {
+      "case_id": "hd-crack-then-collapse-separated",
+      "source_chunk_id": "hd-09",
+      "context_chunk_ids": ["hd-09"],
+      "text": "午钟响过后，旧墙面又出现细裂，阿葵退后查看并重新点亮灯火；过了片刻，墙体才在第二次震动中坍下，尘土封住地道。",
+      "category": "MULTI_CANDIDATE",
+      "risk_tags": ["intermediate_state", "time_separation"],
+      "expected_changes": [
+        {"target_mention": "墙体", "target_kind": "LOCATION", "attribute_path": "physical.condition", "old_value": null, "new_value": "出现细裂", "persistent": false, "evidence_quote": "旧墙面又出现细裂"},
+        {"target_mention": "墙体", "target_kind": "LOCATION", "attribute_path": "physical.condition", "old_value": "出现细裂", "new_value": "坍下", "persistent": false, "evidence_quote": "墙体才在第二次震动中坍下"}
+      ],
+      "forbidden_changes": [],
+      "expects_empty_batch": false,
+      "notes": "有独立反应和时间间隔，因此两条变化均可保留。"
+    },
+    {
+      "case_id": "hd-negative-appearance-noise",
+      "source_chunk_id": "hd-10",
+      "context_chunk_ids": ["hd-10"],
+      "text": "走廊的窗纸被风吹得鼓起，几缕发丝也乱了；他抬手压住衣角，片刻后风停，衣角和发丝恢复原样。墙上画像里的女子脸色苍白，灯影一晃，她的脸色一变。",
+      "category": "NEGATIVE",
+      "risk_tags": ["appearance_false_positive", "transient_visual"],
+      "expected_changes": [],
+      "forbidden_changes": [{"attribute_path": "appearance.clothing", "reason": "wind-blown transient"}, {"attribute_path": "appearance.hairstyle", "reason": "momentary messy hair"}],
+      "expects_empty_batch": true,
+      "notes": "风、光线和表情不是明确完成的外观转换。"
+    },
+    {
+      "case_id": "hd-negative-plan-observe",
+      "source_chunk_id": "hd-11",
+      "context_chunk_ids": ["hd-11"],
+      "text": "阿葵说明日要换一身礼服，沈策笑说若换上盔甲就能挡住所有箭。周砚答应等任务结束再整理头发。他们看见架上的银杯，却没有拿走、移动或损坏它；周砚只挥拳击中一块空木板，木屑落下。",
+      "category": "NEGATIVE",
+      "risk_tags": ["plan", "hypothesis", "observation", "no_state_result"],
+      "expected_changes": [],
+      "forbidden_changes": [{"attribute_path": "appearance.clothing", "reason": "future plan"}, {"attribute_path": "possession.holder", "reason": "seen but not acquired"}],
+      "expects_empty_batch": true,
+      "notes": "计划、假设、承诺、观察和纯动作均为空 Batch。"
+    },
+    {
+      "case_id": "hd-formal-appearance-repeat",
+      "source_chunk_id": "hd-12",
+      "context_chunk_ids": ["hd-12"],
+      "text": "周砚把灰衣外套扣好，重新束起长发，露出额头。",
+      "category": "CANDIDATE",
+      "risk_tags": ["appearance", "hairstyle"],
+      "expected_changes": [
+        {"target_mention": "周砚", "target_kind": "CHARACTER", "attribute_path": "appearance.hairstyle", "old_value": null, "new_value": "重新束起长发", "persistent": false, "evidence_quote": "重新束起长发"}
+      ],
+      "forbidden_changes": [],
+      "expects_empty_batch": false,
+      "notes": "正式完成的发型转换，未出现持续性词。"
+    },
+    {
+      "case_id": "hd-noon-bandage-distribution",
+      "source_chunk_id": "hd-13",
+      "context_chunk_ids": ["hd-13"],
+      "text": "临近午时，周砚回到东院，把包扎后的左臂放在桌上。布带仍在，沈策把四瓶药重新分给两名同伴。",
+      "category": "CANDIDATE",
+      "risk_tags": ["location", "unspecified_holders", "no_new_auditable_value"],
+      "expected_changes": [
+        {
+          "target_mention": "周砚",
+          "target_kind": "CHARACTER",
+          "attribute_path": "location",
+          "old_value": null,
+          "new_value": "东院",
+          "persistent": false,
+          "evidence_quote": "周砚回到东院"
+        }
+      ],
+      "forbidden_changes": [
+        {"attribute_path": "possession.holder", "reason": "recipients are not individually identified"}
+      ],
+      "expects_empty_batch": false,
+      "notes": "返回东院是可审计的位置变化；未指明收受人的分配动作仍不应伪造持有人。"
+    },
+    {
+      "case_id": "hd-later-door-open-close",
+      "source_chunk_id": "hd-14",
+      "context_chunk_ids": ["hd-14"],
+      "text": "陆衡打开铁门让众人通过，随后为防追兵再度关门。",
+      "category": "MULTI_CANDIDATE",
+      "risk_tags": ["repeated_state", "explicit_sequence"],
+      "expected_changes": [
+        {
+          "target_mention": "铁门",
+          "target_kind": "OBJECT",
+          "attribute_path": "accessibility",
+          "old_value": null,
+          "new_value": "打开",
+          "persistent": false,
+          "evidence_quote": "打开铁门让众人通过"
+        },
+        {
+          "target_mention": "铁门",
+          "target_kind": "OBJECT",
+          "attribute_path": "accessibility",
+          "old_value": "打开",
+          "new_value": "关门",
+          "persistent": false,
+          "evidence_quote": "再度关门"
+        }
+      ],
+      "forbidden_changes": [],
+      "expects_empty_batch": false,
+      "notes": "同一 context 内明确给出了开门后再关门的状态链。"
+    },
+    {
+      "case_id": "hd-box-redamage-late",
+      "source_chunk_id": "hd-15",
+      "context_chunk_ids": ["hd-15"],
+      "text": "他们最后在档案室门外停下。周砚把灰衣外套扣好，重新束起长发，露出额头。阿葵把修好的木箱推到墙边，木箱在搬运中又裂了一道，却没有立即坍塌。远处传来钟声，众人停下脚步。",
+      "category": "CANDIDATE",
+      "risk_tags": ["repeated_state", "part_whole_boundary", "no_persistence"],
+      "expected_changes": [
+        {
+          "target_mention": "木箱",
+          "target_kind": "OBJECT",
+          "attribute_path": "physical.condition",
+          "old_value": "修好",
+          "new_value": "裂开",
+          "persistent": false,
+          "evidence_quote": "木箱在搬运中又裂了一道"
+        }
+      ],
+      "forbidden_changes": [
+        {"attribute_path": "physical.condition", "new_value": "坍塌", "reason": "the text explicitly says it did not immediately collapse"}
+      ],
+      "expects_empty_batch": false,
+      "notes": "末段的木箱变化使用同一明确 target 名称，不把箱板或其他部件链接为木箱。"
+    }
+  ]
+}

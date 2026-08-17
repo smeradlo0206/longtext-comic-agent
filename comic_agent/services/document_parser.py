@@ -6,9 +6,22 @@ from dataclasses import dataclass
 from comic_agent.schemas.source import SourceChapterV1, SourceChunkV1, SourceDocumentV1
 from comic_agent.services.id_service import checksum_text, stable_id
 
+_CHINESE_NUMERAL = "零〇一二三四五六七八九十百千万两0-9０-９"
+_TITLE_MAX_CHARS = 80
+_MIN_SENTENCE_CHUNK_CHARS = 800
+_MAX_CHARS_PER_CHUNK = 1200
+_MAX_SENTENCE_LOOKAHEAD_CHARS = 1500
+_SENTENCE_ENDINGS = frozenset("。！？；”’。!?;.")
+_NOISE_PREFIX_RE = re.compile(r"^(?:正文卷|正文|VIP章节|免费章节)\s*")
 CHAPTER_RE = re.compile(
-    r"^\s*(第[一二三四五六七八九十百千0-9]+章.*|Chapter\s+\d+\b.*)\s*$",
-    re.IGNORECASE | re.MULTILINE,
+    rf"^(?:"
+    rf"(?:第[{_CHINESE_NUMERAL}]+[章节回卷篇]|卷[{_CHINESE_NUMERAL}]+)"
+    rf"(?:\s+\S.*)?"
+    rf"|(?:楔子|序章|前言|引子)(?:\s+\S.*)?"
+    rf"|Chapter\s+\d+\b(?:\s+\S.*)?"
+    rf"|Chapter\s+[IVXLCDM]+"
+    rf")$",
+    re.IGNORECASE,
 )
 
 
@@ -102,22 +115,55 @@ class DocumentParser:
         raise NotImplementedError("PDF parsing is reserved for a later MVP slice")
 
     def _find_chapters(self, text: str) -> list[_ChapterDraft]:
-        matches = list(CHAPTER_RE.finditer(text))
-        if not matches:
+        headings = self._find_heading_lines(text)
+        if not headings:
             return [_ChapterDraft(title="Default Chapter", start=0, end=len(text), order=0)]
 
         drafts: list[_ChapterDraft] = []
-        for index, match in enumerate(matches):
-            next_start = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        for index, (title, _title_start, body_start) in enumerate(headings):
+            next_start = headings[index + 1][1] if index + 1 < len(headings) else len(text)
             drafts.append(
                 _ChapterDraft(
-                    title=match.group(1).strip(),
-                    start=match.end(),
+                    title=title,
+                    start=body_start,
                     end=next_start,
                     order=index,
                 )
             )
         return drafts
+
+    def _find_heading_lines(self, text: str) -> list[tuple[str, int, int]]:
+        headings: list[tuple[str, int, int]] = []
+        offset = 0
+        for line in text.splitlines(keepends=True):
+            title = self._normalize_heading(line)
+            if title is not None:
+                headings.append((title, offset, offset + len(line)))
+            offset += len(line)
+        if offset < len(text):
+            title = self._normalize_heading(text[offset:])
+            if title is not None:
+                headings.append((title, offset, len(text)))
+        return headings
+
+    def _normalize_heading(self, line: str) -> str | None:
+        title = line.strip().lstrip("\ufeff").strip()
+        title = re.sub(r"[\s\u3000]+", " ", title)
+        title = _NOISE_PREFIX_RE.sub("", title).strip()
+        if not title or len(title) > _TITLE_MAX_CHARS:
+            return None
+        # A line that starts like an English chapter heading but ends with
+        # sentence punctuation is narrative prose, not a heading.  Keep this
+        # deterministic line-level guard before the general chapter regex so
+        # valid forms such as ``Chapter 2 Night Route`` remain supported.
+        if (
+            re.match(r"^Chapter\s+(?:\d+\b|[IVXLCDM]+\b)", title, re.IGNORECASE)
+            and title.endswith((".", "!", "?"))
+        ):
+            return None
+        if CHAPTER_RE.fullmatch(title) is None:
+            return None
+        return title
 
     def _chunks_for_chapter(
         self,
@@ -132,25 +178,81 @@ class DocumentParser:
     ) -> list[SourceChunkV1]:
         body = text[start:end]
         chunks: list[SourceChunkV1] = []
-        for match in re.finditer(r"\S(?:.*(?:\n(?!\s*\n).*)*)", body):
-            chunk_text = match.group(0).strip("\n")
-            if not chunk_text.strip():
-                continue
-            char_start = start + match.start()
-            char_end = start + match.end()
-            order = starting_order + len(chunks)
-            chunks.append(
-                SourceChunkV1(
-                    chunk_id=stable_id("chunk", document_id, order, checksum_text(chunk_text)),
-                    document_id=document_id,
-                    chapter_id=stable_id("chapter", document_id, chapter_order, chapter_title),
-                    project_id=project_id,
-                    order=order,
-                    text=chunk_text,
-                    source_page=None,
-                    char_start=char_start,
-                    char_end=char_end,
-                    checksum=checksum_text(chunk_text),
+        for paragraph_start, paragraph_text in self._paragraph_spans(body):
+            for span_start, span_end in self._split_long_span(paragraph_text):
+                chunk_text = paragraph_text[span_start:span_end].strip("\n")
+                if not chunk_text.strip():
+                    continue
+                leading_newlines = len(paragraph_text[span_start:span_end]) - len(
+                    paragraph_text[span_start:span_end].lstrip("\n")
                 )
-            )
+                trailing_newlines = len(paragraph_text[span_start:span_end]) - len(
+                    paragraph_text[span_start:span_end].rstrip("\n")
+                )
+                char_start = start + paragraph_start + span_start + leading_newlines
+                char_end = start + paragraph_start + span_end - trailing_newlines
+                order = starting_order + len(chunks)
+                chunks.append(
+                    SourceChunkV1(
+                        chunk_id=stable_id(
+                            "chunk",
+                            document_id,
+                            order,
+                            checksum_text(chunk_text),
+                        ),
+                        document_id=document_id,
+                        chapter_id=stable_id("chapter", document_id, chapter_order, chapter_title),
+                        project_id=project_id,
+                        order=order,
+                        text=chunk_text,
+                        source_page=None,
+                        char_start=char_start,
+                        char_end=char_end,
+                        checksum=checksum_text(chunk_text),
+                    )
+                )
         return chunks
+
+    def _paragraph_spans(self, body: str) -> list[tuple[int, str]]:
+        spans: list[tuple[int, str]] = []
+        for match in re.finditer(r"\S(?:.*(?:\n(?!\s*\n).*)*)", body):
+            raw_text = match.group(0)
+            leading_newlines = len(raw_text) - len(raw_text.lstrip("\n"))
+            trailing_newlines = len(raw_text) - len(raw_text.rstrip("\n"))
+            paragraph_text = raw_text.strip("\n")
+            if not paragraph_text.strip():
+                continue
+            paragraph_start = match.start() + leading_newlines
+            paragraph_end = match.end() - trailing_newlines
+            spans.append((paragraph_start, body[paragraph_start:paragraph_end]))
+        return spans
+
+    def _split_long_span(self, text: str) -> list[tuple[int, int]]:
+        spans: list[tuple[int, int]] = []
+        start = 0
+        while start < len(text):
+            remaining = len(text) - start
+            if remaining <= _MAX_CHARS_PER_CHUNK:
+                spans.append((start, len(text)))
+                break
+
+            split_at = self._find_sentence_boundary(text, start)
+            spans.append((start, split_at))
+            start = split_at
+            while start < len(text) and text[start] == "\n":
+                start += 1
+        return spans
+
+    def _find_sentence_boundary(self, text: str, start: int) -> int:
+        preferred_start = min(start + _MIN_SENTENCE_CHUNK_CHARS, len(text))
+        preferred_end = min(start + _MAX_CHARS_PER_CHUNK, len(text))
+        for index in range(preferred_end - 1, preferred_start - 1, -1):
+            if text[index] in _SENTENCE_ENDINGS:
+                return index + 1
+
+        lookahead_end = min(start + _MAX_SENTENCE_LOOKAHEAD_CHARS, len(text))
+        for index in range(preferred_end, lookahead_end):
+            if text[index] in _SENTENCE_ENDINGS:
+                return min(index + 1, start + _MAX_CHARS_PER_CHUNK)
+
+        return min(start + _MAX_CHARS_PER_CHUNK, len(text))

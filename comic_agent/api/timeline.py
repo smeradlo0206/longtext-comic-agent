@@ -9,8 +9,12 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from comic_agent.agents.timeline_agent import TimelineAgent
-from comic_agent.api.dependencies import get_repository
+from comic_agent.api.dependencies import (
+    get_repository,
+    get_timeline_gate3_repository,
+)
 from comic_agent.repositories.source_repository import SourceRepository
+from comic_agent.repositories.timeline_gate3_repository import TimelineGate3Repository
 from comic_agent.schemas.base import EvidenceRefV1
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.timeline import TimelineAnalysisInputV1, TimelineAnalysisProposalV1
@@ -30,6 +34,10 @@ def get_timeline_agent(request: Request) -> TimelineAgent:
 
 
 TimelineAgentDep = Annotated[TimelineAgent, Depends(get_timeline_agent)]
+TimelineGate3RepositoryDep = Annotated[
+    TimelineGate3Repository,
+    Depends(get_timeline_gate3_repository),
+]
 
 
 @router.post(
@@ -63,7 +71,9 @@ def analyze_timeline(
             AgentRunV1(
                 agent_run_id=f"agent-run-{uuid4().hex}",
                 project_id=project_id,
+                agent_name=TimelineAgent.spec.agent_id,
                 agent_id=TimelineAgent.spec.agent_id,
+                output_schema="TimelineAnalysisProposalV1",
                 status=AgentRunStatus.FAILED,
                 error_message=str(exc),
             )
@@ -75,8 +85,12 @@ def analyze_timeline(
             agent_run_id=f"agent-run-{uuid4().hex}",
             project_id=project_id,
             agent_id=TimelineAgent.spec.agent_id,
+            agent_name=TimelineAgent.spec.agent_id,
+            input_chunk_ids=sorted(chunks),
             status=AgentRunStatus.SUCCEEDED,
             output_proposal_id=stored_proposal.proposal_id,
+            output_proposal_ids=[stored_proposal.proposal_id],
+            output_schema="TimelineAnalysisProposalV1",
         )
     )
     return stored_proposal
@@ -110,6 +124,90 @@ def get_timeline_analysis(
     if proposal is None:
         raise HTTPException(status_code=404, detail="Timeline analysis not found")
     return proposal
+
+
+@router.get("/projects/{project_id}/timeline-gate3/{source_bundle_id}")
+def get_timeline_gate3_summary(
+    project_id: str,
+    source_bundle_id: str,
+    repository: TimelineGate3RepositoryDep,
+) -> dict[str, object]:
+    """Return content-free Gate 2 -> Timeline -> Gate 3 progress metadata."""
+
+    run = repository.get_by_bundle(project_id, source_bundle_id)
+    if run is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Timeline is not ready for this approved bundle",
+        )
+    route = run.gate3_route
+    return {
+        "source_approved_proposal_bundle_id": run.source_approved_proposal_bundle_id,
+        "timeline_run_id": run.timeline_run_id,
+        "timeline_status": run.status,
+        "timeline_provider_request_count": run.provider_request_count,
+        "gate3_ready": run.gate3_result is not None and route is not None,
+        "gate3_route": route.route if route is not None else None,
+        "gate3_issue_count": run.gate3_result.issue_count if run.gate3_result else 0,
+        "gate3_safe_issue_codes": route.safe_issue_codes if route is not None else [],
+    }
+
+
+@router.get("/projects/{project_id}/timeline-gate3/{source_bundle_id}/review")
+def get_timeline_gate3_review(
+    project_id: str,
+    source_bundle_id: str,
+    repository: TimelineGate3RepositoryDep,
+) -> dict[str, object]:
+    """Return typed review fields after removing source/provider payloads."""
+
+    run = repository.get_by_bundle(project_id, source_bundle_id)
+    if run is None or run.gate3_result is None or run.gate3_route is None:
+        raise HTTPException(status_code=409, detail="Timeline Gate 3 review is not ready")
+    result = run.gate3_result.model_dump(mode="json")
+    result.pop("evidence_refs", None)
+    for issue in result.get("issues", []):
+        if isinstance(issue, dict):
+            issue.pop("evidence_refs", None)
+    route = run.gate3_route.model_dump(
+        mode="json",
+        exclude={"approved_timeline_bundle"},
+    )
+    return {"result": result, "route": route}
+
+
+@router.get("/projects/{project_id}/timeline-gate3/{source_bundle_id}/approved-bundle")
+def get_approved_timeline_bundle(
+    project_id: str,
+    source_bundle_id: str,
+    repository: TimelineGate3RepositoryDep,
+) -> dict[str, object]:
+    """Expose only Gate 3's fresh approved Timeline bundle."""
+
+    run = repository.get_by_bundle(project_id, source_bundle_id)
+    if run is None or run.approved_timeline_bundle is None:
+        raise HTTPException(status_code=409, detail="Approved Timeline bundle is unavailable")
+    return _safe_bundle_payload(run.approved_timeline_bundle.model_dump(mode="json"))
+
+
+def _safe_bundle_payload(payload: dict[str, object]) -> dict[str, object]:
+    """Keep typed identifiers/provenance while withholding source excerpts from read APIs."""
+
+    def scrub(value: object) -> object:
+        if isinstance(value, list):
+            return [scrub(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        return {
+            key: scrub(item)
+            for key, item in value.items()
+            if key not in {"quote_text", "prompt", "provider_response"}
+        }
+
+    safe = scrub(payload)
+    if not isinstance(safe, dict):
+        raise RuntimeError("Approved Timeline bundle payload must be an object")
+    return safe
 
 
 @router.get("/projects/{project_id}/agent-runs", response_model=list[AgentRunV1])
