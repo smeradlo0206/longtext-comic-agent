@@ -97,6 +97,7 @@ class NarrativeAnalystWorkflow:
         output_recovery_rule_codes: list[str] | None = None,
         execution_nonce: str | None = None,
         real_llm_requested: bool = False,
+        allow_fake_provider: bool = False,
     ) -> NarrativeAnalystWorkflowResult:
         """Run or dry-run a NarrativeAnalyst mode over selected chunks."""
 
@@ -153,7 +154,10 @@ class NarrativeAnalystWorkflow:
             chapter_titles=chapter_titles,
         )
 
-        if not real_llm_requested:
+        if allow_fake_provider and not self._settings.fake_pipeline_demo:
+            raise ValueError("local Fake provider is not enabled by server configuration")
+
+        if not real_llm_requested and not allow_fake_provider:
             return NarrativeAnalystWorkflowResult(
                 summary=summary,
                 proposal=None,
@@ -172,7 +176,7 @@ class NarrativeAnalystWorkflow:
             input_context["output_recovery"] = output_recovery
         if output_recovery_rule_codes:
             input_context["schema_error_rule_codes"] = output_recovery_rule_codes
-        if not self._settings.enable_real_llm:
+        if not self._settings.enable_real_llm and not allow_fake_provider:
             disabled_error_message = "ENABLE_REAL_LLM is false; provider was not called"
             set_failure(summary, "REAL_LLM_DISABLED")
             disabled_provider_result = self._provider_result(
@@ -212,7 +216,7 @@ class NarrativeAnalystWorkflow:
 
         try:
             provider = self._provider or self._build_provider()
-            summary["real_llm_called"] = True
+            summary["real_llm_called"] = real_llm_requested
             proposal = NarrativeAnalyst(provider).run(mode, input_context)
             evidence_normalization = normalize_proposal_evidence(proposal, visible_chunks)
             proposal = evidence_normalization.proposal
