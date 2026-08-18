@@ -1105,7 +1105,10 @@
       renderSafePipelineRunState(data);
       $("safePipelineStatus").textContent = pretty({
         import_and_gate1: data.gate1 ?? data.pipeline_status ?? "PENDING",
+        provider_health: data.provider_health?.status ?? "NOT_CHECKED",
         narrative: data.narrative ?? "PENDING",
+        batches: data.batch_summary ?? null,
+        windows: data.window_summary ?? null,
         narrative_failure_summary: data.narrative_failure_summary ?? null,
         gate2: data.gate2 ?? "NOT_READY",
         narrative_recovery: data.narrative_recovery ?? "NOT_STARTED",
@@ -1134,6 +1137,8 @@
         setSafePipelineRunState("已停止", `Gate 2 为 ${data.gate2}；Timeline 没有运行。`, data.gate2 === "NEEDS_HUMAN_REVIEW" ? "warn" : "bad");
       } else if (["REJECTED", "NEEDS_HUMAN_REVIEW", "FAILED"].includes(data.gate3)) {
         setSafePipelineRunState("已停止", `Gate 3 为 ${data.gate3}；不会进入下游。`, data.gate3 === "NEEDS_HUMAN_REVIEW" ? "warn" : "bad");
+      } else if (["PAUSED", "WAITING_RETRY", "CONFIGURATION_ERROR"].includes(data.provider_health?.status)) {
+        setSafePipelineRunState("Provider 暂停", "Provider 当前不可用或等待退避；未开始新的分析调用。", "warn");
       } else if (data.narrative === "FAILED" || data.narrative === "PARTIAL_FAILED") {
         const failure = data.narrative_failure_summary ?? {};
         const categories = Array.isArray(failure.failure_categories) && failure.failure_categories.length

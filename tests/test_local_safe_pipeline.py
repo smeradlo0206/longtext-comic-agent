@@ -81,6 +81,7 @@ def test_one_click_pipeline_imports_and_reaches_gate3_approved(tmp_path, monkeyp
     assert payload["timeline"] == "APPROVED"
     assert payload["gate3"] == "APPROVED"
     assert payload["approved_timeline_bundle_id"]
+    assert payload["batch_summary"] == {"total": 1, "status_counts": {"SUCCEEDED": 1}}
     assert "quote_text" not in status.text
     assert _OFFICIAL_TEXT not in status.text
     assert gate2_bundle.status_code == 200

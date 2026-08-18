@@ -93,6 +93,13 @@ from comic_agent.schemas.recovery import (
     RecoveryOutcomeV1,
     RecoveryPolicyV1,
 )
+from comic_agent.schemas.reliability import (
+    ProviderCircuitStateV1,
+    ProviderFailureCategory,
+    ProviderHealthResultV1,
+    ProviderHealthStatus,
+    ProviderPreflightResponseV1,
+)
 from comic_agent.schemas.review import (
     ApprovedProposalBundleV1,
     ApprovedProposalItemV1,
@@ -193,6 +200,8 @@ from comic_agent.schemas.workflow import (
     AggregatedRelationshipSignalProposalV1,
     AggregatedStateChangeProposalV1,
     MockProviderResultV1,
+    NarrativeAnalysisBatchStatus,
+    NarrativeAnalysisBatchV1,
     NarrativeAnalysisCreateRequestV1,
     NarrativeAnalysisProposalSourceV1,
     NarrativeAnalysisResultV1,
@@ -278,6 +287,8 @@ __all__ = [
     "KnowledgeTemporalAnchorV1",
     "KnowledgeReferenceResolutionStatus",
     "MockProviderResultV1",
+    "NarrativeAnalysisBatchStatus",
+    "NarrativeAnalysisBatchV1",
     "NarrativeAnalysisRunStatus",
     "NarrativeAnalysisRunV1",
     "NarrativeAnalysisCreateRequestV1",
@@ -291,6 +302,11 @@ __all__ = [
     "ProjectSpecV1",
     "ProviderResultV1",
     "ProviderType",
+    "ProviderCircuitStateV1",
+    "ProviderFailureCategory",
+    "ProviderHealthResultV1",
+    "ProviderHealthStatus",
+    "ProviderPreflightResponseV1",
     "QAResultV1",
     "RecordStatus",
     "RealityLayer",
