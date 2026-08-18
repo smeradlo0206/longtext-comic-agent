@@ -11,13 +11,19 @@ from comic_agent.schemas.narrative import (
     StateChangeProposalV1,
     TemporalRelationProposalV1,
 )
+from comic_agent.schemas.review import NarrativeAnalysisReviewRouteV1
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.storybible import (
+    StoryBibleCanonicalKind,
     StoryBibleContextV1,
+    StoryBibleIdentityBindingV1,
+    StoryEntityProfileV1,
     StoryEntityStateV1,
     StoryRelationshipV1,
     WorldRuleV1,
 )
+from comic_agent.schemas.timeline import NarrativeTimelineReviewRouteV1
+from comic_agent.services.id_service import stable_id
 
 MAX_STORYBIBLE_CONTEXT_ITEMS = 3
 
@@ -89,8 +95,32 @@ class ContextBuilder:
         state_change_proposals: Iterable[StateChangeProposalV1] = (),
         temporal_relation_proposals: Iterable[TemporalRelationProposalV1] = (),
         world_rules: Iterable[WorldRuleV1] = (),
+        gate2_route: NarrativeAnalysisReviewRouteV1 | None = None,
+        gate3_route: NarrativeTimelineReviewRouteV1 | None = None,
     ) -> StoryBibleContextV1:
         """Build project-scoped context around caller-selected profiles and chunks."""
+
+        if gate2_route is None or gate3_route is None:
+            raise ValueError("StoryBible context requires existing Gate 2 and Gate 3 routes")
+
+        gate2_bundle = gate2_route.approved_proposal_bundle
+        gate3_bundle = gate3_route.approved_timeline_bundle
+        if gate2_bundle is None or gate3_bundle is None:
+            raise ValueError("StoryBible context requires approved Gate 2 and Gate 3 bundles")
+
+        approved_proposals = [item.source.proposal for item in gate2_bundle.approved_proposals]
+        entity_values = [
+            proposal for proposal in approved_proposals if isinstance(proposal, EntityProposalV1)
+        ][:MAX_STORYBIBLE_CONTEXT_ITEMS]
+        event_values = [
+            proposal for proposal in approved_proposals if isinstance(proposal, EventProposalV1)
+        ][:MAX_STORYBIBLE_CONTEXT_ITEMS]
+        state_change_values = [
+            proposal
+            for proposal in approved_proposals
+            if isinstance(proposal, StateChangeProposalV1)
+        ][:MAX_STORYBIBLE_CONTEXT_ITEMS]
+        temporal_values = list(gate3_bundle.temporal_relations)[:MAX_STORYBIBLE_CONTEXT_ITEMS]
 
         profiles = []
         states: list[StoryEntityStateV1] = []
@@ -141,17 +171,83 @@ class ContextBuilder:
         if any(rule.project_id != project_id for rule in selected_world_rules):
             raise ValueError("world rule and context must belong to the same project")
 
+        identity_bindings = self._build_identity_bindings(
+            project_id=project_id,
+            entity_proposals=entity_values,
+            event_proposals=event_values,
+            state_change_proposals=state_change_values,
+            temporal_relation_proposals=temporal_values,
+            profiles=profiles,
+        )
+
         return StoryBibleContextV1(
             project_id=project_id,
-            entity_proposals=list(entity_proposals)[:MAX_STORYBIBLE_CONTEXT_ITEMS],
-            event_proposals=list(event_proposals)[:MAX_STORYBIBLE_CONTEXT_ITEMS],
-            state_change_proposals=list(state_change_proposals)[:MAX_STORYBIBLE_CONTEXT_ITEMS],
-            temporal_relation_proposals=list(temporal_relation_proposals)[
-                :MAX_STORYBIBLE_CONTEXT_ITEMS
-            ],
+            gate2_route=gate2_route,
+            gate3_route=gate3_route,
+            entity_proposals=entity_values,
+            event_proposals=event_values,
+            state_change_proposals=state_change_values,
+            temporal_relation_proposals=temporal_values,
             profiles=profiles,
             states=states,
             relationships=relationships,
             world_rules=selected_world_rules[:MAX_STORYBIBLE_CONTEXT_ITEMS],
+            identity_bindings=identity_bindings,
             source_chunk_ids=selected_chunk_ids,
         )
+
+    @staticmethod
+    def _build_identity_bindings(
+        *,
+        project_id: str,
+        entity_proposals: list[EntityProposalV1],
+        event_proposals: list[EventProposalV1],
+        state_change_proposals: list[StateChangeProposalV1],
+        temporal_relation_proposals: list[TemporalRelationProposalV1],
+        profiles: list[StoryEntityProfileV1],
+    ) -> list[StoryBibleIdentityBindingV1]:
+        """Assign stable project-scoped ids while retaining reviewed source ids."""
+
+        bindings: list[StoryBibleIdentityBindingV1] = []
+        existing_by_name = {
+            profile.canonical_name.strip().casefold(): profile.profile_id
+            for profile in profiles
+        }
+
+        def add(source_schema: str, source_id: str, kind: StoryBibleCanonicalKind) -> None:
+            suffix = stable_id("storybible", project_id, kind, source_id).split("_", 1)[1]
+            canonical_id = f"{project_id}:{kind.value.lower()}:{suffix}"
+            bindings.append(
+                StoryBibleIdentityBindingV1(
+                    source_schema=source_schema,
+                    source_proposal_id=source_id,
+                    canonical_kind=kind,
+                    canonical_id=canonical_id,
+                    project_id=project_id,
+                )
+            )
+
+        for entity_proposal in entity_proposals:
+            canonical_id = existing_by_name.get(entity_proposal.canonical_name.strip().casefold())
+            add(
+                "EntityProposalV1",
+                entity_proposal.proposal_id,
+                StoryBibleCanonicalKind.PROFILE,
+            )
+            if canonical_id is not None:
+                bindings[-1] = bindings[-1].model_copy(update={"canonical_id": canonical_id})
+        for event_proposal in event_proposals:
+            add("EventProposalV1", event_proposal.proposal_id, StoryBibleCanonicalKind.EVENT)
+        for state_proposal in state_change_proposals:
+            add(
+                "StateChangeProposalV1",
+                state_proposal.proposal_id,
+                StoryBibleCanonicalKind.STATE,
+            )
+        for temporal_proposal in temporal_relation_proposals:
+            add(
+                "TemporalRelationProposalV1",
+                temporal_proposal.proposal_id,
+                StoryBibleCanonicalKind.RELATIONSHIP,
+            )
+        return bindings

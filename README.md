@@ -80,7 +80,7 @@ uv run uvicorn comic_agent.main:app --reload
 ## StoryBible Curator 工作流
 
 ```
-导入 TXT → 获取 chunk_id → 调用 curate → 审查候选 → 审批提交 → 查询正式资源
+导入 TXT → Gate 2 APPROVED → Gate 3 APPROVED → 调用 curate → 审查候选 → 审批提交 → 查询正式资源
 ```
 
 ### 1. 创建项目
@@ -121,16 +121,38 @@ $chunkId = $chunks[0].chunk_id
 
 ### 3. 调用 StoryBible Curator
 
+StoryBible Curator 只接受已有 Gate 2 和 Gate 3 的 APPROVED 路由，不能直接把前一个
+Agent 的原始 proposal 塞进设定库。先从现有 Gate API 获取两个路由和对应 bundle；Gate 3
+的 bundle 还必须声明它来自同一个 Gate 2 approved bundle：
+
+```powershell
+# analysis_run_id 和 source_bundle_id 来自前面的 Gate 2/Timeline 流程
+$gate2 = Invoke-RestMethod `
+  "http://127.0.0.1:8000/narrative-analysis-runs/$analysisRunId/review-gate2"
+$gate3Review = Invoke-RestMethod `
+  "http://127.0.0.1:8000/projects/demo-story/timeline-gate3/$sourceBundleId/review"
+$gate3Bundle = Invoke-RestMethod `
+  "http://127.0.0.1:8000/projects/demo-story/timeline-gate3/$sourceBundleId/approved-bundle"
+$gate3Review.route.approved_timeline_bundle = $gate3Bundle
+```
+
 ```powershell
 $context = @{
     project_id = "demo-story"
     source_chunk_ids = @($chunkId)
+    gate2_route = $gate2.route
+    gate3_route = $gate3Review.route
 } | ConvertTo-Json
 
 $proposal = Invoke-RestMethod -Method Post `
   -Uri "http://127.0.0.1:8000/projects/demo-story/storybible/curate" `
   -ContentType "application/json" -Body $context
 ```
+
+如果任一路由不是 `APPROVED`、bundle 链接不一致，或只提供原始 proposal，接口会拒绝请求。
+Curator 会把 Gate 2/3 的审计对象排除在模型提示词之外，只使用经过边界检查的提案、资源和
+证据。`identity_bindings` 会把上游 proposal id 映射为项目长期使用的 StoryBible id，
+并在候选更新中保留 `source_proposal_id`。
 
 返回的 `StoryBibleCuratorProposalV1` 包含：
 - `status`: 始终为 `CANDIDATE`（不会直接写入正式数据）
@@ -163,13 +185,13 @@ Invoke-RestMethod -Method Post `
 Invoke-RestMethod "http://127.0.0.1:8000/projects/demo-story/storybible/profiles"
 
 # 查询单个 profile
-Invoke-RestMethod "http://127.0.0.1:8000/projects/demo-story/storybible/profiles/prof_linxia"
+Invoke-RestMethod "http://127.0.0.1:8000/projects/demo-story/storybible/profiles/{profile_id}"
 
 # 查询某 profile 的状态
-Invoke-RestMethod "http://127.0.0.1:8000/projects/demo-story/storybible/profiles/prof_linxia/states"
+Invoke-RestMethod "http://127.0.0.1:8000/projects/demo-story/storybible/profiles/{profile_id}/states"
 
 # 按事件过滤状态
-Invoke-RestMethod "http://127.0.0.1:8000/projects/demo-story/storybible/profiles/prof_linxia/states?event_id=event-a"
+Invoke-RestMethod "http://127.0.0.1:8000/projects/demo-story/storybible/profiles/{profile_id}/states?event_id=event-a"
 ```
 
 ## 架构说明
@@ -177,10 +199,10 @@ Invoke-RestMethod "http://127.0.0.1:8000/projects/demo-story/storybible/profiles
 - **`comic_agent/schemas/`** 是所有 schema 的唯一权威来源，`StrictBaseModel` 拒绝未声明的字段（`extra="forbid"`）
 - **Agent 只输出 Proposal**，不直接写入正式数据
 - **`CommitService`** 是正式 StoryBible 数据的唯一写入入口
-- **`StoryBibleCurator`** 接收 `StoryBibleContextV1`（API 端自动将 `source_chunk_ids` 解析为文本注入 prompt），输出 `StoryBibleCuratorProposalV1`
+- **`StoryBibleCurator`** 接收同时通过 Gate 2、Gate 3 的 `StoryBibleContextV1`（API 端自动将 `source_chunk_ids` 解析为文本注入 prompt），输出 `StoryBibleCuratorProposalV1`
 - **`StoryBibleValidator`** 在写入前验证所有 `evidence_refs` 的 `quote_text` 精确匹配源文本
 - **`EvidenceRefV1`** 必填字段仅 `chunk_id`，可选 `quote_start`/`quote_end`/`quote_text`。建议只提供 `chunk_id` + `quote_text`（精确子串即可通过验证）
-- **所有资源 ID 必须带项目前缀**，格式 `{project_id}:{short_id}`，如 `demo-story:prof_linxia`。Curator prompt 已要求模型遵守此规则，以确保跨项目全局唯一
+- **StoryBible 长期资源 ID 使用项目命名空间**，格式 `{project_id}:{kind}:{stable_suffix}`；上下游 proposal id 通过 `identity_bindings` 保留并可追溯
 - Curator prompt 内嵌完整 JSON Schema，确保不同 LLM 模型都能输出符合预期的结构
 - 单元测试使用 Mock providers 和本地 SQLite，不依赖真实模型 API
 

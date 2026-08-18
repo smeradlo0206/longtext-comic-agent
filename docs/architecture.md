@@ -26,15 +26,24 @@ story data. Its default configured model is `deepseek-v4-pro`, accessed only thr
 provider interface.
 
 `ContextBuilder` is the agent read boundary. It creates bounded, project-scoped context
-from selected source proposals and existing StoryBible resources; it does not expose a
-whole-database read to agents. `StoryBibleRepository` keeps retrieval project-scoped,
+only from the existing APPROVED Gate 2 proposal bundle and the linked APPROVED Gate 3
+timeline bundle, plus selected source chunks and existing StoryBible resources; it does
+not expose a whole-database read to agents. `StoryBibleRepository` keeps retrieval project-scoped,
 including profile lookup, state-at-event lookup, and related state/relationship retrieval.
 The API rejects path/body or nested-resource project mismatches before curation.
+
+Gate 2 and Gate 3 are not duplicated by StoryBible. `StoryBibleContextV1` validates their
+route decisions, project ownership, and bundle linkage, then `ContextBuilder` derives the
+proposal lists from those bundles. The curator receives only the bounded derived context;
+the route and bundle audit payloads are excluded from the provider request. Stable
+`StoryBibleIdentityBindingV1` records map reviewed proposal ids to long-lived project-scoped
+canonical ids.
 
 The proposed-to-canonical flow is:
 
 ```text
 bounded project context
+-> Gate 2 APPROVED bundle + linked Gate 3 APPROVED bundle
 -> StoryBible Curator candidate proposal
 -> evidence and invariant validation
 -> reviewed CommitPlanV1

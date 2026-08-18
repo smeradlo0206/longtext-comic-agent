@@ -17,6 +17,12 @@ from comic_agent.database.models import (
 )
 from comic_agent.repositories.storybible_repository import StoryBibleRepository
 from comic_agent.schemas.base import EvidenceRefV1
+from comic_agent.schemas.review import (
+    ApprovedProposalBundleV1,
+    NarrativeAnalysisReviewRouteV1,
+    ReviewGate2RoutingDecision,
+    ReviewGate2RunStatus,
+)
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.storybible import (
     CommitPlanV1,
@@ -27,6 +33,11 @@ from comic_agent.schemas.storybible import (
     StoryEntityProfileV1,
     StoryEntityStateV1,
     StoryRelationshipV1,
+)
+from comic_agent.schemas.timeline import (
+    ApprovedTimelineBundleV1,
+    NarrativeTimelineReviewRouteV1,
+    ReviewGate3Decision,
 )
 from comic_agent.services.commit_service import CommitService
 from comic_agent.services.context_builder import ContextBuilder
@@ -74,6 +85,54 @@ def chunk(chunk_id: str = "chunk-a", project_id: str = "project-a") -> SourceChu
         text="Xia Ming waits at the market.",
         checksum=f"checksum-{chunk_id}",
     )
+
+
+def approved_gate_routes(
+    project_id: str = "project-a",
+) -> tuple[NarrativeAnalysisReviewRouteV1, NarrativeTimelineReviewRouteV1]:
+    """Return linked, approved Gate 2/Gate 3 routes for context-builder tests."""
+
+    gate2_bundle = ApprovedProposalBundleV1(
+        bundle_id=f"bundle-gate2-{project_id}",
+        project_id=project_id,
+        document_id=f"document-{project_id}",
+        analysis_run_id=f"analysis-{project_id}",
+        review_run_id=f"review-{project_id}",
+        policy_id="policy-1",
+        approved_proposals=[],
+        review_decision_ids=[],
+    )
+    gate2_route = NarrativeAnalysisReviewRouteV1(
+        analysis_run_id=gate2_bundle.analysis_run_id,
+        review_run_id=gate2_bundle.review_run_id,
+        decision=ReviewGate2RoutingDecision.APPROVED,
+        review_status=ReviewGate2RunStatus.COMPLETED,
+        total_count=0,
+        approved_count=0,
+        rejected_count=0,
+        held_count=0,
+        approved_proposal_bundle=gate2_bundle,
+    )
+    gate3_bundle = ApprovedTimelineBundleV1(
+        bundle_id=f"bundle-gate3-{project_id}",
+        project_id=project_id,
+        source_approved_proposal_bundle_id=gate2_bundle.bundle_id,
+        source_gate2_review_id=gate2_bundle.review_run_id,
+        source_gate2_route_id=gate2_route.analysis_run_id,
+        timeline_run_id=f"timeline-{project_id}",
+        gate3_review_id=f"gate3-review-{project_id}",
+        gate3_route_id=f"gate3-route-{project_id}",
+        evidence_refs=[EvidenceRefV1(chunk_id="chunk-a")],
+    )
+    gate3_route = NarrativeTimelineReviewRouteV1(
+        route_id=gate3_bundle.gate3_route_id,
+        review_id=gate3_bundle.gate3_review_id,
+        timeline_run_id=gate3_bundle.timeline_run_id,
+        route=ReviewGate3Decision.APPROVED,
+        approved_timeline_bundle_id=gate3_bundle.bundle_id,
+        approved_timeline_bundle=gate3_bundle,
+    )
+    return gate2_route, gate3_route
 
 
 def profile_update(
@@ -780,11 +839,14 @@ def test_storybible_context_is_selected_project_scoped_and_bounded(
             "seed-plan",
         )
 
+    gate2_route, gate3_route = approved_gate_routes()
     context = ContextBuilder().storybible_context(
         project_id="project-a",
         profile_ids=["profile-1"],
         source_chunks=[chunk(f"chunk-{index}") for index in range(5)],
         repository=repository,
+        gate2_route=gate2_route,
+        gate3_route=gate3_route,
     )
 
     assert [profile.profile_id for profile in context.profiles] == ["profile-1"]
@@ -814,11 +876,14 @@ def test_storybible_context_caps_profiles_after_loading_their_related_resources(
         "seed-plan",
     )
 
+    gate2_route, gate3_route = approved_gate_routes()
     context = ContextBuilder().storybible_context(
         project_id="project-a",
         profile_ids=[f"profile-{index}" for index in range(4)],
         source_chunks=[],
         repository=repository,
+        gate2_route=gate2_route,
+        gate3_route=gate3_route,
     )
 
     assert [profile.profile_id for profile in context.profiles] == [
@@ -849,11 +914,14 @@ def test_storybible_context_caps_related_resources_across_selected_profiles(
                 "seed-plan",
             )
 
+    gate2_route, gate3_route = approved_gate_routes()
     context = ContextBuilder().storybible_context(
         project_id="project-a",
         profile_ids=["profile-1", "profile-2"],
         source_chunks=[],
         repository=repository,
+        gate2_route=gate2_route,
+        gate3_route=gate3_route,
     )
 
     assert [state.state_id for state in context.states] == [
@@ -869,11 +937,14 @@ def test_storybible_context_rejects_cross_project_source_chunks(
     _, repository = storybible_store
 
     with pytest.raises(ValueError, match="project"):
+        gate2_route, gate3_route = approved_gate_routes()
         ContextBuilder().storybible_context(
             project_id="project-a",
             profile_ids=[],
             source_chunks=[chunk("chunk-b", "project-b")],
             repository=repository,
+            gate2_route=gate2_route,
+            gate3_route=gate3_route,
         )
 
 
@@ -885,9 +956,12 @@ def test_storybible_context_checks_project_scope_before_truncating_chunks(
     chunks.append(chunk("chunk-b", "project-b"))
 
     with pytest.raises(ValueError, match="project"):
+        gate2_route, gate3_route = approved_gate_routes()
         ContextBuilder().storybible_context(
             project_id="project-a",
             profile_ids=[],
             source_chunks=chunks,
             repository=repository,
+            gate2_route=gate2_route,
+            gate3_route=gate3_route,
         )

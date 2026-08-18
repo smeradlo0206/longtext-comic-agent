@@ -42,7 +42,14 @@ States and relationships additionally record a valid story-time interval.
 updates collected by `StoryBibleUpdateV1`. `ConflictV1` records reviewable conflicts;
 `CommitPlanV1` is the reviewed, evidence-backed plan eligible for promotion; and
 `StoryBibleCuratorProposalV1` is the candidate-only curator result. `StoryBibleContextV1`
-is the bounded input contract for that curator.
+is the bounded input contract for that curator. It must contain the existing
+`NarrativeAnalysisReviewRouteV1` and `NarrativeTimelineReviewRouteV1` in the `APPROVED`
+state, with a Gate 3 bundle linked to the same Gate 2 approved bundle. Raw upstream
+proposals are not accepted as a substitute for either gate.
+
+`StoryBibleIdentityBindingV1` records the mapping from each reviewed upstream proposal id
+to the project-scoped long-lived StoryBible id. Curator updates retain the upstream id in
+`source_proposal_id`; only the mapped canonical id is eligible for later promotion.
 
 StoryBible identifiers are limited to 128 characters and canonical/alias names to 255
 characters. These Pydantic constraints match the `VARCHAR(128)` and `VARCHAR(255)`
@@ -69,7 +76,9 @@ Schema export script produces the machine-readable contracts.
 
 ### 2026-08-09 V1 contract hardening and migration note
 
-The StoryBible contracts remain at `schema_version = "1.0"` because this correction is
+`StoryBibleContextV1` is now `schema_version = "1.1"` because the approved Gate 2/Gate 3
+handoff and identity bindings are required fields. Other StoryBible contracts remain at
+`schema_version = "1.0"` because this correction is
 part of the initial, unreleased V1 feature branch required by the implementation plan.
 The accepted input domain is tightened only for identifiers longer than 128 characters
 and names longer than 255 characters, values the existing `0004_storybible_resources`

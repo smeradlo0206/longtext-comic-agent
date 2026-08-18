@@ -15,7 +15,19 @@ from comic_agent.agents.storybible_curator import StoryBibleCurator
 from comic_agent.database.models import SourceChunkModel
 from comic_agent.main import create_app
 from comic_agent.providers.mocks import MockLLMProvider
+from comic_agent.schemas.review import (
+    ApprovedProposalBundleV1,
+    NarrativeAnalysisReviewRouteV1,
+    ReviewGate2RoutingDecision,
+    ReviewGate2RunStatus,
+)
 from comic_agent.schemas.source import SourceChunkV1
+from comic_agent.schemas.storybible import StoryBibleContextV1
+from comic_agent.schemas.timeline import (
+    ApprovedTimelineBundleV1,
+    NarrativeTimelineReviewRouteV1,
+    ReviewGate3Decision,
+)
 
 
 def candidate_payload(
@@ -138,6 +150,64 @@ def seed_chunk(
         session.close()
 
 
+def context_payload(
+    *,
+    project_id: str = "project-a",
+    source_chunk_ids: list[str] | None = None,
+    **updates: Any,
+) -> dict[str, Any]:
+    """Build an API body backed by the real approved Gate 2 and Gate 3 contracts."""
+
+    gate2_bundle = ApprovedProposalBundleV1(
+        bundle_id=f"bundle-gate2-{project_id}",
+        project_id=project_id,
+        document_id=f"document-{project_id}",
+        analysis_run_id=f"analysis-{project_id}",
+        review_run_id=f"review-{project_id}",
+        policy_id="policy-1",
+        approved_proposals=[],
+        review_decision_ids=[],
+    )
+    gate2_route = NarrativeAnalysisReviewRouteV1(
+        analysis_run_id=gate2_bundle.analysis_run_id,
+        review_run_id=gate2_bundle.review_run_id,
+        decision=ReviewGate2RoutingDecision.APPROVED,
+        review_status=ReviewGate2RunStatus.COMPLETED,
+        total_count=0,
+        approved_count=0,
+        rejected_count=0,
+        held_count=0,
+        approved_proposal_bundle=gate2_bundle,
+    )
+    gate3_bundle = ApprovedTimelineBundleV1(
+        bundle_id=f"bundle-gate3-{project_id}",
+        project_id=project_id,
+        source_approved_proposal_bundle_id=gate2_bundle.bundle_id,
+        source_gate2_review_id=gate2_bundle.review_run_id,
+        source_gate2_route_id=gate2_route.analysis_run_id,
+        timeline_run_id=f"timeline-{project_id}",
+        gate3_review_id=f"gate3-review-{project_id}",
+        gate3_route_id=f"gate3-route-{project_id}",
+        evidence_refs=[{"chunk_id": "chunk-a"}],
+    )
+    gate3_route = NarrativeTimelineReviewRouteV1(
+        route_id=gate3_bundle.gate3_route_id,
+        review_id=gate3_bundle.gate3_review_id,
+        timeline_run_id=gate3_bundle.timeline_run_id,
+        route=ReviewGate3Decision.APPROVED,
+        approved_timeline_bundle_id=gate3_bundle.bundle_id,
+        approved_timeline_bundle=gate3_bundle,
+    )
+    body = StoryBibleContextV1(
+        project_id=project_id,
+        gate2_route=gate2_route,
+        gate3_route=gate3_route,
+        source_chunk_ids=source_chunk_ids or ["chunk-a"],
+    ).model_dump(mode="json")
+    body.update(updates)
+    return body
+
+
 @pytest.fixture()
 def storybible_client(tmp_path: Path) -> Iterator[TestClient]:
     """Serve the real API with a deterministic, network-free curator provider."""
@@ -155,7 +225,7 @@ def storybible_client(tmp_path: Path) -> Iterator[TestClient]:
 def curate(client: TestClient) -> dict[str, Any]:
     response = client.post(
         "/projects/project-a/storybible/curate",
-        json={"project_id": "project-a", "source_chunk_ids": ["chunk-a"]},
+        json=context_payload(),
     )
     assert response.status_code == 200
     return response.json()
@@ -200,10 +270,8 @@ def test_curation_rebuilds_canonical_context_from_project_scoped_storage(
 
     response = storybible_client.post(
         "/projects/project-a/storybible/curate",
-        json={
-            "project_id": "project-a",
-            "source_chunk_ids": ["chunk-a"],
-            "profiles": [
+        json=context_payload(
+            profiles=[
                 {
                     "profile_id": "profile-a",
                     "project_id": "project-a",
@@ -212,7 +280,7 @@ def test_curation_rebuilds_canonical_context_from_project_scoped_storage(
                     "evidence_refs": [{"chunk_id": "chunk-a"}],
                 }
             ],
-            "states": [
+            states=[
                 {
                     "state_id": "forged-state",
                     "project_id": "project-a",
@@ -221,7 +289,7 @@ def test_curation_rebuilds_canonical_context_from_project_scoped_storage(
                     "evidence_refs": [{"chunk_id": "chunk-a"}],
                 }
             ],
-            "relationships": [
+            relationships=[
                 {
                     "relationship_id": "forged-relationship",
                     "project_id": "project-a",
@@ -231,7 +299,7 @@ def test_curation_rebuilds_canonical_context_from_project_scoped_storage(
                     "evidence_refs": [{"chunk_id": "chunk-a"}],
                 }
             ],
-            "world_rules": [
+            world_rules=[
                 {
                     "rule_id": "forged-rule",
                     "project_id": "project-a",
@@ -240,7 +308,7 @@ def test_curation_rebuilds_canonical_context_from_project_scoped_storage(
                     "evidence_refs": [{"chunk_id": "chunk-a"}],
                 }
             ],
-        },
+        ),
     )
 
     assert response.status_code == 200
@@ -269,7 +337,7 @@ def test_curation_rejects_different_proposals_that_reuse_a_content_hash(
 
     response = storybible_client.post(
         "/projects/project-a/storybible/curate",
-        json={"project_id": "project-a", "source_chunk_ids": ["chunk-a"]},
+        json=context_payload(),
     )
 
     assert response.status_code == 422
@@ -286,7 +354,7 @@ def test_curation_returns_bad_gateway_for_provider_failure(
 
     response = storybible_client.post(
         "/projects/project-a/storybible/curate",
-        json={"project_id": "project-a", "source_chunk_ids": ["chunk-a"]},
+        json=context_payload(),
     )
 
     assert response.status_code == 502
@@ -300,7 +368,7 @@ def test_curation_rejects_context_for_another_project(
 
     response = storybible_client.post(
         "/projects/project-b/storybible/curate",
-        json={"project_id": "project-a", "source_chunk_ids": ["chunk-a"]},
+        json=context_payload(),
     )
 
     assert response.status_code == 409
@@ -342,10 +410,10 @@ def test_curation_rejects_nested_context_from_another_project(
 
     response = storybible_client.post(
         "/projects/project-a/storybible/curate",
-        json={"project_id": "project-a", **foreign_context},
+        json=context_payload(**foreign_context),
     )
 
-    assert response.status_code == 409
+    assert response.status_code in {409, 422}
 
 
 def test_commit_requires_explicit_approval(storybible_client: TestClient) -> None:

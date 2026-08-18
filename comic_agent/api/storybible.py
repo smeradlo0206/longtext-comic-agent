@@ -126,6 +126,8 @@ def _build_project_context(
                 state_change_proposals=requested_context.state_change_proposals,
                 temporal_relation_proposals=requested_context.temporal_relation_proposals,
                 world_rules=repository.list_world_rules(project_id),
+                gate2_route=requested_context.gate2_route,
+                gate3_route=requested_context.gate3_route,
             ),
             chunk_texts,
         )

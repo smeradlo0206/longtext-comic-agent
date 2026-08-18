@@ -12,6 +12,15 @@ from comic_agent.schemas.narrative import (
     StateChangeProposalV1,
     TemporalRelationProposalV1,
 )
+from comic_agent.schemas.review import (
+    NarrativeAnalysisReviewRouteV1,
+    ReviewGate2RoutingDecision,
+    ReviewGate2RunStatus,
+)
+from comic_agent.schemas.timeline import (
+    NarrativeTimelineReviewRouteV1,
+    ReviewGate3Decision,
+)
 
 
 class StoryEntityKind(StrEnum):
@@ -20,6 +29,16 @@ class StoryEntityKind(StrEnum):
     PERSON = "PERSON"
     ORGANIZATION = "ORGANIZATION"
     LOCATION = "LOCATION"
+
+
+class StoryBibleCanonicalKind(StrEnum):
+    """Long-lived identifier namespace owned by StoryBible."""
+
+    EVENT = "EVENT"
+    PROFILE = "PROFILE"
+    STATE = "STATE"
+    RELATIONSHIP = "RELATIONSHIP"
+    WORLD_RULE = "WORLD_RULE"
 
 
 StoryBibleId = Annotated[str, StringConstraints(max_length=128)]
@@ -151,12 +170,31 @@ class WorldRuleV1(StrictBaseModel):
         return _reject_blank(value)
 
 
+class StoryBibleIdentityBindingV1(StrictBaseModel):
+    """Mapping from a reviewed upstream proposal id to a durable StoryBible id."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    source_schema: StoryBibleId
+    source_proposal_id: StoryBibleId
+    canonical_kind: StoryBibleCanonicalKind
+    canonical_id: StoryBibleId
+    project_id: StoryBibleId
+
+    @field_validator(
+        "source_schema", "source_proposal_id", "canonical_id", "project_id"
+    )
+    @classmethod
+    def binding_values_are_nonblank(cls, value: str) -> str:
+        return _reject_blank(value)
+
+
 class ProfileUpdateProposalV1(StrictBaseModel):
     """Candidate upsert of an entity profile, emitted by the curator."""
 
     schema_version: Literal["1.0"] = "1.0"
     update_id: StoryBibleId
     project_id: StoryBibleId
+    source_proposal_id: StoryBibleId | None = None
     profile: StoryEntityProfileV1
     evidence_refs: list[EvidenceRefV1] = Field(min_length=1)
 
@@ -167,6 +205,7 @@ class StateUpdateProposalV1(StrictBaseModel):
     schema_version: Literal["1.0"] = "1.0"
     update_id: StoryBibleId
     project_id: StoryBibleId
+    source_proposal_id: StoryBibleId | None = None
     state: StoryEntityStateV1
     evidence_refs: list[EvidenceRefV1] = Field(min_length=1)
 
@@ -177,6 +216,7 @@ class RelationshipUpdateProposalV1(StrictBaseModel):
     schema_version: Literal["1.0"] = "1.0"
     update_id: StoryBibleId
     project_id: StoryBibleId
+    source_proposal_id: StoryBibleId | None = None
     relationship: StoryRelationshipV1
     evidence_refs: list[EvidenceRefV1] = Field(min_length=1)
 
@@ -187,6 +227,7 @@ class WorldRuleUpdateProposalV1(StrictBaseModel):
     schema_version: Literal["1.0"] = "1.0"
     update_id: StoryBibleId
     project_id: StoryBibleId
+    source_proposal_id: StoryBibleId | None = None
     world_rule: WorldRuleV1
     evidence_refs: list[EvidenceRefV1] = Field(min_length=1)
 
@@ -236,10 +277,12 @@ class CommitPlanV1(StrictBaseModel):
 
 
 class StoryBibleContextV1(StrictBaseModel):
-    """Bounded context supplied to the proposal-only StoryBible curator."""
+    """Bounded context admitted only from the existing Gate 2 and Gate 3 routes."""
 
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["1.1"] = "1.1"
     project_id: StoryBibleId
+    gate2_route: NarrativeAnalysisReviewRouteV1
+    gate3_route: NarrativeTimelineReviewRouteV1
     entity_proposals: list[EntityProposalV1] = Field(default_factory=list)
     event_proposals: list[EventProposalV1] = Field(default_factory=list)
     state_change_proposals: list[StateChangeProposalV1] = Field(default_factory=list)
@@ -248,12 +291,107 @@ class StoryBibleContextV1(StrictBaseModel):
     states: list[StoryEntityStateV1] = Field(default_factory=list)
     relationships: list[StoryRelationshipV1] = Field(default_factory=list)
     world_rules: list[WorldRuleV1] = Field(default_factory=list)
+    identity_bindings: list[StoryBibleIdentityBindingV1] = Field(default_factory=list)
     source_chunk_ids: list[StoryBibleId] = Field(default_factory=list, max_length=3)
 
     @field_validator("project_id")
     @classmethod
     def project_id_is_not_blank(cls, value: str) -> str:
         return _reject_blank(value)
+
+    @model_validator(mode="after")
+    def require_approved_gate_routes(self) -> "StoryBibleContextV1":
+        """Reject raw or partial inputs before StoryBible curation can start."""
+
+        gate2 = self.gate2_route
+        if (
+            gate2.decision != ReviewGate2RoutingDecision.APPROVED
+            or gate2.review_status != ReviewGate2RunStatus.COMPLETED
+            or gate2.approved_proposal_bundle is None
+        ):
+            raise ValueError("StoryBible context requires an APPROVED Gate 2 route with a bundle")
+        gate3 = self.gate3_route
+        if (
+            gate3.route != ReviewGate3Decision.APPROVED
+            or gate3.approved_timeline_bundle is None
+        ):
+            raise ValueError("StoryBible context requires an APPROVED Gate 3 route with a bundle")
+
+        gate2_bundle = gate2.approved_proposal_bundle
+        gate3_bundle = gate3.approved_timeline_bundle
+        if gate2_bundle.project_id != self.project_id or gate3_bundle.project_id != self.project_id:
+            raise ValueError("Gate 2 and Gate 3 bundles must belong to the context project")
+        if gate3_bundle.source_approved_proposal_bundle_id != gate2_bundle.bundle_id:
+            raise ValueError("Gate 3 bundle must be derived from the approved Gate 2 bundle")
+        if gate3_bundle.source_gate2_review_id != gate2_bundle.review_run_id:
+            raise ValueError("Gate 3 bundle must retain the Gate 2 review id")
+        if gate3_bundle.source_gate2_route_id != gate2.analysis_run_id:
+            raise ValueError("Gate 3 bundle must retain the Gate 2 route id")
+
+        approved_proposals = [item.source.proposal for item in gate2_bundle.approved_proposals]
+        expected_entities = [
+            proposal for proposal in approved_proposals if isinstance(proposal, EntityProposalV1)
+        ][:3]
+        expected_events = [
+            proposal for proposal in approved_proposals if isinstance(proposal, EventProposalV1)
+        ][:3]
+        expected_states = [
+            proposal
+            for proposal in approved_proposals
+            if isinstance(proposal, StateChangeProposalV1)
+        ][:3]
+        expected_temporal = gate3_bundle.temporal_relations[:3]
+        if self.entity_proposals != expected_entities:
+            raise ValueError("StoryBible entity proposals must come from the Gate 2 bundle")
+        if self.event_proposals != expected_events:
+            raise ValueError("StoryBible event proposals must come from the Gate 2 bundle")
+        if self.state_change_proposals != expected_states:
+            raise ValueError("StoryBible state proposals must come from the Gate 2 bundle")
+        if self.temporal_relation_proposals != expected_temporal:
+            raise ValueError("StoryBible temporal proposals must come from the Gate 3 bundle")
+
+        all_proposal_ids = [
+            proposal.proposal_id
+            for proposals in (
+                self.entity_proposals,
+                self.event_proposals,
+                self.state_change_proposals,
+                self.temporal_relation_proposals,
+            )
+            for proposal in proposals
+        ]
+        if len(all_proposal_ids) != len(set(all_proposal_ids)):
+            raise ValueError("StoryBible context proposal ids must be globally unique")
+
+        binding_keys = [
+            (binding.source_schema, binding.source_proposal_id)
+            for binding in self.identity_bindings
+        ]
+        if len(binding_keys) != len(set(binding_keys)):
+            raise ValueError("identity_bindings must be unique per source schema and proposal id")
+        expected_binding_keys = {
+            ("EntityProposalV1", proposal.proposal_id)
+            for proposal in self.entity_proposals
+        }
+        expected_binding_keys.update(
+            ("EventProposalV1", proposal.proposal_id) for proposal in self.event_proposals
+        )
+        expected_binding_keys.update(
+            ("StateChangeProposalV1", proposal.proposal_id)
+            for proposal in self.state_change_proposals
+        )
+        expected_binding_keys.update(
+            ("TemporalRelationProposalV1", proposal.proposal_id)
+            for proposal in self.temporal_relation_proposals
+        )
+        if set(binding_keys) != expected_binding_keys:
+            raise ValueError(
+                "identity_bindings must cover exactly the admitted Gate 2/Gate 3 proposals"
+            )
+        for binding in self.identity_bindings:
+            if binding.project_id != self.project_id:
+                raise ValueError("identity binding project must match StoryBible context")
+        return self
 
 
 class StoryBibleCuratorProposalV1(StrictBaseModel):
@@ -264,6 +402,7 @@ class StoryBibleCuratorProposalV1(StrictBaseModel):
     project_id: StoryBibleId
     status: RecordStatus = RecordStatus.CANDIDATE
     commit_plan: CommitPlanV1
+    identity_bindings: list[StoryBibleIdentityBindingV1] = Field(default_factory=list)
     conflicts: list[ConflictV1] = Field(default_factory=list)
     evidence_refs: list[EvidenceRefV1] = Field(min_length=1)
     confidence: float = Field(ge=0, le=1)

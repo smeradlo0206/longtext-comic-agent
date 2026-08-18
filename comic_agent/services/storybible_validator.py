@@ -10,6 +10,7 @@ from comic_agent.schemas.storybible import (
     ProfileUpdateProposalV1,
     RelationshipUpdateProposalV1,
     StateUpdateProposalV1,
+    StoryBibleCanonicalKind,
     StoryBibleCuratorProposalV1,
     StoryEntityProfileV1,
     StoryEntityStateV1,
@@ -53,6 +54,8 @@ class StoryBibleValidator:
         if proposal.commit_plan.source_proposal_id != proposal.proposal_id:
             raise ValueError("commit plan source_proposal_id must match proposal_id")
 
+        self._validate_identity_bindings(proposal)
+
         self.validate_evidence_refs(
             proposal.evidence_refs,
             project_id=proposal.project_id,
@@ -71,6 +74,39 @@ class StoryBibleValidator:
                 owner=f"conflict {conflict.conflict_id}",
             )
         self.validate_commit_plan(proposal.commit_plan)
+
+    @staticmethod
+    def _validate_identity_bindings(proposal: StoryBibleCuratorProposalV1) -> None:
+        """Ensure every mapped candidate update uses its durable canonical id."""
+
+        bindings = list(proposal.identity_bindings)
+        by_source = {
+            (binding.canonical_kind, binding.source_proposal_id): binding
+            for binding in bindings
+        }
+        if any(binding.project_id != proposal.project_id for binding in bindings):
+            raise ValueError("identity binding and proposal must belong to the same project")
+        for update in proposal.commit_plan.updates:
+            source_id = update.source_proposal_id
+            if source_id is None:
+                continue
+            if isinstance(update, ProfileUpdateProposalV1):
+                kind = StoryBibleCanonicalKind.PROFILE
+                canonical_id = update.profile.profile_id
+            elif isinstance(update, StateUpdateProposalV1):
+                kind = StoryBibleCanonicalKind.STATE
+                canonical_id = update.state.state_id
+            elif isinstance(update, RelationshipUpdateProposalV1):
+                kind = StoryBibleCanonicalKind.RELATIONSHIP
+                canonical_id = update.relationship.relationship_id
+            else:
+                kind = StoryBibleCanonicalKind.WORLD_RULE
+                canonical_id = update.world_rule.rule_id
+            binding = by_source.get((kind, source_id))
+            if binding is None or binding.canonical_id != canonical_id:
+                raise ValueError(
+                    f"update {update.update_id} does not use its mapped canonical id"
+                )
 
     def validate_commit_plan(
         self,
