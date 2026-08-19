@@ -11,7 +11,12 @@ from pydantic import Field, model_validator
 
 from comic_agent.agents.timeline_agent import TimelineAgent
 from comic_agent.schemas.base import StrictBaseModel
-from comic_agent.schemas.narrative import EventProposalV1, TemporalRelation
+from comic_agent.schemas.narrative import (
+    ClaimProposalV1,
+    EventProposalV1,
+    StateChangeProposalV1,
+    TemporalRelation,
+)
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.timeline import TimelineAnalysisInputV1, TimelineAnalysisMode
 from comic_agent.services.commit_service import CommitService
@@ -37,6 +42,8 @@ class TimelineGoldCaseV1(StrictBaseModel):
     source_chunks: list[SourceChunkV1] = Field(min_length=2)
     event_a: EventProposalV1
     event_b: EventProposalV1
+    claim_proposals: list[ClaimProposalV1] = Field(default_factory=list)
+    state_change_proposals: list[StateChangeProposalV1] = Field(default_factory=list)
     gold_relation: TemporalRelation
     gold_conflict: bool
     gold_duplicate: bool
@@ -47,9 +54,11 @@ class TimelineGoldCaseV1(StrictBaseModel):
         if self.gold_relation not in EVAL_RELATIONS:
             raise ValueError("gold_relation is not supported by Timeline V2")
         chunks = {chunk.chunk_id for chunk in self.source_chunks}
-        for event in (self.event_a, self.event_b):
-            if any(ref.chunk_id not in chunks for ref in event.evidence_refs):
-                raise ValueError("event evidence must reference a case source chunk")
+        evidence_groups = [self.event_a.evidence_refs, self.event_b.evidence_refs]
+        evidence_groups.extend(proposal.evidence_refs for proposal in self.claim_proposals)
+        evidence_groups.extend(proposal.evidence_refs for proposal in self.state_change_proposals)
+        if any(ref.chunk_id not in chunks for group in evidence_groups for ref in group):
+            raise ValueError("proposal evidence must reference a case source chunk")
         return self
 
 
@@ -73,11 +82,12 @@ class TimelineEvaluationResult:
     predicted_conflict: bool | None
     gold_duplicate: bool
     predicted_duplicate: bool | None
-    evidence_validation: bool
+    evidence_validation: bool | None
     latency_ms: float
     status: str
     error_type: str | None = None
     error_message: str | None = None
+    failure_category: str | None = None
 
 
 def load_timeline_gold_cases(path: Path) -> list[TimelineGoldCaseV1]:
@@ -101,18 +111,23 @@ def evaluate_case(
     case: TimelineGoldCaseV1, agent: TimelineAgent, mode: TimelineAnalysisMode
 ) -> TimelineEvaluationResult:
     started = perf_counter()
+    stage = "input_evidence"
     try:
         validator = CommitService(_CaseLookup(case.source_chunks))
         validator.validate_story_proposal_evidence(case.event_a)
         validator.validate_story_proposal_evidence(case.event_b)
+        stage = "agent_execution"
         proposal = agent.run(
             TimelineAnalysisInputV1(
                 project_id="timeline-gold",
                 mode=mode,
                 event_proposals=[case.event_a, case.event_b],
+                claim_proposals=case.claim_proposals,
+                state_change_proposals=case.state_change_proposals,
             ),
             source_chunks=case.source_chunks,
         )
+        stage = "output_evidence"
         for relation in proposal.temporal_relations:
             validator.validate_temporal_relation_evidence(relation, "timeline-gold")
         predicted_relation = (
@@ -133,7 +148,10 @@ def evaluate_case(
             (perf_counter() - started) * 1000,
             "succeeded",
         )
-    except (RuntimeError, ValueError) as exc:
+    except Exception as exc:
+        # Evaluation must record provider/network/schema failures per case instead of
+        # aborting the batch or misclassifying an execution failure as UNKNOWN.
+        category = classify_failure(exc, stage)
         return TimelineEvaluationResult(
             case.case_id,
             case.category,
@@ -145,12 +163,35 @@ def evaluate_case(
             None,
             case.gold_duplicate,
             None,
-            False,
+            False
+            if category in {"input_evidence", "evidence_selection", "output_evidence"}
+            else None,
             (perf_counter() - started) * 1000,
             "failed",
             type(exc).__name__,
             str(exc),
+            category,
         )
+
+
+def classify_failure(exc: Exception, stage: str) -> str:
+    """Return a stable evaluation failure family without changing production behavior."""
+
+    if stage == "input_evidence":
+        return "input_evidence"
+    if stage == "output_evidence":
+        return "output_evidence"
+    if isinstance(exc, (ConnectionError, TimeoutError)) or type(exc).__name__ in {
+        "ConnectError",
+        "ConnectTimeout",
+        "ReadError",
+        "ReadTimeout",
+        "RemoteProtocolError",
+    }:
+        return "network"
+    if isinstance(exc, ValueError) and "unknown evidence id" in str(exc):
+        return "evidence_selection"
+    return "provider_or_schema"
 
 
 def result_to_json(result: TimelineEvaluationResult) -> dict[str, object]:
@@ -193,14 +234,23 @@ def calculate_metrics(results: list[TimelineEvaluationResult], mode: str) -> dic
     gold_unknown = [result for result in successful if result.gold_relation == "UNKNOWN"]
     predicted_unknown = [result for result in successful if result.predicted_relation == "UNKNOWN"]
     correct = sum(result.relation_correct is True for result in successful)
+    failures_by_category: dict[str, int] = {}
+    for result in results:
+        if result.status == "failed":
+            category = result.failure_category or "unclassified"
+            failures_by_category[category] = failures_by_category.get(category, 0) + 1
     return {
         "mode": mode,
         "total_cases": len(results),
         "attempted_cases": len(results),
         "successful_cases": len(successful),
         "failed_cases": len(results) - len(successful),
+        "execution_success_rate": ratio(len(successful), len(results)),
+        "failures_by_category": failures_by_category,
         "relation": {
             "accuracy": ratio(correct, len(successful)),
+            "successful_case_accuracy": ratio(correct, len(successful)),
+            "attempted_case_accuracy": ratio(correct, len(results)),
             "per_class_accuracy": {
                 label: ratio(
                     sum(
@@ -229,6 +279,7 @@ def calculate_metrics(results: list[TimelineEvaluationResult], mode: str) -> dic
         "conflict": binary("predicted_conflict"),
         "duplicate": binary("predicted_duplicate"),
         "evidence": {
-            "validation_failures": sum(not result.evidence_validation for result in results)
+            "validation_failures": sum(result.evidence_validation is False for result in results),
+            "not_evaluated": sum(result.evidence_validation is None for result in results),
         },
     }
