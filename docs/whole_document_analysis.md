@@ -389,6 +389,28 @@ Gate 1 → Narrative → Gate 2 → Timeline → Gate 3 and recovery boundaries 
 this entry never writes StoryBible or calls image providers. Start with a short
 text and inspect only the source-free status/result APIs.
 
+### Controlled local Provider acceptance runner
+
+After Fake-provider regression passes, the separate local-only runner may be
+used one tier at a time. It requires `--run-real`, uses an isolated SQLite
+database below its output directory, and writes only a source-free summary. It
+never accepts a key as an argument, writes StoryBible, calls image services, or
+uploads text. Set `LLM_STRUCTURED_OUTPUT_POLICY=AUTO` (or `REQUIRE_STRICT`) so
+the source-free per-Schema checks happen before any acceptance text is sent.
+
+```powershell
+uv run python scripts/run_local_real_provider_acceptance.py --tier short --run-real
+uv run python scripts/run_local_real_provider_acceptance.py --tier medium --run-real
+uv run python scripts/run_local_real_provider_acceptance.py --tier long --run-real
+```
+
+Run short, then medium, then long only after the prior summary fully succeeds.
+Exit code `0` requires Narrative `SUCCEEDED`, Gate 2 `APPROVED`, Timeline
+`APPROVED`, and Gate 3 `APPROVED`; exit `3` is a safely rejected startup or
+preflight and exit `4` is a stopped pipeline stage. A real Provider failure
+ends the acceptance run immediately; it is not retried or repaired by this
+runner. It is never part of pytest or GitHub CI.
+
 ## Future Review Gate 1 source-quality boundary
 
 After TXT import and chunking, a future worker may build `ReviewGate1InputV1` from the parsed
