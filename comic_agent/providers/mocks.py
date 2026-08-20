@@ -7,6 +7,12 @@ from typing import Any, TypeVar
 from pydantic import BaseModel, ValidationError
 
 from comic_agent.providers.image import ImageResult
+from comic_agent.schemas.reliability import (
+    ProviderCapabilityProfileV1,
+    ProviderCapabilityState,
+    StructuredOutputMode,
+    StructuredOutputPolicy,
+)
 
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
 
@@ -61,6 +67,36 @@ class LocalSafeDemoProvider:
         """Satisfy local health checks without consuming a narrative generation call."""
 
         return None
+
+    def probe_structured_output(
+        self, policy: StructuredOutputPolicy
+    ) -> ProviderCapabilityProfileV1:
+        """Advertise deterministic JSON-object support without a network request."""
+
+        mode = (
+            StructuredOutputMode.UNAVAILABLE
+            if policy == StructuredOutputPolicy.REQUIRE_STRICT
+            else StructuredOutputMode.JSON_OBJECT
+        )
+        return ProviderCapabilityProfileV1(
+            provider_name="ustc-openai-compatible",
+            model_name="deepseek-v4-pro",
+            state=(
+                ProviderCapabilityState.AVAILABLE
+                if mode != StructuredOutputMode.UNAVAILABLE
+                else ProviderCapabilityState.UNSUPPORTED
+            ),
+            supports_json_object=True,
+            supports_strict_json_schema=False,
+            supports_usage_reporting=False,
+            supports_finish_reason=False,
+            selected_output_mode=mode,
+            safe_issue_codes=(
+                []
+                if mode != StructuredOutputMode.UNAVAILABLE
+                else ["UNSUPPORTED_STRUCTURED_OUTPUT"]
+            ),
+        )
 
     def structured_generate(
         self,

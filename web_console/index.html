@@ -1109,6 +1109,7 @@
         narrative: data.narrative ?? "PENDING",
         batches: data.batch_summary ?? null,
         windows: data.window_summary ?? null,
+        structured_execution: data.structured_execution ?? null,
         narrative_failure_summary: data.narrative_failure_summary ?? null,
         gate2: data.gate2 ?? "NOT_READY",
         gate2_handoff: data.gate2_handoff ?? null,
@@ -1146,6 +1147,15 @@
         setSafePipelineRunState("已停止", `Gate 3 为 ${data.gate3}；不会进入下游。`, data.gate3 === "NEEDS_HUMAN_REVIEW" ? "warn" : "bad");
       } else if (["PAUSED", "WAITING_RETRY", "CONFIGURATION_ERROR"].includes(data.provider_health?.status)) {
         setSafePipelineRunState("Provider 暂停", "Provider 当前不可用或等待退避；未开始新的分析调用。", "warn");
+      } else if (data.narrative === "NEEDS_HUMAN_ACTION") {
+        const codes = Array.isArray(data.safe_issue_codes) && data.safe_issue_codes.length
+          ? data.safe_issue_codes.join(", ")
+          : "SCHEMA_REPAIR_EXHAUSTED";
+        setSafePipelineRunState(
+          "已安全停止",
+          `输出结构恢复已停止，无需继续等待；安全错误码：${codes}。Gate 2 与 Timeline 没有运行。`,
+          "bad"
+        );
       } else if (data.narrative === "FAILED" || data.narrative === "PARTIAL_FAILED") {
         const failure = data.narrative_failure_summary ?? {};
         const categories = Array.isArray(failure.failure_categories) && failure.failure_categories.length

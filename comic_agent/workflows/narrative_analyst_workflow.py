@@ -24,6 +24,7 @@ from comic_agent.schemas.narrative import (
     RelationshipSignalProposalBatchV1,
     StateChangeProposalBatchV1,
 )
+from comic_agent.schemas.reliability import ProviderExecutionMetadataV1
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.workflow import AgentRunStatus, AgentRunV1, ProviderResultV1, ProviderType
 from comic_agent.services.context_builder import AgentContext, ContextBuilder
@@ -95,6 +96,7 @@ class NarrativeAnalystWorkflow:
         max_chars_per_chunk: int = DEFAULT_MAX_CHARS_PER_CHUNK,
         output_recovery: str | None = None,
         output_recovery_rule_codes: list[str] | None = None,
+        source_slice: tuple[str, int, int] | None = None,
         execution_nonce: str | None = None,
         real_llm_requested: bool = False,
         allow_fake_provider: bool = False,
@@ -122,11 +124,14 @@ class NarrativeAnalystWorkflow:
             chunk_limit=chunk_limit,
             chunk_offset=chunk_offset,
         )
+        if source_slice is not None:
+            selected_chunks = self._apply_source_slice(selected_chunks, source_slice)
         context = self._build_context(
             project_id=project_id,
             chunk_ids=chunk_ids,
             selected_chunks=selected_chunks,
             chunk_limit=chunk_limit,
+            selected_chunks_override=selected_chunks if source_slice is not None else None,
         )
         visible_chunks = visible_context_chunks(context.chunks, max_chars_per_chunk)
 
@@ -167,7 +172,8 @@ class NarrativeAnalystWorkflow:
         input_context = slim_input_context(
             context,
             visible_chunks,
-            full_source_chunk_records=mode in {
+            full_source_chunk_records=mode
+            in {
                 "state_change_extraction",
                 "relationship_signal_extraction",
             },
@@ -212,12 +218,27 @@ class NarrativeAnalystWorkflow:
         provider_result: ProviderResultV1
         error_message: str | None = None
         provider_error_diagnostics: dict[str, object] | None = None
+        execution_metadata: ProviderExecutionMetadataV1 | None = None
         status = AgentRunStatus.SUCCEEDED
 
         try:
             provider = self._provider or self._build_provider()
             summary["real_llm_called"] = real_llm_requested
             proposal = NarrativeAnalyst(provider).run(mode, input_context)
+            metadata = getattr(provider, "last_execution_metadata", None)
+            if callable(metadata):
+                candidate = metadata()
+                if isinstance(candidate, ProviderExecutionMetadataV1):
+                    execution_metadata = candidate
+                    summary["selected_output_mode"] = str(candidate.selected_output_mode)
+                    summary["capability_state"] = (
+                        str(candidate.capability_state)
+                        if candidate.capability_state is not None
+                        else None
+                    )
+                    summary["usage_prompt_tokens"] = candidate.prompt_tokens
+                    summary["usage_completion_tokens"] = candidate.completion_tokens
+                    summary["usage_total_tokens"] = candidate.total_tokens
             evidence_normalization = normalize_proposal_evidence(proposal, visible_chunks)
             proposal = evidence_normalization.proposal
             summary["evidence_normalization"] = {
@@ -229,6 +250,7 @@ class NarrativeAnalystWorkflow:
                 success=True,
                 output_schema=mode_spec.output_schema,
                 proposal=proposal,
+                execution_metadata=execution_metadata,
             )
             summary["provider_success"] = True
             summary["schema_validation_passed"] = True
@@ -258,6 +280,7 @@ class NarrativeAnalystWorkflow:
                 success=False,
                 output_schema=mode_spec.output_schema,
                 error_message=error_message,
+                execution_metadata=execution_metadata,
             )
             summary["provider_success"] = False
             summary["schema_validation_passed"] = False
@@ -275,6 +298,7 @@ class NarrativeAnalystWorkflow:
                 success=False,
                 output_schema=mode_spec.output_schema,
                 error_message=error_message,
+                execution_metadata=execution_metadata,
             )
             summary["provider_success"] = False
             summary["schema_validation_passed"] = False
@@ -342,11 +366,36 @@ class NarrativeAnalystWorkflow:
         chunk_ids: list[str] | None,
         selected_chunks: list[SourceChunkV1],
         chunk_limit: int,
+        selected_chunks_override: list[SourceChunkV1] | None = None,
     ) -> AgentContext:
         builder = ContextBuilder(self._source_repository, max_chunks=chunk_limit)
+        if selected_chunks_override is not None:
+            return builder.from_chunks(project_id, selected_chunks_override)
         if chunk_ids:
             return builder.build_from_chunk_ids(project_id, chunk_ids)
         return builder.from_chunks(project_id, selected_chunks)
+
+    @staticmethod
+    def _apply_source_slice(
+        chunks: list[SourceChunkV1], source_slice: tuple[str, int, int]
+    ) -> list[SourceChunkV1]:
+        """Provide one bounded in-memory view; never create or mutate SourceChunks."""
+
+        chunk_id, start, end = source_slice
+        if len(chunks) != 1 or chunks[0].chunk_id != chunk_id or start < 0 or end <= start:
+            raise ValueError("source slice must match exactly one selected SourceChunk")
+        chunk = chunks[0]
+        if end > len(chunk.text):
+            raise ValueError("source slice exceeds approved SourceChunk bounds")
+        return [
+            chunk.model_copy(
+                update={
+                    "text": chunk.text[start:end],
+                    "char_start": (chunk.char_start or 0) + start,
+                    "char_end": (chunk.char_start or 0) + end,
+                }
+            )
+        ]
 
     def _project_chunks(
         self,
@@ -371,6 +420,7 @@ class NarrativeAnalystWorkflow:
         output_schema: str,
         proposal: BaseModel | None = None,
         error_message: str | None = None,
+        execution_metadata: ProviderExecutionMetadataV1 | None = None,
     ) -> ProviderResultV1:
         structured_output = proposal.model_dump(mode="json") if proposal is not None else None
         seed = self._stable_json(
@@ -392,6 +442,7 @@ class NarrativeAnalystWorkflow:
             structured_output=structured_output,
             success=success,
             error_message=error_message,
+            execution_metadata=execution_metadata,
             created_at=DETERMINISTIC_NARRATIVE_ANALYST_TIME,
         )
 

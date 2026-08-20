@@ -5,6 +5,8 @@ from functools import lru_cache
 from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from comic_agent.schemas.reliability import StructuredOutputPolicy
+
 
 class Settings(BaseSettings):
     """Environment-driven application settings."""
@@ -108,6 +110,27 @@ class Settings(BaseSettings):
     llm_response_format: str | None = Field(
         default=None,
         validation_alias="LLM_RESPONSE_FORMAT",
+    )
+    narrative_window_min_slice_chars: int = Field(
+        default=200,
+        ge=16,
+        le=20_000,
+        validation_alias="NARRATIVE_WINDOW_MIN_SLICE_CHARS",
+    )
+    llm_structured_output_policy: StructuredOutputPolicy = Field(
+        default=StructuredOutputPolicy.JSON_OBJECT_ONLY,
+        validation_alias="LLM_STRUCTURED_OUTPUT_POLICY",
+        description=(
+            "Structured-output negotiation policy. JSON_OBJECT_ONLY is the compatible "
+            "default for existing deployments; AUTO and REQUIRE_STRICT require a "
+            "source-free capability probe before Narrative source text is sent."
+        ),
+    )
+    provider_capability_ttl_seconds: int = Field(
+        default=3600,
+        ge=1,
+        le=86_400,
+        validation_alias="PROVIDER_CAPABILITY_TTL_SECONDS",
     )
     llm_max_output_tokens: int = Field(default=2000, validation_alias="LLM_MAX_OUTPUT_TOKENS")
     internal_demo_require_access_code: bool = Field(

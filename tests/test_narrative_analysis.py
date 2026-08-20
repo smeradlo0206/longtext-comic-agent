@@ -641,7 +641,7 @@ def test_window_diagnostics_v1_2_keeps_prior_payloads_readable() -> None:
     assert v1_1.attempt_count == 0
     assert v1_2.schema_version == "1.2"
     assert v1_3.schema_version == "1.3"
-    assert current.schema_version == "1.7"
+    assert current.schema_version == "1.8"
     assert current.owned_chunk_ids == ["chunk-0"]
     assert current.provider_error_diagnostics == {"timeout_kind": "read"}
 
@@ -1337,8 +1337,7 @@ def test_worker_persists_sanitized_workflow_failure_details(
         assert result is None
     else:
         assert completed.status == NarrativeAnalysisRunStatus.PARTIAL_FAILED
-        assert result is not None
-        assert len(result.events) == 1
+        assert result is None
     assert failed_window.failure_category == expected_category
     assert failed_window.recommended_action is not None
     assert failed_window.provider_error_diagnostics == expected_diagnostics
@@ -1931,7 +1930,7 @@ def test_worker_keeps_schema_failure_diagnostics_after_one_retry(tmp_path: Path)
         if window.window_index == 1
     )
 
-    assert completed.status == NarrativeAnalysisRunStatus.PARTIAL_FAILED
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
     assert failed_window.attempt_count == 2
     assert failed_window.effective_max_chars_per_chunk == 1200
     assert failed_window.previous_failure_category == "SCHEMA_VALIDATION_FAILED"
@@ -2348,8 +2347,7 @@ def test_worker_does_not_convert_source_only_state_change_rejection_to_success(
 
     assert completed.status == NarrativeAnalysisRunStatus.FAILED
     assert provider.calls == ["state_change_extraction"]
-    assert result is not None
-    assert result.state_changes == []
+    assert result is None
 
 
 def test_rockery_cross_window_event_wording_stays_separate_for_manual_review() -> None:
@@ -3018,3 +3016,129 @@ def test_aggregate_knowledge_states_preserves_cross_window_target_kind_and_text_
         "山中有鬼",
         "山中有鬼的传言",
     }
+
+
+def test_schema_repair_exhaustion_is_explicit_and_never_enters_gate2(tmp_path: Path) -> None:
+    """A minimum scope schema failure stops safely instead of producing a partial aggregate."""
+
+    source_repository = _FakeSourceRepository([_long_chunk(0)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        max_split_depth=0,
+        real_llm_requested=True,
+    )
+    schema_error = ProviderResponseError(
+        "LLM provider response failed schema validation",
+        {
+            "schema_error_kind": "missing",
+            "schema_error_field_paths": ["events.0.summary"],
+            "schema_error_rule_codes": ["SCHEMA_CONTRACT_INVALID"],
+            "expected_output_schema": "EventProposalBatchV1",
+        },
+    )
+    provider = _RetryingWindowProvider({1: schema_error, 2: schema_error})
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+
+    window = analysis_repository.list_windows(run.analysis_run_id)[0]
+    assert completed.status == NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
+    assert window.status == NarrativeAnalysisWindowStatus.NEEDS_HUMAN_ACTION
+    assert window.failure_category == "SCHEMA_REPAIR_EXHAUSTED"
+    assert window.provider_request_count == 2
+    assert analysis_repository.get_result(run.analysis_run_id) is None
+    assert completed.review_gate2_result is None
+    assert completed.review_gate2_route is None
+
+
+def test_schema_repair_then_chunk_split_preserves_successful_siblings(tmp_path: Path) -> None:
+    """The second schema failure narrows only its window and may still complete the root."""
+
+    source_repository = _FakeSourceRepository([_long_chunk(index) for index in range(3)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        max_split_depth=1,
+        real_llm_requested=True,
+    )
+    schema_error = ProviderResponseError(
+        "LLM provider response failed schema validation",
+        {"schema_error_kind": "missing", "schema_error_field_paths": ["events.0.summary"]},
+    )
+    provider = _RetryingWindowProvider({1: schema_error, 2: schema_error})
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+
+    windows = analysis_repository.list_windows(run.analysis_run_id)
+    parent = next(
+        window for window in windows if window.status == NarrativeAnalysisWindowStatus.SPLIT
+    )
+    children = [
+        window for window in windows if window.parent_window_id == parent.analysis_window_id
+    ]
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert parent.provider_request_count == 2
+    assert all(child.status == NarrativeAnalysisWindowStatus.SUCCEEDED for child in children)
+    assert all(child.chunk_ids == child.owned_chunk_ids for child in children)
+    assert len(provider.input_text_lengths) == 2 + len(children)
+
+
+def test_schema_repair_single_chunk_uses_non_overlapping_auditable_slices(tmp_path: Path) -> None:
+    source_repository = _FakeSourceRepository([_long_chunk(0)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        max_split_depth=1,
+        real_llm_requested=True,
+    )
+    schema_error = ProviderResponseError(
+        "LLM provider response failed schema validation",
+        {"schema_error_kind": "missing", "schema_error_field_paths": ["events.0.summary"]},
+    )
+    provider = _RetryingWindowProvider({1: schema_error, 2: schema_error})
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(
+            _env_file=None,
+            enable_real_llm=True,
+            narrative_window_min_slice_chars=100,
+        ),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+
+    slices = [
+        window
+        for window in analysis_repository.list_windows(run.analysis_run_id)
+        if window.slice_chunk_id is not None
+    ]
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert [(item.slice_start, item.slice_end) for item in slices] == [
+        (0, 705),
+        (705, 1410),
+    ]
+    assert all(item.status == NarrativeAnalysisWindowStatus.SUCCEEDED for item in slices)
+    assert all(item.chunk_ids == ["chunk-0"] for item in slices)
