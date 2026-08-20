@@ -14,6 +14,8 @@ from comic_agent.schemas.workflow import (
     NarrativeAnalysisRunV1,
     NarrativeAnalysisWindowStatus,
     NarrativeAnalysisWindowV1,
+    NarrativeGate2HandoffStatus,
+    NarrativeGate2HandoffV1,
 )
 
 
@@ -193,6 +195,85 @@ class NarrativeAnalysisRepository:
             return None
         return NarrativeAnalysisResultV1.model_validate(row.result_payload)
 
+    def claim_gate2_handoff(self, analysis_run_id: str) -> NarrativeAnalysisRunV1 | None:
+        """Atomically claim a resumable Gate 2 handoff without touching analysis outputs."""
+
+        row = self._session.get(NarrativeAnalysisRunModel, analysis_run_id)
+        if row is None:
+            raise ValueError(f"NarrativeAnalysisRun not found: {analysis_run_id}")
+        current = NarrativeAnalysisRunV1.model_validate(row.payload)
+        if (
+            current.review_gate2_result is not None
+            and current.review_gate2_route is not None
+        ):
+            return None
+        handoff = current.gate2_handoff
+        if handoff is not None and handoff.status in {
+            NarrativeGate2HandoffStatus.RUNNING,
+            NarrativeGate2HandoffStatus.COMPLETED,
+        }:
+            return None
+        attempts = handoff.attempt_count if handoff is not None else 0
+        max_attempts = handoff.max_attempts if handoff is not None else 2
+        if attempts >= max_attempts:
+            return None
+        now = datetime.now(UTC)
+        claimed = current.model_copy(
+            update={
+                "schema_version": "1.5",
+                "gate2_handoff": NarrativeGate2HandoffV1(
+                    status=NarrativeGate2HandoffStatus.RUNNING,
+                    attempt_count=attempts + 1,
+                    max_attempts=max_attempts,
+                    started_at=now,
+                ),
+                "updated_at": now,
+            }
+        )
+        result = cast(
+            CursorResult[Any],
+            self._session.execute(
+                update(NarrativeAnalysisRunModel)
+                .where(
+                    NarrativeAnalysisRunModel.analysis_run_id == analysis_run_id,
+                    NarrativeAnalysisRunModel.updated_at == row.updated_at,
+                )
+                .values(
+                    status=str(claimed.status),
+                    payload=claimed.model_dump(mode="json"),
+                    updated_at=now,
+                )
+            ),
+        )
+        self._session.commit()
+        return claimed if result.rowcount else None
+
+    def fail_gate2_handoff(
+        self, *, analysis_run_id: str, failure_category: str
+    ) -> NarrativeAnalysisRunV1:
+        """Persist a source-free handoff failure while retaining aggregate and prior artifacts."""
+
+        run = self.get_run(analysis_run_id)
+        if run is None:
+            raise ValueError(f"NarrativeAnalysisRun not found: {analysis_run_id}")
+        handoff = run.gate2_handoff or NarrativeGate2HandoffV1()
+        return self.save_run(
+            run.model_copy(
+                update={
+                    "schema_version": "1.5",
+                    "gate2_handoff": handoff.model_copy(
+                        update={
+                            "status": NarrativeGate2HandoffStatus.FAILED,
+                            "failure_category": failure_category,
+                            "safe_issue_codes": ["GATE2_HANDOFF_FAILED"],
+                            "completed_at": datetime.now(UTC),
+                        }
+                    ),
+                    "updated_at": datetime.now(UTC),
+                }
+            )
+        )
+
     def save_review_gate2_artifacts(
         self,
         *,
@@ -207,11 +288,20 @@ class NarrativeAnalysisRepository:
             raise ValueError(f"NarrativeAnalysisRun not found: {analysis_run_id}")
         if run.review_gate2_result is not None and run.review_gate2_route is not None:
             return run
+        handoff = run.gate2_handoff or NarrativeGate2HandoffV1()
         saved = run.model_copy(
             update={
-                "schema_version": "1.4",
+                "schema_version": "1.5",
                 "review_gate2_result": result,
                 "review_gate2_route": route,
+                "gate2_handoff": handoff.model_copy(
+                    update={
+                        "status": NarrativeGate2HandoffStatus.COMPLETED,
+                        "safe_issue_codes": [],
+                        "failure_category": None,
+                        "completed_at": datetime.now(UTC),
+                    }
+                ),
                 "updated_at": datetime.now(UTC),
             }
         )

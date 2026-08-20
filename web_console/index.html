@@ -1111,6 +1111,7 @@
         windows: data.window_summary ?? null,
         narrative_failure_summary: data.narrative_failure_summary ?? null,
         gate2: data.gate2 ?? "NOT_READY",
+        gate2_handoff: data.gate2_handoff ?? null,
         narrative_recovery: data.narrative_recovery ?? "NOT_STARTED",
         timeline: data.timeline ?? "NOT_READY",
         timeline_recovery: data.timeline_recovery ?? "NOT_STARTED",
@@ -1135,6 +1136,12 @@
         setSafePipelineRunState("已成功", "Gate 3 已批准；已生成可供下游使用的时间线包。", "ok");
       } else if (["REJECTED", "NEEDS_HUMAN_REVIEW", "FAILED"].includes(data.gate2)) {
         setSafePipelineRunState("已停止", `Gate 2 为 ${data.gate2}；Timeline 没有运行。`, data.gate2 === "NEEDS_HUMAN_REVIEW" ? "warn" : "bad");
+      } else if (data.gate2 === "GATE2_PENDING") {
+        setSafePipelineRunState("Gate 2 待处理", "叙事已完成，正在补齐 Gate 2 审核；不会重跑模型或启动 Timeline。", "warn");
+      } else if (data.gate2 === "GATE2_RECOVERING") {
+        setSafePipelineRunState("Gate 2 审核中", "正在恢复本地确定性 Gate 2 审核；不会重跑 Narrative Provider。", "warn");
+      } else if (data.gate2 === "GATE2_FAILED") {
+        setSafePipelineRunState("Gate 2 审核失败", "Gate 2 审核失败，可安全恢复；Timeline 没有运行。", "bad");
       } else if (["REJECTED", "NEEDS_HUMAN_REVIEW", "FAILED"].includes(data.gate3)) {
         setSafePipelineRunState("已停止", `Gate 3 为 ${data.gate3}；不会进入下游。`, data.gate3 === "NEEDS_HUMAN_REVIEW" ? "warn" : "bad");
       } else if (["PAUSED", "WAITING_RETRY", "CONFIGURATION_ERROR"].includes(data.provider_health?.status)) {

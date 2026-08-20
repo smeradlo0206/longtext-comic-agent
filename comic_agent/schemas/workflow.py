@@ -63,6 +63,15 @@ class NarrativeAnalysisBatchStatus(StrEnum):
     EXHAUSTED = "EXHAUSTED"
 
 
+class NarrativeGate2HandoffStatus(StrEnum):
+    """Durable state of the deterministic post-Narrative Gate 2 handoff."""
+
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
 class ProviderType(StrEnum):
     """Provider execution family."""
 
@@ -256,15 +265,28 @@ class NarrativeAnalysisBatchV1(StrictBaseModel):
     max_call_attempts: int = Field(ge=1)
 
 
+class NarrativeGate2HandoffV1(StrictBaseModel):
+    """Source-free, resumable checkpoint for one root run's Gate 2 completion."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0")
+    status: NarrativeGate2HandoffStatus = Field(default=NarrativeGate2HandoffStatus.PENDING)
+    attempt_count: int = Field(default=0, ge=0, le=2)
+    max_attempts: int = Field(default=2, ge=1, le=2)
+    safe_issue_codes: list[str] = Field(default_factory=list)
+    failure_category: str | None = Field(default=None)
+    started_at: datetime | None = Field(default=None)
+    completed_at: datetime | None = Field(default=None)
+
+
 class NarrativeAnalysisRunV1(StrictBaseModel):
     """Persistent, resumable whole-document NarrativeAnalyst task."""
 
-    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4"] = Field(
-        default="1.4",
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4", "1.5"] = Field(
+        default="1.5",
         description=(
             "Schema version; v1.0/v1.1 records remain readable and v1.2 adds "
             "source-free recovery outcomes; v1.3 adds deterministic batch manifests; "
-            "v1.4 adds root execution-budget reservations."
+            "v1.4 adds root execution-budget reservations; v1.5 adds a durable Gate 2 handoff."
         ),
     )
     analysis_run_id: str = Field(description="Persistent analysis task id.")
@@ -316,6 +338,10 @@ class NarrativeAnalysisRunV1(StrictBaseModel):
         default_factory=list,
         description="Append-only source-free summaries for Stage B recovery decisions.",
     )
+    gate2_handoff: NarrativeGate2HandoffV1 | None = Field(
+        default=None,
+        description="Durable source-free checkpoint for deterministic Gate 2 completion.",
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -328,6 +354,11 @@ class NarrativeAnalysisRunV1(StrictBaseModel):
                 updates["recovery_outcomes"] = []
             if value.get("schema_version") in {"1.0", "1.1", "1.2"} and "batches" not in value:
                 updates["batches"] = []
+            if (
+                value.get("schema_version") in {"1.0", "1.1", "1.2", "1.3", "1.4"}
+                and "gate2_handoff" not in value
+            ):
+                updates["gate2_handoff"] = None
             if updates:
                 return {**value, **updates}
             return value
@@ -338,6 +369,7 @@ class NarrativeAnalysisRunV1(StrictBaseModel):
             "review_gate2_route": None,
             "recovery_outcomes": [],
             "batches": [],
+            "gate2_handoff": None,
         }
 
     @model_validator(mode="after")

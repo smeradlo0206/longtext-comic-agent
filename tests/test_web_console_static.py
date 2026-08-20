@@ -230,6 +230,8 @@ def test_web_console_exposes_whole_document_analysis_as_the_normal_flow() -> Non
     assert 'id="advancedDevelopmentDiagnostics" open' not in html
     assert "/pipeline-runs/import-and-analyze" in html
     assert "batch_summary" in html
+    assert "GATE2_PENDING" in html
+    assert "叙事已完成，正在补齐 Gate 2 审核" in html
     assert "ensureSafePipelineRealLlmEnabled" in html
     assert "describeSafePipelineStartError" in html
     assert "START_FAILED" in html

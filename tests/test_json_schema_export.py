@@ -100,6 +100,7 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     assert (output_dir / "NarrativeAnalysisWindowPlanV1.json").exists()
     assert (output_dir / "NarrativeAnalysisWindowV1.json").exists()
     assert (output_dir / "NarrativeAnalysisBatchV1.json").exists()
+    assert (output_dir / "NarrativeGate2HandoffV1.json").exists()
     assert (output_dir / "RelationshipParticipantRefV1.json").exists()
     assert (output_dir / "RelationshipTemporalAnchorV1.json").exists()
     assert (output_dir / "RelationshipContextEventRefV1.json").exists()
