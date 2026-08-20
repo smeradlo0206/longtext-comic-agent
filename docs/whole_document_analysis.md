@@ -102,6 +102,18 @@ Retry history remains on the window. A
 failed retry remains failed; validation is never bypassed. Explicit resume still
 selects only `PENDING` or `FAILED` windows and never reruns a successful window.
 
+Structured Provider policy is source-free before execution. `AUTO` may use strict OpenAI-style
+`json_schema` only after a fixed readiness-schema probe has proven support; `JSON_OBJECT_ONLY`
+is the backward-compatible default and `REQUIRE_STRICT` rejects unsupported providers before
+any SourceChunk is sent. Safe diagnostics include schema name, field path, error kind, stable
+rule code and truncation metadata, never invalid input values or raw model JSON. After the single
+format repair fails, Schema recovery splits only the failed scope at approved chunk boundaries;
+for a sole chunk it may create two auditable non-overlapping character slices. At a minimum scope,
+unsupported structured output, or exhausted persisted budget, the terminal state is
+`NEEDS_HUMAN_ACTION`: automatic recovery has stopped and Gate 2/Timeline remain unavailable.
+Manual real-LLM validation is allowed only after the mock-based checks pass and never records a
+credential in a command, log, screenshot, or Git artifact.
+
 Provider transport retries are separate from the window retry. The provider
 retries one transient `429` or `5xx` response once; it never automatically
 retries `400`, `401`, `403`, or `404`. Window diagnostics retain only

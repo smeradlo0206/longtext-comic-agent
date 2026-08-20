@@ -80,6 +80,8 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     output_dir = tmp_path / "schema_exports"
     assert (output_dir / "AgentRunV1.json").exists()
     assert (output_dir / "ProviderResultV1.json").exists()
+    assert (output_dir / "ProviderCapabilityProfileV1.json").exists()
+    assert (output_dir / "ProviderExecutionMetadataV1.json").exists()
     assert (output_dir / "MockProviderResultV1.json").exists()
     assert (output_dir / "EntityProposalBatchV1.json").exists()
     assert (output_dir / "ClaimProposalBatchV1.json").exists()
@@ -239,6 +241,7 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
             "1.5",
             "1.6",
             "1.7",
+            "1.8",
         ]
     assert "owned_chunk_ids" in window_schema["properties"]
     assert "parent_window_id" in window_schema["properties"]

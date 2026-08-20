@@ -78,6 +78,11 @@ SANITIZED_DIAGNOSTIC_KEYS = {
     "schema_error_field_paths",
     "schema_error_rule_codes",
     "expected_output_schema",
+    "safe_issue_code",
+    "selected_output_mode",
+    "capability_state",
+    "schema_recovery_attempt_count",
+    "split_depth",
 }
 
 

@@ -82,3 +82,19 @@ safe to re-enter: one key yields at most one Provider call and one fresh AgentRu
 batch. Recovery writes only the non-canonical recovery-attempt audit table (Alembic migration
 `0006_narrative_analysis_recovery_attempts`, after Timeline migration `0005`) and never writes
 StoryBible or invokes CommitService.
+
+### Structured Provider execution
+
+Before a real source-bearing Narrative call, the configured provider/model may be probed with
+only a fixed readiness request and a fixed Pydantic schema. The persisted capability profile
+selects `STRICT_JSON_SCHEMA`, `JSON_OBJECT`, or `UNAVAILABLE`; it never stores an endpoint,
+credential, prompt, source text, or raw response. `JSON_OBJECT_ONLY` remains the compatible
+default, while `AUTO` prefers an explicitly proven strict schema path and `REQUIRE_STRICT`
+stops before source text when strict support is unavailable. Provider usage and finish reason
+are persisted only when reported; absent usage remains unavailable rather than becoming zero.
+
+One `SCHEMA_VALIDATION_FAILED` attempt receives one source-preserving, rule-code-only format
+repair. A second failure may split only the failed approved scope, first at SourceChunk boundaries
+and then into non-overlapping slices of one approved SourceChunk. Budgets, lineage and
+idempotency are persisted. When recovery cannot proceed, the window and root run become
+`NEEDS_HUMAN_ACTION`; no aggregate, Gate 2, Timeline, StoryBible, or canonical write follows.

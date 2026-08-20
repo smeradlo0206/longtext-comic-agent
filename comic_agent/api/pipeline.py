@@ -32,10 +32,15 @@ from comic_agent.repositories.narrative_analysis_repository import NarrativeAnal
 from comic_agent.repositories.provider_circuit_repository import ProviderCircuitRepository
 from comic_agent.repositories.source_repository import SourceRepository
 from comic_agent.repositories.timeline_gate3_repository import TimelineGate3Repository
-from comic_agent.schemas.reliability import ProviderHealthResultV1, ProviderHealthStatus
+from comic_agent.schemas.reliability import (
+    ProviderHealthResultV1,
+    ProviderHealthStatus,
+    StructuredOutputMode,
+)
 from comic_agent.schemas.source import FidelityMode, ProjectSpecV1, ProjectType
 from comic_agent.schemas.workflow import NarrativeAnalysisRunStatus, NarrativeGate2HandoffStatus
 from comic_agent.services.narrative_analysis_coordinator import NarrativeAnalysisCoordinator
+from comic_agent.services.provider_capability_service import ProviderCapabilityService
 from comic_agent.services.provider_health_service import ProviderHealthService
 
 router = APIRouter()
@@ -49,9 +54,7 @@ RecoveryRepositoryDep = Annotated[
     NarrativeAnalysisRecoveryRepository,
     Depends(get_narrative_analysis_recovery_repository),
 ]
-TimelineRepositoryDep = Annotated[
-    TimelineGate3Repository, Depends(get_timeline_gate3_repository)
-]
+TimelineRepositoryDep = Annotated[TimelineGate3Repository, Depends(get_timeline_gate3_repository)]
 CircuitRepositoryDep = Annotated[
     ProviderCircuitRepository, Depends(get_provider_circuit_repository)
 ]
@@ -171,13 +174,24 @@ def get_pipeline_status(
     gate3_route = timeline.gate3_route if timeline is not None else None
     gate3_result = timeline.gate3_result if timeline is not None else None
     safe_codes = sorted(
-        {
-            str(code)
-            for attempt in attempts
-            for code in attempt.original_gate2_issue_codes
-        }
+        {str(code) for attempt in attempts for code in attempt.original_gate2_issue_codes}
         | set(str(code) for code in (gate3_route.safe_issue_codes if gate3_route else []))
         | set(run.gate2_handoff.safe_issue_codes if run.gate2_handoff is not None else [])
+        | {
+            window.failure_category
+            for window in windows
+            if isinstance(window.failure_category, str) and window.failure_category
+        }
+        | {
+            code
+            for window in windows
+            for code in (
+                window.provider_error_diagnostics.get("schema_error_rule_codes", [])
+                if isinstance(window.provider_error_diagnostics, dict)
+                else []
+            )
+            if isinstance(code, str)
+        }
     )
     return {
         "analysis_run_id": run.analysis_run_id,
@@ -188,6 +202,7 @@ def get_pipeline_status(
         "narrative_failure_summary": _narrative_failure_summary(windows),
         "batch_summary": _batch_summary(run, windows),
         "window_summary": _window_summary(windows),
+        "structured_execution": _structured_execution_summary(windows),
         "provider_health": provider_health.model_dump(mode="json"),
         "gate2": _gate2_status(run, aggregate, latest_gate2_route),
         "gate2_handoff": (
@@ -216,9 +231,7 @@ def _ensure_project(repository: SourceRepository, project_id: str, name: str | N
     if repository.get_project(project_id) is not None:
         return
     display_name = (
-        name.strip()
-        if isinstance(name, str) and name.strip()
-        else f"Local demo {project_id}"
+        name.strip() if isinstance(name, str) and name.strip() else f"Local demo {project_id}"
     )
     repository.create_project(
         ProjectSpecV1(
@@ -272,6 +285,21 @@ def _require_real_pipeline_opt_in(
     )
     if str(result.status) != "AVAILABLE":
         raise HTTPException(status_code=409, detail=result.model_dump(mode="json"))
+    capability_service = ProviderCapabilityService(
+        settings=settings, repository=circuit_repository
+    )
+    capability = capability_service.resolve(
+        provider_key=f"{settings.llm_provider_name}:{settings.llm_model}",
+        provider=provider,
+    )
+    if capability.selected_output_mode == StructuredOutputMode.UNAVAILABLE:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "safe_issue_codes": capability.safe_issue_codes,
+                "structured_output": "UNAVAILABLE",
+            },
+        )
 
 
 def _gate2_status(run: Any, aggregate: Any, route: Any) -> str:
@@ -307,7 +335,7 @@ def _narrative_failure_summary(windows: list[Any]) -> dict[str, object] | None:
     failed_windows = [
         window
         for window in windows
-        if str(window.status) in {"FAILED", "EXHAUSTED"}
+        if str(window.status) in {"FAILED", "EXHAUSTED", "NEEDS_HUMAN_ACTION"}
     ]
     if not failed_windows:
         return None
@@ -358,6 +386,47 @@ def _window_summary(windows: list[Any]) -> dict[str, object]:
         "elapsed_seconds_used": elapsed_seconds_used,
         "output_tokens_used": output_tokens_used,
         "next_eligible_retry_at": min(retry_times).isoformat() if retry_times else None,
+    }
+
+
+def _structured_execution_summary(windows: list[Any]) -> dict[str, object]:
+    """Return only persisted, allowlisted structured Provider execution state."""
+
+    completion_values = [
+        window.provider_completion_tokens
+        for window in windows
+        if isinstance(window.provider_completion_tokens, int)
+    ]
+    return {
+        "selected_output_modes": sorted(
+            {
+                str(window.selected_output_mode)
+                for window in windows
+                if window.selected_output_mode is not None
+            }
+        ),
+        "capability_states": sorted(
+            {
+                str(window.capability_state)
+                for window in windows
+                if window.capability_state is not None
+            }
+        ),
+        "schema_recovery_attempt_count": sum(
+            window.schema_recovery_attempt_count for window in windows
+        ),
+        "max_split_depth": max((window.split_depth for window in windows), default=0),
+        "completion_tokens": sum(completion_values) if completion_values else None,
+        "completion_tokens_status": (
+            "REPORTED" if completion_values else "PROVIDER_NOT_REPORTED"
+        ),
+        "provider_calls_consumed": sum(window.provider_request_count for window in windows),
+        "provider_calls_budget": sum(window.max_call_attempts for window in windows),
+        "elapsed_seconds_consumed": sum(window.elapsed_seconds_used for window in windows),
+        "elapsed_seconds_budget": sum(window.time_budget_seconds for window in windows),
+        "needs_human_action": any(
+            str(window.status) == "NEEDS_HUMAN_ACTION" for window in windows
+        ),
     }
 
 

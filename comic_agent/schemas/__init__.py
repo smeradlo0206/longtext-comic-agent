@@ -96,11 +96,16 @@ from comic_agent.schemas.recovery import (
     RecoveryTargetKind,
 )
 from comic_agent.schemas.reliability import (
+    ProviderCapabilityProfileV1,
+    ProviderCapabilityState,
     ProviderCircuitStateV1,
+    ProviderExecutionMetadataV1,
     ProviderFailureCategory,
     ProviderHealthResultV1,
     ProviderHealthStatus,
     ProviderPreflightResponseV1,
+    StructuredOutputMode,
+    StructuredOutputPolicy,
 )
 from comic_agent.schemas.review import (
     ApprovedProposalBundleV1,
@@ -309,10 +314,15 @@ __all__ = [
     "ProviderResultV1",
     "ProviderType",
     "ProviderCircuitStateV1",
+    "ProviderCapabilityProfileV1",
+    "ProviderCapabilityState",
+    "ProviderExecutionMetadataV1",
     "ProviderFailureCategory",
     "ProviderHealthResultV1",
     "ProviderHealthStatus",
     "ProviderPreflightResponseV1",
+    "StructuredOutputMode",
+    "StructuredOutputPolicy",
     "QAResultV1",
     "RecordStatus",
     "RealityLayer",

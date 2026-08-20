@@ -156,11 +156,13 @@ def test_one_click_pipeline_exposes_sanitized_narrative_failure_summary(
 
     assert status.status_code == 200
     payload = status.json()
-    assert payload["narrative"] == "FAILED"
+    assert payload["narrative"] == "NEEDS_HUMAN_ACTION"
     assert payload["narrative_failure_summary"] == {
         "failed_window_count": 1,
-        "failure_categories": ["SCHEMA_VALIDATION_FAILED"],
-        "recommended_actions": ["inspect provider JSON shape and mode boundary"],
+        "failure_categories": ["SCHEMA_REPAIR_EXHAUSTED"],
+        "recommended_actions": [
+            "automatic schema recovery stopped; inspect safe rule codes"
+        ],
     }
     assert "error_message" not in status.text
     assert "raw_output" not in status.text
