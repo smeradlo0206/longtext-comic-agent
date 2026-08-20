@@ -90,7 +90,8 @@ def create_narrative_analysis_run(
     output_token_budget: int = 2000,
     time_budget_seconds: int = 300,
     max_call_attempts: int = 2,
-    max_split_depth: int = 1,
+    max_split_depth: int = 3,
+    min_slice_chars: int = 200,
     real_llm_requested: bool = False,
     selected_chunks: list[SourceChunkV1] | None = None,
 ) -> NarrativeAnalysisRunV1:
@@ -140,6 +141,7 @@ def create_narrative_analysis_run(
         time_budget_seconds,
         max_call_attempts,
         max_split_depth,
+        min_slice_chars,
         real_llm_requested,
         ",".join(chunk.chunk_id for chunk in chunks),
     )
@@ -207,6 +209,7 @@ def create_narrative_analysis_run(
             time_budget_seconds=time_budget_seconds,
             max_call_attempts=max_call_attempts,
             max_split_depth=max_split_depth,
+            minimum_slice_chars=min_slice_chars,
         )
         for batch_index, batch_id, plan in planned_windows
         for mode in modes
@@ -224,11 +227,13 @@ def create_narrative_analysis_run(
         real_llm_requested=real_llm_requested,
         window_ids=[window.analysis_window_id for window in windows],
         batches=batches,
-        # Every original window is bounded, and at most one owned child scope per
-        # selected chunk can be created by deterministic split recovery.  Reserve
-        # that finite worst-case tree up front rather than letting children extend
-        # the root budget at runtime.
-        max_provider_requests=(len(windows) + (len(chunks) * len(modes))) * max_call_attempts,
+        # Reserve a conservative full binary split tree. Each source-bounded
+        # scope can use its ordinary calls plus its one independent schema repair.
+        max_provider_requests=(
+            len(windows)
+            * sum(2**depth for depth in range(max_split_depth + 1))
+            * (max_call_attempts + 1)
+        ),
         created_at=now,
         updated_at=now,
     )

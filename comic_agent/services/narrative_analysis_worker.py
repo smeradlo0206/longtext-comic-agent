@@ -21,6 +21,8 @@ from comic_agent.schemas.workflow import (
     NarrativeAnalysisRunV1,
     NarrativeAnalysisWindowStatus,
     NarrativeAnalysisWindowV1,
+    NarrativeRecoveryPhase,
+    NarrativeRecoveryTerminalReason,
 )
 from comic_agent.services.narrative_analysis_aggregation import aggregate_narrative_analysis
 from comic_agent.services.narrative_analysis_proposal_sources import proposal_sources_for_window
@@ -165,6 +167,11 @@ class NarrativeAnalysisWorker:
                     # Charge a Provider call before invoking it. A crash can consume
                     # one call conservatively, but never cause an unbounded replay.
                     "provider_request_count": reserved.provider_request_count + 1,
+                    "initial_provider_attempts": (
+                        reserved.initial_provider_attempts + 1
+                        if reserved.recovery_phase == NarrativeRecoveryPhase.INITIAL
+                        else reserved.initial_provider_attempts
+                    ),
                     "next_eligible_retry_at": None,
                     "started_at": datetime.now(UTC),
                 }
@@ -188,6 +195,21 @@ class NarrativeAnalysisWorker:
                 update={
                     "previous_failure_category": completed.failure_category,
                     "effective_max_chars_per_chunk": self._retry_max_chars_per_chunk(completed),
+                    "recovery_phase": (
+                        NarrativeRecoveryPhase.SCHEMA_REPAIR
+                        if completed.failure_category == "SCHEMA_VALIDATION_FAILED"
+                        else NarrativeRecoveryPhase.LENGTH_RECOVERY
+                    ),
+                    "length_recovery_attempts_used": (
+                        completed.length_recovery_attempts_used + 1
+                        if completed.failure_category == "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT"
+                        else completed.length_recovery_attempts_used
+                    ),
+                    "schema_repair_attempts_used": (
+                        completed.schema_repair_attempts_used + 1
+                        if completed.failure_category == "SCHEMA_VALIDATION_FAILED"
+                        else completed.schema_repair_attempts_used
+                    ),
                     "schema_recovery_attempt_count": (
                         completed.schema_recovery_attempt_count + 1
                         if completed.failure_category == "SCHEMA_VALIDATION_FAILED"
@@ -311,8 +333,13 @@ class NarrativeAnalysisWorker:
 
     @staticmethod
     def _budget_exhausted_before_provider(window: NarrativeAnalysisWindowV1) -> bool:
+        call_cap = window.max_call_attempts
+        if window.recovery_phase == NarrativeRecoveryPhase.SCHEMA_REPAIR:
+            # Format repair gets its own bounded reservation.  It must not be
+            # consumed by a preceding length retry in the same child scope.
+            call_cap += window.max_schema_repair_attempts
         return (
-            window.provider_request_count >= window.max_call_attempts
+            window.provider_request_count >= call_cap
             or window.elapsed_seconds_used >= window.time_budget_seconds
         )
 
@@ -325,14 +352,14 @@ class NarrativeAnalysisWorker:
             "root provider call budget exhausted"
             if root_budget
             else "provider call budget exhausted"
-            if window.provider_request_count >= window.max_call_attempts
+            if self._budget_exhausted_before_provider(window)
             else "time budget exhausted"
         )
         return window.model_copy(
             update={
                 "status": (
                     NarrativeAnalysisWindowStatus.NEEDS_HUMAN_ACTION
-                    if window.failure_category == "SCHEMA_VALIDATION_FAILED"
+                    if root_budget or window.failure_category == "SCHEMA_VALIDATION_FAILED"
                     else NarrativeAnalysisWindowStatus.EXHAUSTED
                 ),
                 "completed_at": datetime.now(UTC),
@@ -350,6 +377,8 @@ class NarrativeAnalysisWorker:
                     if window.failure_category == "SCHEMA_VALIDATION_FAILED"
                     else window.recommended_action or action
                 ),
+                "recovery_phase": NarrativeRecoveryPhase.TERMINAL,
+                "terminal_reason": NarrativeRecoveryTerminalReason.PROVIDER_BUDGET_EXHAUSTED,
             }
         )
 
@@ -358,12 +387,19 @@ class NarrativeAnalysisWorker:
 
         return (
             window.status == NarrativeAnalysisWindowStatus.FAILED
-            and window.provider_request_count < window.max_call_attempts
             and window.failure_category
             in {"PROVIDER_LENGTH_BEFORE_FINAL_CONTENT", "SCHEMA_VALIDATION_FAILED"}
             and (
-                window.failure_category != "SCHEMA_VALIDATION_FAILED"
-                or window.schema_recovery_attempt_count == 0
+                (
+                    window.length_recovery_attempts_used < window.max_length_recovery_attempts
+                    and window.provider_request_count < window.max_call_attempts
+                )
+                if window.failure_category == "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT"
+                else (
+                    window.schema_repair_attempts_used < window.max_schema_repair_attempts
+                    and window.provider_request_count
+                    < window.max_call_attempts + window.max_schema_repair_attempts
+                )
             )
         )
 
@@ -380,7 +416,7 @@ class NarrativeAnalysisWorker:
             }
             and (
                 window.failure_category != "SCHEMA_VALIDATION_FAILED"
-                or window.schema_recovery_attempt_count >= 1
+                or window.schema_repair_attempts_used >= window.max_schema_repair_attempts
             )
             and (
                 len(window.chunk_ids) > 1
@@ -397,7 +433,7 @@ class NarrativeAnalysisWorker:
         if (
             window.status == NarrativeAnalysisWindowStatus.FAILED
             and window.failure_category == "SCHEMA_VALIDATION_FAILED"
-            and window.schema_recovery_attempt_count >= 1
+            and window.schema_repair_attempts_used >= window.max_schema_repair_attempts
             and (
                 window.split_depth >= window.max_split_depth
                 or (len(window.chunk_ids) == 1 and not self._can_slice(window))
@@ -412,6 +448,12 @@ class NarrativeAnalysisWorker:
                     ),
                     "completed_at": datetime.now(UTC),
                     "next_eligible_retry_at": None,
+                    "recovery_phase": NarrativeRecoveryPhase.TERMINAL,
+                    "terminal_reason": (
+                        NarrativeRecoveryTerminalReason.MINIMUM_SCOPE_REACHED
+                        if len(window.chunk_ids) == 1 and not self._can_slice(window)
+                        else NarrativeRecoveryTerminalReason.SCHEMA_REPAIR_EXHAUSTED
+                    ),
                 }
             )
         return window
@@ -426,7 +468,7 @@ class NarrativeAnalysisWorker:
             return False
         start = window.slice_start or 0
         end = window.slice_end if window.slice_end is not None else len(chunk.text)
-        return end - start >= self._settings.narrative_window_min_slice_chars * 2
+        return end - start >= window.minimum_slice_chars * 2
 
     def _schedule_retry_if_needed(
         self, window: NarrativeAnalysisWindowV1
@@ -435,11 +477,19 @@ class NarrativeAnalysisWorker:
 
         if (
             window.status == NarrativeAnalysisWindowStatus.FAILED
+            and window.failure_category == "SCHEMA_VALIDATION_FAILED"
+            and window.schema_repair_attempts_used < window.max_schema_repair_attempts
+        ):
+            # The independently budgeted repair is scheduled before applying a
+            # call-cap check.  This fixes length -> split child -> schema paths.
+            return window.model_copy(update={"completed_at": datetime.now(UTC)})
+        if (
+            window.status == NarrativeAnalysisWindowStatus.FAILED
             and self._budget_exhausted_before_provider(window)
         ):
             if (
                 window.failure_category == "SCHEMA_VALIDATION_FAILED"
-                and window.schema_recovery_attempt_count >= 1
+                and window.schema_repair_attempts_used >= window.max_schema_repair_attempts
                 and window.split_depth < window.max_split_depth
                 and (len(window.chunk_ids) > 1 or self._can_slice(window))
             ):
@@ -533,6 +583,8 @@ class NarrativeAnalysisWorker:
                 max_call_attempts=failed_window.max_call_attempts,
                 max_split_depth=failed_window.max_split_depth,
                 split_depth=failed_window.split_depth + 1,
+                minimum_slice_chars=failed_window.minimum_slice_chars,
+                recovery_phase=NarrativeRecoveryPhase.SPLIT_CHILD,
                 # Do not turn a timeout into immediate fan-out. Children become
                 # eligible only after the parent's durable retry deadline.
                 next_eligible_retry_at=failed_window.next_eligible_retry_at,
@@ -616,6 +668,8 @@ class NarrativeAnalysisWorker:
                 max_call_attempts=failed_window.max_call_attempts,
                 max_split_depth=failed_window.max_split_depth,
                 split_depth=failed_window.split_depth + 1,
+                minimum_slice_chars=failed_window.minimum_slice_chars,
+                recovery_phase=NarrativeRecoveryPhase.SPLIT_CHILD,
                 slice_chunk_id=chunk_id,
                 slice_start=start_offset,
                 slice_end=end_offset,

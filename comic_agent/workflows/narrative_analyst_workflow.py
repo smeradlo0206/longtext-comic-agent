@@ -261,6 +261,17 @@ class NarrativeAnalystWorkflow:
             )
             classify_evidence_result(summary)
         except (TimeoutError, ValueError, NotImplementedError) as exc:
+            metadata = getattr(locals().get("provider"), "last_execution_metadata", None)
+            if callable(metadata):
+                candidate = metadata()
+                if isinstance(candidate, ProviderExecutionMetadataV1):
+                    execution_metadata = candidate
+                    summary["selected_output_mode"] = str(candidate.selected_output_mode)
+                    summary["capability_state"] = (
+                        str(candidate.capability_state)
+                        if candidate.capability_state is not None
+                        else None
+                    )
             error_message = sanitize_error_message(
                 str(exc),
                 settings=self._settings,
@@ -287,6 +298,17 @@ class NarrativeAnalystWorkflow:
             summary["evidence_validation_passed"] = False
             summary["error_message"] = error_message
         except Exception as exc:
+            metadata = getattr(locals().get("provider"), "last_execution_metadata", None)
+            if callable(metadata):
+                candidate = metadata()
+                if isinstance(candidate, ProviderExecutionMetadataV1):
+                    execution_metadata = candidate
+                    summary["selected_output_mode"] = str(candidate.selected_output_mode)
+                    summary["capability_state"] = (
+                        str(candidate.capability_state)
+                        if candidate.capability_state is not None
+                        else None
+                    )
             error_message = sanitize_error_message(
                 str(exc),
                 settings=self._settings,
