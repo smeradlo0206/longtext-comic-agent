@@ -127,6 +127,8 @@ class LocalSafeDemoProvider:
             )
         if output_model.__name__ == "TemporalRelationProposalV1":
             return output_model.model_validate(self._temporal_relation(request))
+        if output_model.__name__ == "StoryBibleCuratorProposalV1":
+            return output_model.model_validate(self._storybible_proposal(request))
         return output_model.model_validate({"batch_id": "local-demo-empty", "items": []})
 
     def _source_evidence(self, request: dict[str, object]) -> tuple[str, str]:
@@ -241,6 +243,93 @@ class LocalSafeDemoProvider:
                 else "BEFORE"
             ),
             "evidence_refs": first["evidence_refs"],
+            "confidence": 1.0,
+        }
+
+    @staticmethod
+    def _storybible_proposal(request: dict[str, object]) -> dict[str, object]:
+        """Create one traceable candidate so the local safe demo reaches StoryBible."""
+
+        messages = request.get("messages")
+        if not isinstance(messages, list) or len(messages) < 2:
+            raise ValueError("local demo StoryBible request is invalid")
+        user = messages[-1]
+        if not isinstance(user, dict) or not isinstance(user.get("content"), str):
+            raise ValueError("local demo StoryBible request is invalid")
+        context = json.loads(user["content"].split("\n--- SOURCE CHUNK", 1)[0])
+        project_id = context.get("project_id")
+        source_chunk_ids = context.get("source_chunk_ids")
+        bindings = context.get("identity_bindings")
+        entities = context.get("entity_proposals")
+        if (
+            not isinstance(project_id, str)
+            or not isinstance(source_chunk_ids, list)
+            or not source_chunk_ids
+            or not isinstance(source_chunk_ids[0], str)
+            or not isinstance(bindings, list)
+            or not isinstance(entities, list)
+            or not entities
+            or not isinstance(entities[0], dict)
+        ):
+            raise ValueError("local demo StoryBible context is incomplete")
+        profile_binding = next(
+            (
+                binding
+                for binding in bindings
+                if isinstance(binding, dict) and binding.get("canonical_kind") == "PROFILE"
+            ),
+            None,
+        )
+        if not isinstance(profile_binding, dict):
+            raise ValueError("local demo StoryBible requires an entity binding")
+        profile_id = profile_binding.get("canonical_id")
+        source_proposal_id = profile_binding.get("source_proposal_id")
+        if not isinstance(profile_id, str) or not isinstance(source_proposal_id, str):
+            raise ValueError("local demo StoryBible binding is invalid")
+
+        entity = entities[0]
+        canonical_name = entity.get("canonical_name")
+        if not isinstance(canonical_name, str) or not canonical_name.strip():
+            raise ValueError("local demo StoryBible entity is invalid")
+        kind_by_entity_type = {
+            "ORGANIZATION": "ORGANIZATION",
+            "LOCATION": "LOCATION",
+        }
+        raw_entity_type = entity.get("entity_type")
+        entity_kind = kind_by_entity_type.get(
+            raw_entity_type if isinstance(raw_entity_type, str) else "",
+            "PERSON",
+        )
+        evidence = [{"chunk_id": source_chunk_ids[0]}]
+        proposal_id = f"{project_id}:local-safe-storybible-proposal"
+        return {
+            "proposal_id": proposal_id,
+            "project_id": project_id,
+            "status": "CANDIDATE",
+            "commit_plan": {
+                "commit_plan_id": f"{project_id}:local-safe-storybible-plan",
+                "project_id": project_id,
+                "source_proposal_id": proposal_id,
+                "content_hash": "local-safe-storybible-v1",
+                "updates": [
+                    {
+                        "update_id": f"{project_id}:local-safe-profile-update",
+                        "project_id": project_id,
+                        "source_proposal_id": source_proposal_id,
+                        "profile": {
+                            "profile_id": profile_id,
+                            "project_id": project_id,
+                            "entity_kind": entity_kind,
+                            "canonical_name": canonical_name,
+                            "aliases": [],
+                            "evidence_refs": evidence,
+                        },
+                        "evidence_refs": evidence,
+                    }
+                ],
+                "evidence_refs": evidence,
+            },
+            "evidence_refs": evidence,
             "confidence": 1.0,
         }
 

@@ -607,6 +607,8 @@
             <a href="#chapters">Chunks</a>
             <a href="#agents">Agents</a>
             <a href="#narrative">Narrative Analyst</a>
+            <a href="#safePipeline">一键安全分析</a>
+            <a href="#storyBible">设定库</a>
             <a href="#knowledgeEvaluation">Knowledge State 评测</a>
             <a href="#runs">Agent Runs</a>
             <a href="#evidence">Evidence</a>
@@ -651,6 +653,27 @@
             <span id="safePipelineRunMessage" class="muted">选择 TXT 后开始；真实 LLM 需要显式勾选。</span>
           </div>
           <pre id="safePipelineStatus">{"state":"NOT_STARTED"}</pre>
+        </div>
+      </section>
+
+      <section id="storyBible">
+        <div class="section-head">
+          <div>
+            <h2>StoryBible 设定库</h2>
+            <p>Gate 3 批准后可生成候选；候选不会写入正式设定库，必须由你再次确认审批。</p>
+          </div>
+        </div>
+        <div class="body">
+          <div class="row">
+            <button id="generateStoryBibleCandidate" class="primary" disabled>生成设定库候选</button>
+            <button id="approveStoryBiblePlan" disabled>确认审批并写入</button>
+            <button id="refreshStoryBibleResources" disabled>查看正式设定库</button>
+          </div>
+          <div class="row" aria-live="polite">
+            <span id="storyBibleBadge" class="pill warn">等待 Gate 3</span>
+            <span id="storyBibleMessage" class="muted">Gate 3 已批准后才可生成候选。</span>
+          </div>
+          <pre id="storyBibleStatus">{"state":"WAITING_FOR_GATE3"}</pre>
         </div>
       </section>
 
@@ -1039,7 +1062,10 @@
       safePipelineFile: null,
       safePipelineRunId: null,
       safePipelinePoll: null,
-      safePipelineSubmitting: false
+      safePipelineSubmitting: false,
+      storyBibleCandidate: null,
+      storyBibleSubmitting: false,
+      storyBibleCommitted: false
     };
 
     const $ = (id) => document.getElementById(id);
@@ -1103,6 +1129,7 @@
 
     function renderSafePipelineStatus(data) {
       renderSafePipelineRunState(data);
+      renderStoryBibleGateState(data);
       $("safePipelineStatus").textContent = pretty({
         import_and_gate1: data.gate1 ?? data.pipeline_status ?? "PENDING",
         provider_health: data.provider_health?.status ?? "NOT_CHECKED",
@@ -1124,6 +1151,38 @@
           ? "已生成已审核时间线包，可供未来设定库整合使用。"
           : "系统只会在既有安全规则允许时自动继续。"
       });
+    }
+
+    function setStoryBibleState(label, message, tone = "warn") {
+      $("storyBibleBadge").textContent = label;
+      $("storyBibleBadge").className = tone === "bad" ? "pill bad" : tone === "ok" ? "pill" : "pill warn";
+      $("storyBibleMessage").textContent = message;
+    }
+
+    function resetStoryBibleUi(message = "等待新的 Gate 3 批准结果。") {
+      state.storyBibleCandidate = null;
+      state.storyBibleCommitted = false;
+      $("generateStoryBibleCandidate").disabled = true;
+      $("approveStoryBiblePlan").disabled = true;
+      $("refreshStoryBibleResources").disabled = true;
+      $("storyBibleStatus").textContent = pretty({state: "WAITING_FOR_GATE3"});
+      setStoryBibleState("等待 Gate 3", message, "warn");
+    }
+
+    function renderStoryBibleGateState(data) {
+      if (data.gate3 === "APPROVED") {
+        $("generateStoryBibleCandidate").disabled = Boolean(state.storyBibleCandidate) || state.storyBibleSubmitting;
+        $("refreshStoryBibleResources").disabled = false;
+        if (!state.storyBibleCandidate) {
+          setStoryBibleState("可以生成候选", "Gate 3 已批准。先生成候选并检查，再决定是否写入正式设定库。", "ok");
+          $("storyBibleStatus").textContent = pretty({
+            state: "GATE3_APPROVED",
+            next_step: "生成设定库候选（不会写入正式库）"
+          });
+        }
+      } else if (!state.storyBibleCandidate && !state.storyBibleCommitted) {
+        resetStoryBibleUi("Gate 3 尚未批准；不会调用 StoryBible Agent。");
+      }
     }
 
     function setSafePipelineRunState(label, message, tone = "warn") {
@@ -1218,6 +1277,7 @@
       if (state.safePipelineSubmitting) return;
       const realLlmRequested = $("safePipelineRealLlmRequested").checked;
       state.safePipelineSubmitting = true;
+      resetStoryBibleUi("已开始新的安全分析，等待新的 Gate 3 结果。");
       $("startSafePipeline").disabled = true;
       setSafePipelineRunState("正在提交", realLlmRequested ? "正在验证真实 LLM 配置并提交六类叙事提取。" : "正在提交六类叙事提取。", "warn");
       try {
@@ -1257,6 +1317,186 @@
       } finally {
         state.safePipelineSubmitting = false;
         $("startSafePipeline").disabled = false;
+      }
+    }
+
+    function approvedStoryBibleProposals(gate2Route) {
+      const approved = gate2Route?.approved_proposal_bundle?.approved_proposals;
+      if (!Array.isArray(approved)) throw new Error("Gate 2 批准包不可用，不能生成设定库候选");
+      return approved.map((item) => item?.source?.proposal).filter(Boolean);
+    }
+
+    function provisionalStoryBibleBindings(projectIdValue, entityProposals, eventProposals, stateProposals, temporalProposals) {
+      const groups = [
+        ["EntityProposalV1", "PROFILE", entityProposals],
+        ["EventProposalV1", "EVENT", eventProposals],
+        ["StateChangeProposalV1", "STATE", stateProposals],
+        ["TemporalRelationProposalV1", "RELATIONSHIP", temporalProposals]
+      ];
+      return groups.flatMap(([sourceSchema, canonicalKind, proposals]) => proposals.map((proposal, index) => ({
+        source_schema: sourceSchema,
+        source_proposal_id: proposal.proposal_id,
+        canonical_kind: canonicalKind,
+        canonical_id: `${projectIdValue}:candidate:${canonicalKind.toLowerCase()}:${index}`,
+        project_id: projectIdValue
+      })));
+    }
+
+    async function buildStoryBibleContext() {
+      if (!state.safePipelineRunId) throw new Error("请先完成一次一键安全分析");
+      const id = safePipelineProjectId();
+      const gate2Response = await request(`/narrative-analysis-runs/${encodeURIComponent(state.safePipelineRunId)}/review-gate2`);
+      const gate2Route = gate2Response?.route;
+      const sourceBundleId = gate2Route?.approved_proposal_bundle?.bundle_id;
+      if (!sourceBundleId) throw new Error("Gate 2 没有可用的批准包，设定库不会启动");
+      const [gate3Review, gate3Bundle, chapters] = await Promise.all([
+        request(`/projects/${encodeURIComponent(id)}/timeline-gate3/${encodeURIComponent(sourceBundleId)}/review`),
+        request(`/projects/${encodeURIComponent(id)}/timeline-gate3/${encodeURIComponent(sourceBundleId)}/approved-bundle`),
+        request(`/projects/${encodeURIComponent(id)}/chapters`)
+      ]);
+      const gate3Route = gate3Review?.route;
+      if (!gate3Route || gate3Route.route !== "APPROVED") {
+        throw new Error("Gate 3 尚未批准，设定库不会启动");
+      }
+      gate3Route.approved_timeline_bundle = gate3Bundle;
+      const chapterId = Array.isArray(chapters) ? chapters[0]?.chapter_id : null;
+      if (!chapterId) throw new Error("找不到已授权的源章节，设定库不会启动");
+      const chunks = await request(`/chapters/${encodeURIComponent(chapterId)}/chunks`);
+      const chunkId = Array.isArray(chunks) ? chunks[0]?.chunk_id : null;
+      if (!chunkId) throw new Error("找不到已授权的源切片，设定库不会启动");
+      const proposals = approvedStoryBibleProposals(gate2Route);
+      const entityProposals = proposals.filter((proposal) => proposal.entity_type).slice(0, 3);
+      const eventProposals = proposals.filter((proposal) => proposal.event_type).slice(0, 3);
+      const stateProposals = proposals.filter((proposal) => proposal.attribute_path).slice(0, 3);
+      const temporalProposals = (gate3Bundle?.temporal_relations ?? []).slice(0, 3);
+      return {
+        project_id: id,
+        source_chunk_ids: [chunkId],
+        gate2_route: gate2Route,
+        gate3_route: gate3Route,
+        entity_proposals: entityProposals,
+        event_proposals: eventProposals,
+        state_change_proposals: stateProposals,
+        temporal_relation_proposals: temporalProposals,
+        identity_bindings: provisionalStoryBibleBindings(
+          id, entityProposals, eventProposals, stateProposals, temporalProposals
+        )
+      };
+    }
+
+    function storyBibleUpdateSummary(update) {
+      if (update.profile) return {type: "profile", id: update.profile.profile_id, name: update.profile.canonical_name};
+      if (update.state) return {type: "state", id: update.state.state_id, profile_id: update.state.profile_id, state: update.state.state};
+      if (update.relationship) return {type: "relationship", id: update.relationship.relationship_id, relationship_type: update.relationship.relationship_type};
+      if (update.world_rule) return {type: "world_rule", id: update.world_rule.rule_id, name: update.world_rule.name};
+      return {type: "unknown", id: update.update_id};
+    }
+
+    function renderStoryBibleCandidate(proposal) {
+      state.storyBibleCandidate = proposal;
+      const plan = proposal.commit_plan;
+      $("generateStoryBibleCandidate").disabled = true;
+      $("approveStoryBiblePlan").disabled = false;
+      $("refreshStoryBibleResources").disabled = false;
+      setStoryBibleState("候选已生成", "候选尚未写入正式设定库；检查下方摘要后，点击“确认审批并写入”。", "ok");
+      $("storyBibleStatus").textContent = pretty({
+        state: "CANDIDATE_READY",
+        proposal_id: proposal.proposal_id,
+        commit_plan_id: plan.commit_plan_id,
+        identity_bindings: proposal.identity_bindings?.map((binding) => ({
+          source_proposal_id: binding.source_proposal_id,
+          canonical_kind: binding.canonical_kind,
+          canonical_id: binding.canonical_id
+        })) ?? [],
+        updates: plan.updates.map(storyBibleUpdateSummary),
+        conflict_count: proposal.conflicts?.length ?? 0,
+        next_step: "等待人工确认审批；此时正式设定库未改变。"
+      });
+    }
+
+    function describeStoryBibleError(error) {
+      if (error.status === 502) {
+        return "StoryBible Agent API 无响应或返回了无效结构；候选未生成，正式设定库没有任何写入。请检查服务端网络与模型配置。";
+      }
+      if ([409, 422].includes(error.status)) {
+        return "Gate 2 / Gate 3 的审批链或证据校验未通过；候选未生成，正式设定库没有任何写入。";
+      }
+      return `设定库操作失败（${error.status ?? "网络"}）；没有进行未确认的正式写入。`;
+    }
+
+    async function generateStoryBibleCandidate() {
+      if (state.storyBibleSubmitting) return;
+      state.storyBibleSubmitting = true;
+      $("generateStoryBibleCandidate").disabled = true;
+      setStoryBibleState("正在生成候选", "正在读取已批准的 Gate 2 / Gate 3 结果并调用 StoryBible Agent；不会写入正式库。", "warn");
+      try {
+        const context = await buildStoryBibleContext();
+        const proposal = await request(
+          `/projects/${encodeURIComponent(context.project_id)}/storybible/curate`,
+          {method: "POST", headers: demoHeaders(), body: JSON.stringify(context)}
+        );
+        renderStoryBibleCandidate(proposal);
+      } catch (error) {
+        setStoryBibleState("候选生成失败", describeStoryBibleError(error), "bad");
+        $("storyBibleStatus").textContent = pretty({
+          state: "CANDIDATE_FAILED",
+          http_status: error.status ?? null,
+          detail: describeStoryBibleError(error)
+        });
+        throw error;
+      } finally {
+        state.storyBibleSubmitting = false;
+        if (!state.storyBibleCandidate) $("generateStoryBibleCandidate").disabled = false;
+      }
+    }
+
+    async function refreshStoryBibleResources() {
+      const id = safePipelineProjectId();
+      const profiles = await request(`/projects/${encodeURIComponent(id)}/storybible/profiles`);
+      const states = [];
+      for (const profile of profiles) {
+        const profileStates = await request(`/projects/${encodeURIComponent(id)}/storybible/profiles/${encodeURIComponent(profile.profile_id)}/states`);
+        states.push(...profileStates.map((state) => ({
+          state_id: state.state_id,
+          profile_id: state.profile_id,
+          state: state.state
+        })));
+      }
+      $("storyBibleStatus").textContent = pretty({
+        state: state.storyBibleCommitted ? "CANONICAL_COMMITTED" : "CANONICAL_READONLY",
+        profiles: profiles.map((profile) => ({
+          profile_id: profile.profile_id,
+          entity_kind: profile.entity_kind,
+          canonical_name: profile.canonical_name,
+          aliases: profile.aliases,
+          revision: profile.revision
+        })),
+        states
+      });
+      if (!state.storyBibleCandidate) {
+        setStoryBibleState("正式库只读", "已读取现有设定；生成候选不会自动修改它。", "ok");
+      }
+    }
+
+    async function approveStoryBiblePlan() {
+      const planId = state.storyBibleCandidate?.commit_plan?.commit_plan_id;
+      if (!planId) throw new Error("没有可审批的设定库候选");
+      if (!window.confirm("确认把这个候选写入正式 StoryBible 设定库吗？这会创建或更新人物、组织、地点及其状态。")) return;
+      $("approveStoryBiblePlan").disabled = true;
+      setStoryBibleState("正在写入", "正在提交已确认的 Commit Plan。", "warn");
+      try {
+        const id = safePipelineProjectId();
+        await request(
+          `/projects/${encodeURIComponent(id)}/storybible/commit-plans/${encodeURIComponent(planId)}`,
+          {method: "POST", headers: demoHeaders(), body: JSON.stringify({status: "APPROVED"})}
+        );
+        state.storyBibleCommitted = true;
+        setStoryBibleState("已写入正式库", "审批已完成；下方是从正式 StoryBible 重新读取的资源。", "ok");
+        await refreshStoryBibleResources();
+      } catch (error) {
+        setStoryBibleState("写入失败", describeStoryBibleError(error), "bad");
+        $("approveStoryBiblePlan").disabled = false;
+        throw error;
       }
     }
 
@@ -3054,6 +3294,9 @@
     $("useOfficialSafePipelineText").addEventListener("click", () => useOfficialSafePipelineText().catch((error) => showLog(error.message)));
     $("startSafePipeline").addEventListener("click", () => startSafePipeline().catch((error) => showLog(error.message)));
     $("refreshSafePipeline").addEventListener("click", () => refreshSafePipeline().catch((error) => showLog(error.message)));
+    $("generateStoryBibleCandidate").addEventListener("click", () => generateStoryBibleCandidate().catch((error) => showLog(error.message)));
+    $("approveStoryBiblePlan").addEventListener("click", () => approveStoryBiblePlan().catch((error) => showLog(error.message)));
+    $("refreshStoryBibleResources").addEventListener("click", () => refreshStoryBibleResources().catch((error) => showLog(error.message)));
     $("verifyAccess").addEventListener("click", () => verifyAccess().catch((error) => showLog(error.message)));
     $("createProject").addEventListener("click", () => createProject().catch((error) => showLog(error.message)));
     $("importTxt").addEventListener("click", () => importTxt().catch((error) => showLog(error.message)));

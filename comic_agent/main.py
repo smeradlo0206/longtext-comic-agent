@@ -58,6 +58,9 @@ def create_app(database_url: str | None = None) -> FastAPI:
             LocalSafeDemoProvider(scenario=settings.fake_pipeline_scenario),
             provider_model="local-safe-demo",
         )
+        app.state.storybible_curator = StoryBibleCurator(
+            LocalSafeDemoProvider(scenario=settings.fake_pipeline_scenario)
+        )
     app.include_router(health_router)
     app.include_router(projects_router)
     app.include_router(agent_runs_router)

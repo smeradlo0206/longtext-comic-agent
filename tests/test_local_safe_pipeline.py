@@ -73,6 +73,7 @@ def _client(tmp_path, monkeypatch, *, scenario: str = "success") -> TestClient: 
     monkeypatch.setenv("ENABLE_REAL_LLM", "false")
     monkeypatch.setenv("COMIC_AGENT_FAKE_PIPELINE_SCENARIO", scenario)
     monkeypatch.setenv("INTERNAL_DEMO_REQUIRE_ACCESS_CODE", "false")
+    monkeypatch.setenv("LLM_BASE_URL", "http://127.0.0.1:9")
     get_settings.cache_clear()
     return TestClient(create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'pipeline.db'}"))
 
@@ -135,6 +136,99 @@ def test_one_click_pipeline_imports_and_reaches_gate3_approved(tmp_path, monkeyp
     assert approved.status_code == 200
     assert approved.json()["source_approved_proposal_bundle_id"] == source_bundle_id
     assert "quote_text" not in approved.text
+
+
+def test_safe_demo_pipeline_can_curate_then_explicitly_commit_storybible(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """Catch a demo that reaches Gate 3 but cannot produce usable canonical resources."""
+
+    client = _client(tmp_path, monkeypatch)
+    project_id = "storybible-safe-demo"
+    started = client.post(
+        f"/projects/{project_id}/pipeline-runs/import-and-analyze",
+        files={"file": ("official.txt", _OFFICIAL_TEXT.encode("utf-8"), "text/plain")},
+    )
+    assert started.status_code == 200
+    run_id = started.json()["analysis_run_id"]
+
+    gate2_route = client.get(f"/narrative-analysis-runs/{run_id}/review-gate2").json()[
+        "route"
+    ]
+    source_bundle_id = gate2_route["approved_proposal_bundle"]["bundle_id"]
+    gate3_route = client.get(
+        f"/projects/{project_id}/timeline-gate3/{source_bundle_id}/review"
+    ).json()["route"]
+    gate3_route["approved_timeline_bundle"] = client.get(
+        f"/projects/{project_id}/timeline-gate3/{source_bundle_id}/approved-bundle"
+    ).json()
+    chapter_id = client.get(f"/projects/{project_id}/chapters").json()[0]["chapter_id"]
+    chunk_id = client.get(f"/chapters/{chapter_id}/chunks").json()[0]["chunk_id"]
+    approved_proposals = [
+        item["source"]["proposal"]
+        for item in gate2_route["approved_proposal_bundle"]["approved_proposals"]
+    ]
+    context = {
+        "project_id": project_id,
+        "source_chunk_ids": [chunk_id],
+        "gate2_route": gate2_route,
+        "gate3_route": gate3_route,
+        "entity_proposals": [
+            proposal
+            for proposal in approved_proposals
+            if proposal.get("entity_type") is not None
+        ][:3],
+        "event_proposals": [
+            proposal
+            for proposal in approved_proposals
+            if proposal.get("event_type") is not None
+        ][:3],
+        "state_change_proposals": [
+            proposal
+            for proposal in approved_proposals
+            if proposal.get("attribute_path") is not None
+        ][:3],
+        "temporal_relation_proposals": gate3_route["approved_timeline_bundle"][
+            "temporal_relations"
+        ][:3],
+    }
+    context["identity_bindings"] = [
+        {
+            "source_schema": schema,
+            "source_proposal_id": proposal["proposal_id"],
+            "canonical_kind": kind,
+            "canonical_id": f"{project_id}:placeholder:{index}",
+            "project_id": project_id,
+        }
+        for schema, kind, proposals in (
+            ("EntityProposalV1", "PROFILE", context["entity_proposals"]),
+            ("EventProposalV1", "EVENT", context["event_proposals"]),
+            ("StateChangeProposalV1", "STATE", context["state_change_proposals"]),
+            ("TemporalRelationProposalV1", "RELATIONSHIP", context["temporal_relation_proposals"]),
+        )
+        for index, proposal in enumerate(proposals)
+    ]
+
+    candidate = client.post(
+        f"/projects/{project_id}/storybible/curate", json=context
+    )
+
+    assert candidate.status_code == 200, candidate.text
+    proposal = candidate.json()
+    assert proposal["status"] == "CANDIDATE"
+    assert proposal["commit_plan"]["updates"]
+    assert client.get(f"/projects/{project_id}/storybible/profiles").json() == []
+
+    committed = client.post(
+        f"/projects/{project_id}/storybible/commit-plans/{proposal['commit_plan']['commit_plan_id']}",
+        json={"status": "APPROVED"},
+    )
+
+    assert committed.status_code == 200
+    profiles = client.get(f"/projects/{project_id}/storybible/profiles").json()
+    assert [(item["canonical_name"], item["entity_kind"] ) for item in profiles] == [
+        ("小林", "PERSON")
+    ]
 
 
 def test_one_click_pipeline_only_uses_real_provider_after_explicit_opt_in(

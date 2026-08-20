@@ -273,6 +273,21 @@ def test_web_console_exposes_whole_document_analysis_as_the_normal_flow() -> Non
     assert advanced_start < manual_chunk_input < advanced_end
 
 
+def test_web_console_exposes_gate3_guarded_storybible_candidate_and_commit_flow() -> None:
+    """Catch a console that claims StoryBible support without a guarded commit path."""
+
+    html = Path("web_console/index.html").read_text(encoding="utf-8")
+
+    assert 'id="storyBible"' in html
+    assert 'id="generateStoryBibleCandidate" class="primary" disabled' in html
+    assert 'id="approveStoryBiblePlan" disabled' in html
+    assert 'id="storyBibleStatus"' in html
+    assert "Gate 3 已批准后才可生成候选" in html
+    assert "/storybible/curate" in html
+    assert "/storybible/commit-plans/" in html
+    assert "window.confirm" in html
+
+
 def test_web_console_exposes_automatic_gate1_and_chapter_authorization() -> None:
     html = Path("web_console/index.html").read_text(encoding="utf-8")
 
