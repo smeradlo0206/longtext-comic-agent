@@ -1,6 +1,8 @@
 """Sequential in-process worker for resumable whole-document analysis tasks."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from math import ceil
+from time import monotonic
 from typing import Any, Protocol
 
 from comic_agent.config import Settings
@@ -11,6 +13,7 @@ from comic_agent.repositories.narrative_analysis_recovery_repository import (
 )
 from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
 from comic_agent.repositories.source_repository import SourceRepository
+from comic_agent.schemas.timeline import TimelineGate3RunStatus
 from comic_agent.schemas.workflow import (
     AgentRunStatus,
     NarrativeAnalysisProposalSourceV1,
@@ -18,6 +21,8 @@ from comic_agent.schemas.workflow import (
     NarrativeAnalysisRunV1,
     NarrativeAnalysisWindowStatus,
     NarrativeAnalysisWindowV1,
+    NarrativeRecoveryPhase,
+    NarrativeRecoveryTerminalReason,
 )
 from comic_agent.services.narrative_analysis_aggregation import aggregate_narrative_analysis
 from comic_agent.services.narrative_analysis_proposal_sources import proposal_sources_for_window
@@ -45,6 +50,9 @@ LENGTH_RETRY_MAX_CHARS_PER_CHUNK = 800
 RETRYABLE_FAILURE_CATEGORIES = {
     "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT",
     "SCHEMA_VALIDATION_FAILED",
+    "PROVIDER_TIMEOUT",
+    "PROVIDER_CONNECTION_ERROR",
+    "PROVIDER_HTTP_ERROR",
 }
 
 
@@ -66,6 +74,7 @@ class NarrativeAnalysisWorker:
         recovery_repository: NarrativeAnalysisRecoveryRepository | None = None,
         provider: LLMProvider | None = None,
         timeline_coordinator: NarrativeTimelineCoordinator | None = None,
+        allow_fake_provider: bool = False,
     ) -> None:
         self._settings = settings
         self._source_repository = source_repository
@@ -74,6 +83,7 @@ class NarrativeAnalysisWorker:
         self._recovery_repository = recovery_repository
         self._provider = provider
         self._timeline_coordinator = timeline_coordinator
+        self._allow_fake_provider = allow_fake_provider
 
     def run_pending(
         self,
@@ -104,6 +114,10 @@ class NarrativeAnalysisWorker:
             for window in self._analysis_repository.list_windows(analysis_run_id)
             if window.status
             in (NarrativeAnalysisWindowStatus.PENDING, NarrativeAnalysisWindowStatus.FAILED)
+            and (
+                window.next_eligible_retry_at is None
+                or window.next_eligible_retry_at <= datetime.now(UTC)
+            )
         ]
         pending_windows.sort(key=lambda window: (run.modes.index(window.mode), window.window_index))
         for window in pending_windows:
@@ -119,13 +133,47 @@ class NarrativeAnalysisWorker:
     ) -> None:
         current = window
         while True:
+            if self._budget_exhausted_before_provider(current):
+                self._analysis_repository.save_window(self._exhaust_window(current))
+                return
+            reserved = current.model_copy(
+                update={
+                    "status": NarrativeAnalysisWindowStatus.RESERVED,
+                    "next_eligible_retry_at": None,
+                }
+            )
+            claim_window = getattr(self._analysis_repository, "claim_window", None)
+            if callable(claim_window):
+                if not claim_window(reserved):
+                    return
+            else:
+                self._analysis_repository.save_window(reserved)
+            reserve_root = getattr(self._analysis_repository, "reserve_root_provider_request", None)
+            if callable(reserve_root):
+                reserved_run = reserve_root(run.analysis_run_id)
+                if reserved_run is None:
+                    self._analysis_repository.save_window(
+                        self._exhaust_window(reserved, root_budget=True)
+                    )
+                    return
+                run = reserved_run
             running = current.model_copy(
                 update={
                     "status": NarrativeAnalysisWindowStatus.RUNNING,
                     "error_message": None,
                     "failure_category": None,
                     "recommended_action": None,
-                    "attempt_count": current.attempt_count + 1,
+                    "attempt_count": reserved.attempt_count + 1,
+                    # Charge a Provider call before invoking it. A crash can consume
+                    # one call conservatively, but never cause an unbounded replay.
+                    "provider_request_count": reserved.provider_request_count + 1,
+                    "initial_provider_attempts": (
+                        reserved.initial_provider_attempts + 1
+                        if reserved.recovery_phase == NarrativeRecoveryPhase.INITIAL
+                        else reserved.initial_provider_attempts
+                    ),
+                    "next_eligible_retry_at": None,
+                    "started_at": datetime.now(UTC),
                 }
             )
             self._analysis_repository.save_window(running)
@@ -135,9 +183,11 @@ class NarrativeAnalysisWorker:
                 running,
                 real_llm_requested,
             )
+            completed = self._schedule_retry_if_needed(completed)
+            completed = self._terminalize_unrecoverable_schema_failure(completed)
             self._analysis_repository.save_window(completed)
             if self._should_split(completed):
-                self._split_length_failed_window(workflow, run, completed, real_llm_requested)
+                self._split_failed_window(workflow, run, completed, real_llm_requested)
                 return
             if not self._should_retry(completed):
                 return
@@ -145,6 +195,31 @@ class NarrativeAnalysisWorker:
                 update={
                     "previous_failure_category": completed.failure_category,
                     "effective_max_chars_per_chunk": self._retry_max_chars_per_chunk(completed),
+                    "recovery_phase": (
+                        NarrativeRecoveryPhase.SCHEMA_REPAIR
+                        if completed.failure_category == "SCHEMA_VALIDATION_FAILED"
+                        else NarrativeRecoveryPhase.LENGTH_RECOVERY
+                    ),
+                    "length_recovery_attempts_used": (
+                        completed.length_recovery_attempts_used + 1
+                        if completed.failure_category == "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT"
+                        else completed.length_recovery_attempts_used
+                    ),
+                    "schema_repair_attempts_used": (
+                        completed.schema_repair_attempts_used + 1
+                        if completed.failure_category == "SCHEMA_VALIDATION_FAILED"
+                        else completed.schema_repair_attempts_used
+                    ),
+                    "schema_recovery_attempt_count": (
+                        completed.schema_recovery_attempt_count + 1
+                        if completed.failure_category == "SCHEMA_VALIDATION_FAILED"
+                        else completed.schema_recovery_attempt_count
+                    ),
+                    "schema_recovery_rule_codes": (
+                        self._output_recovery_rule_codes(completed) or []
+                        if completed.failure_category == "SCHEMA_VALIDATION_FAILED"
+                        else completed.schema_recovery_rule_codes
+                    ),
                 }
             )
 
@@ -157,6 +232,7 @@ class NarrativeAnalysisWorker:
     ) -> NarrativeAnalysisWindowV1:
         """Run one persisted attempt without weakening provider or evidence validation."""
 
+        started = monotonic()
         try:
             result = workflow.run(
                 project_id=run.project_id,
@@ -166,23 +242,50 @@ class NarrativeAnalysisWorker:
                 max_chars_per_chunk=running.effective_max_chars_per_chunk,
                 output_recovery=self._output_recovery(running),
                 output_recovery_rule_codes=self._output_recovery_rule_codes(running),
+                source_slice=(
+                    (running.slice_chunk_id, running.slice_start, running.slice_end)
+                    if running.slice_chunk_id is not None
+                    and running.slice_start is not None
+                    and running.slice_end is not None
+                    else None
+                ),
                 real_llm_requested=real_llm_requested,
+                allow_fake_provider=self._allow_fake_provider,
             )
             agent_run_id = result.agent_run.agent_run_id if result.agent_run is not None else None
             failed = (
                 result.agent_run is not None and result.agent_run.status == AgentRunStatus.FAILED
             )
             failure_details = self._failure_details_from_summary(result.summary) if failed else {}
-            return running.model_copy(
-                update={
+            execution = (
+                result.agent_run.provider_result.execution_metadata
+                if result.agent_run is not None and result.agent_run.provider_result is not None
+                else None
+            )
+            return self._with_elapsed_budget(
+                running,
+                {
                     "status": (
                         NarrativeAnalysisWindowStatus.FAILED
                         if failed
                         else NarrativeAnalysisWindowStatus.SUCCEEDED
                     ),
                     "agent_run_id": agent_run_id,
+                    "completed_at": datetime.now(UTC),
+                    "selected_output_mode": execution.selected_output_mode if execution else None,
+                    "capability_state": execution.capability_state if execution else None,
+                    "provider_finish_reason": execution.finish_reason if execution else None,
+                    "provider_completion_tokens": execution.completion_tokens
+                    if execution
+                    else None,
+                    "output_tokens_used": (
+                        running.output_tokens_used + execution.completion_tokens
+                        if execution is not None and execution.completion_tokens is not None
+                        else running.output_tokens_used
+                    ),
                     **failure_details,
-                }
+                },
+                started,
             )
         except Exception as exc:
             failure_summary: dict[str, Any] = {}
@@ -193,8 +296,9 @@ class NarrativeAnalysisWorker:
                 for chunk_id in running.chunk_ids
                 if (chunk := self._source_repository.get_chunk(chunk_id)) is not None
             ]
-            return running.model_copy(
-                update={
+            return self._with_elapsed_budget(
+                running,
+                {
                     "status": NarrativeAnalysisWindowStatus.FAILED,
                     "agent_run_id": None,
                     "error_message": sanitize_error_message(
@@ -207,36 +311,236 @@ class NarrativeAnalysisWorker:
                     "provider_error_diagnostics": sanitize_provider_diagnostics(
                         failure_summary.get("provider_error_diagnostics")
                     ),
-                }
+                },
+                started,
             )
+
+    @staticmethod
+    def _with_elapsed_budget(
+        window: NarrativeAnalysisWindowV1,
+        update: dict[str, object],
+        started: float,
+    ) -> NarrativeAnalysisWindowV1:
+        """Persist source-free elapsed time for this Provider attempt."""
+
+        elapsed = max(1, ceil(monotonic() - started))
+        return window.model_copy(
+            update={
+                **update,
+                "elapsed_seconds_used": window.elapsed_seconds_used + elapsed,
+            }
+        )
+
+    @staticmethod
+    def _budget_exhausted_before_provider(window: NarrativeAnalysisWindowV1) -> bool:
+        call_cap = window.max_call_attempts
+        if window.recovery_phase == NarrativeRecoveryPhase.SCHEMA_REPAIR:
+            # Format repair gets its own bounded reservation.  It must not be
+            # consumed by a preceding length retry in the same child scope.
+            call_cap += window.max_schema_repair_attempts
+        return (
+            window.provider_request_count >= call_cap
+            or window.elapsed_seconds_used >= window.time_budget_seconds
+        )
+
+    def _exhaust_window(
+        self, window: NarrativeAnalysisWindowV1, *, root_budget: bool = False
+    ) -> NarrativeAnalysisWindowV1:
+        """Persist a terminal, source-free budget outcome without a new Provider call."""
+
+        action = (
+            "root provider call budget exhausted"
+            if root_budget
+            else "provider call budget exhausted"
+            if self._budget_exhausted_before_provider(window)
+            else "time budget exhausted"
+        )
+        return window.model_copy(
+            update={
+                "status": (
+                    NarrativeAnalysisWindowStatus.NEEDS_HUMAN_ACTION
+                    if root_budget or window.failure_category == "SCHEMA_VALIDATION_FAILED"
+                    else NarrativeAnalysisWindowStatus.EXHAUSTED
+                ),
+                "completed_at": datetime.now(UTC),
+                "next_eligible_retry_at": None,
+                "error_message": None,
+                # Preserve the original safe failure category for operators and
+                # Console guidance. `EXHAUSTED` is the terminal budget state.
+                "failure_category": (
+                    "SCHEMA_REPAIR_EXHAUSTED"
+                    if window.failure_category == "SCHEMA_VALIDATION_FAILED"
+                    else window.failure_category or "RECOVERY_BUDGET_EXHAUSTED"
+                ),
+                "recommended_action": (
+                    "automatic schema recovery stopped; inspect safe rule codes"
+                    if window.failure_category == "SCHEMA_VALIDATION_FAILED"
+                    else window.recommended_action or action
+                ),
+                "recovery_phase": NarrativeRecoveryPhase.TERMINAL,
+                "terminal_reason": NarrativeRecoveryTerminalReason.PROVIDER_BUDGET_EXHAUSTED,
+            }
+        )
 
     def _should_retry(self, window: NarrativeAnalysisWindowV1) -> bool:
         """Allow one bounded automatic retry only for recoverable provider failures."""
 
         return (
             window.status == NarrativeAnalysisWindowStatus.FAILED
-            and window.attempt_count < MAX_AUTOMATIC_WINDOW_ATTEMPTS
-            and window.failure_category in RETRYABLE_FAILURE_CATEGORIES
+            and window.failure_category
+            in {"PROVIDER_LENGTH_BEFORE_FINAL_CONTENT", "SCHEMA_VALIDATION_FAILED"}
+            and (
+                (
+                    window.length_recovery_attempts_used < window.max_length_recovery_attempts
+                    and window.provider_request_count < window.max_call_attempts
+                )
+                if window.failure_category == "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT"
+                else (
+                    window.schema_repair_attempts_used < window.max_schema_repair_attempts
+                    and window.provider_request_count
+                    < window.max_call_attempts + window.max_schema_repair_attempts
+                )
+            )
         )
 
     def _should_split(self, window: NarrativeAnalysisWindowV1) -> bool:
-        """Split only a multi-SourceChunk length failure at auditable boundaries."""
+        """Split only a failed multi-SourceChunk scope at auditable boundaries."""
 
         return (
             window.status == NarrativeAnalysisWindowStatus.FAILED
-            and window.failure_category == "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT"
-            and len(window.chunk_ids) > 1
+            and window.failure_category
+            in {
+                "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT",
+                "PROVIDER_TIMEOUT",
+                "SCHEMA_VALIDATION_FAILED",
+            }
+            and (
+                window.failure_category != "SCHEMA_VALIDATION_FAILED"
+                or window.schema_repair_attempts_used >= window.max_schema_repair_attempts
+            )
+            and (
+                len(window.chunk_ids) > 1
+                or window.failure_category == "SCHEMA_VALIDATION_FAILED"
+            )
+            and window.split_depth < window.max_split_depth
         )
 
-    def _split_length_failed_window(
+    def _terminalize_unrecoverable_schema_failure(
+        self, window: NarrativeAnalysisWindowV1
+    ) -> NarrativeAnalysisWindowV1:
+        """Stop explicitly once fixed-format recovery cannot safely narrow further."""
+
+        if (
+            window.status == NarrativeAnalysisWindowStatus.FAILED
+            and window.failure_category == "SCHEMA_VALIDATION_FAILED"
+            and window.schema_repair_attempts_used >= window.max_schema_repair_attempts
+            and (
+                window.split_depth >= window.max_split_depth
+                or (len(window.chunk_ids) == 1 and not self._can_slice(window))
+            )
+        ):
+            return window.model_copy(
+                update={
+                    "status": NarrativeAnalysisWindowStatus.NEEDS_HUMAN_ACTION,
+                    "failure_category": "SCHEMA_REPAIR_EXHAUSTED",
+                    "recommended_action": (
+                        "automatic schema recovery stopped; inspect safe rule codes"
+                    ),
+                    "completed_at": datetime.now(UTC),
+                    "next_eligible_retry_at": None,
+                    "recovery_phase": NarrativeRecoveryPhase.TERMINAL,
+                    "terminal_reason": (
+                        NarrativeRecoveryTerminalReason.MINIMUM_SCOPE_REACHED
+                        if len(window.chunk_ids) == 1 and not self._can_slice(window)
+                        else NarrativeRecoveryTerminalReason.SCHEMA_REPAIR_EXHAUSTED
+                    ),
+                }
+            )
+        return window
+
+    def _can_slice(self, window: NarrativeAnalysisWindowV1) -> bool:
+        """Return whether a single approved SourceChunk can be divided without overlap."""
+
+        if len(window.chunk_ids) != 1:
+            return False
+        chunk = self._source_repository.get_chunk(window.chunk_ids[0])
+        if chunk is None:
+            return False
+        start = window.slice_start or 0
+        end = window.slice_end if window.slice_end is not None else len(chunk.text)
+        return end - start >= window.minimum_slice_chars * 2
+
+    def _schedule_retry_if_needed(
+        self, window: NarrativeAnalysisWindowV1
+    ) -> NarrativeAnalysisWindowV1:
+        """Persist a bounded backoff for transient failures; never sleep in a worker."""
+
+        if (
+            window.status == NarrativeAnalysisWindowStatus.FAILED
+            and window.failure_category == "SCHEMA_VALIDATION_FAILED"
+            and window.schema_repair_attempts_used < window.max_schema_repair_attempts
+        ):
+            # The independently budgeted repair is scheduled before applying a
+            # call-cap check.  This fixes length -> split child -> schema paths.
+            return window.model_copy(update={"completed_at": datetime.now(UTC)})
+        if (
+            window.status == NarrativeAnalysisWindowStatus.FAILED
+            and self._budget_exhausted_before_provider(window)
+        ):
+            if (
+                window.failure_category == "SCHEMA_VALIDATION_FAILED"
+                and window.schema_repair_attempts_used >= window.max_schema_repair_attempts
+                and window.split_depth < window.max_split_depth
+                and (len(window.chunk_ids) > 1 or self._can_slice(window))
+            ):
+                # The one allowed format repair consumed this exact window's
+                # call cap. A new child scope has its own persisted cap while
+                # the root reservation remains the finite global bound.
+                return window.model_copy(update={"completed_at": datetime.now(UTC)})
+            return self._exhaust_window(window)
+        if (
+            window.status != NarrativeAnalysisWindowStatus.FAILED
+            or window.failure_category
+            not in {
+                "PROVIDER_TIMEOUT",
+                "PROVIDER_CONNECTION_ERROR",
+                "PROVIDER_HTTP_ERROR",
+            }
+            or window.provider_request_count >= window.max_call_attempts
+            or not self._is_transient_http_failure(window)
+        ):
+            return window.model_copy(update={"completed_at": datetime.now(UTC)})
+        seconds = min(60, 5 * (2 ** max(window.provider_request_count - 1, 0)))
+        return window.model_copy(
+            update={
+                "completed_at": datetime.now(UTC),
+                "next_eligible_retry_at": datetime.now(UTC) + timedelta(seconds=seconds),
+            }
+        )
+
+    @staticmethod
+    def _is_transient_http_failure(window: NarrativeAnalysisWindowV1) -> bool:
+        if window.failure_category != "PROVIDER_HTTP_ERROR":
+            return True
+        diagnostics = window.provider_error_diagnostics or {}
+        status_code = diagnostics.get("http_status_code")
+        return status_code == 429 or (isinstance(status_code, int) and status_code >= 500)
+
+    def _split_failed_window(
         self,
         workflow: NarrativeAnalystWorkflow,
         run: NarrativeAnalysisRunV1,
         failed_window: NarrativeAnalysisWindowV1,
         real_llm_requested: bool,
     ) -> None:
-        """Create and execute one deterministic child window per source chunk."""
+        """Create bounded chunk children or exact single-chunk schema slices."""
 
+        if (
+            failed_window.failure_category == "SCHEMA_VALIDATION_FAILED"
+            and len(failed_window.chunk_ids) == 1
+        ):
+            self._split_schema_slice(workflow, run, failed_window, real_llm_requested)
+            return
         owned_ids = [
             chunk_id
             for chunk_id in failed_window.chunk_ids
@@ -265,6 +569,25 @@ class NarrativeAnalysisWorker:
                 previous_failure_category=failed_window.failure_category,
                 parent_window_id=failed_window.analysis_window_id,
                 split_reason=failed_window.failure_category,
+                idempotency_key=(
+                    f"{failed_window.idempotency_key or failed_window.analysis_window_id}"
+                    f":split:{index}"
+                ),
+                batch_id=failed_window.batch_id,
+                estimated_input_chars=len(chunk.text),
+                estimated_input_tokens=(len(chunk.text) + 3) // 4,
+                output_token_budget=failed_window.output_token_budget,
+                time_budget_seconds=failed_window.time_budget_seconds,
+                # A child is a new, narrower execution scope. The root's atomic
+                # reservation remains the upper bound for the complete split tree.
+                max_call_attempts=failed_window.max_call_attempts,
+                max_split_depth=failed_window.max_split_depth,
+                split_depth=failed_window.split_depth + 1,
+                minimum_slice_chars=failed_window.minimum_slice_chars,
+                recovery_phase=NarrativeRecoveryPhase.SPLIT_CHILD,
+                # Do not turn a timeout into immediate fan-out. Children become
+                # eligible only after the parent's durable retry deadline.
+                next_eligible_retry_at=failed_window.next_eligible_retry_at,
             )
             for index, chunk in enumerate(chunks)
         ]
@@ -276,6 +599,7 @@ class NarrativeAnalysisWorker:
             update={
                 "status": NarrativeAnalysisWindowStatus.SPLIT,
                 "split_reason": failed_window.failure_category,
+                "next_eligible_retry_at": None,
             }
         )
         self._analysis_repository.save_window(split_window)
@@ -287,6 +611,91 @@ class NarrativeAnalysisWorker:
             run.model_copy(
                 update={
                     "window_ids": updated_window_ids,
+                    "updated_at": datetime.now(UTC),
+                }
+            )
+        )
+        for child in child_windows:
+            if child.next_eligible_retry_at is None or child.next_eligible_retry_at <= datetime.now(
+                UTC
+            ):
+                self._run_window(workflow, run, child, real_llm_requested)
+
+    def _split_schema_slice(
+        self,
+        workflow: NarrativeAnalystWorkflow,
+        run: NarrativeAnalysisRunV1,
+        failed_window: NarrativeAnalysisWindowV1,
+        real_llm_requested: bool,
+    ) -> None:
+        """Split one Gate-1-approved SourceChunk into two exact, non-overlapping views."""
+
+        if not self._can_slice(failed_window):
+            self._analysis_repository.save_window(
+                self._terminalize_unrecoverable_schema_failure(failed_window)
+            )
+            return
+        chunk_id = failed_window.chunk_ids[0]
+        chunk = self._source_repository.get_chunk(chunk_id)
+        if chunk is None:
+            return
+        start = failed_window.slice_start or 0
+        end = failed_window.slice_end if failed_window.slice_end is not None else len(chunk.text)
+        midpoint = start + (end - start) // 2
+        boundaries = [(start, midpoint), (midpoint, end)]
+        child_windows = [
+            NarrativeAnalysisWindowV1(
+                analysis_window_id=f"{failed_window.analysis_window_id}:slice:{index}",
+                analysis_run_id=failed_window.analysis_run_id,
+                mode=failed_window.mode,
+                window_index=(failed_window.window_index + 1) * 100_000 + index,
+                chunk_ids=[chunk_id],
+                owned_chunk_ids=[chunk_id],
+                status=NarrativeAnalysisWindowStatus.PENDING,
+                effective_max_chars_per_chunk=end_offset - start_offset,
+                previous_failure_category=failed_window.failure_category,
+                parent_window_id=failed_window.analysis_window_id,
+                split_reason="SCHEMA_VALIDATION_FAILED",
+                idempotency_key=(
+                    f"{failed_window.idempotency_key or failed_window.analysis_window_id}"
+                    f":slice:{start_offset}-{end_offset}"
+                ),
+                batch_id=failed_window.batch_id,
+                estimated_input_chars=end_offset - start_offset,
+                estimated_input_tokens=((end_offset - start_offset) + 3) // 4,
+                output_token_budget=failed_window.output_token_budget,
+                time_budget_seconds=failed_window.time_budget_seconds,
+                max_call_attempts=failed_window.max_call_attempts,
+                max_split_depth=failed_window.max_split_depth,
+                split_depth=failed_window.split_depth + 1,
+                minimum_slice_chars=failed_window.minimum_slice_chars,
+                recovery_phase=NarrativeRecoveryPhase.SPLIT_CHILD,
+                slice_chunk_id=chunk_id,
+                slice_start=start_offset,
+                slice_end=end_offset,
+            )
+            for index, (start_offset, end_offset) in enumerate(boundaries)
+        ]
+        self._analysis_repository.create_windows(child_windows)
+        self._analysis_repository.save_window(
+            failed_window.model_copy(
+                update={
+                    "status": NarrativeAnalysisWindowStatus.SPLIT,
+                    "split_reason": "SCHEMA_VALIDATION_FAILED",
+                    "next_eligible_retry_at": None,
+                }
+            )
+        )
+        refreshed = self._analysis_repository.get_run(run.analysis_run_id)
+        if refreshed is None:
+            return
+        self._analysis_repository.save_run(
+            refreshed.model_copy(
+                update={
+                    "window_ids": [
+                        *refreshed.window_ids,
+                        *(child.analysis_window_id for child in child_windows),
+                    ],
                     "updated_at": datetime.now(UTC),
                 }
             )
@@ -350,14 +759,52 @@ class NarrativeAnalysisWorker:
         if run is None:
             raise ValueError("NarrativeAnalysisRun not found")
         windows = self._analysis_repository.list_windows(analysis_run_id)
+        now = datetime.now(UTC)
+        if any(
+            window.status
+            in {
+                NarrativeAnalysisWindowStatus.PENDING,
+                NarrativeAnalysisWindowStatus.RESERVED,
+                NarrativeAnalysisWindowStatus.RUNNING,
+                NarrativeAnalysisWindowStatus.PROVIDER_SUCCEEDED,
+                NarrativeAnalysisWindowStatus.REVIEWING,
+            }
+            for window in windows
+        ) or any(
+            window.status == NarrativeAnalysisWindowStatus.FAILED
+            and window.next_eligible_retry_at is not None
+            and window.next_eligible_retry_at > now
+            for window in windows
+        ):
+            # Another worker owns an execution checkpoint. Do not aggregate or
+            # evaluate Gate 2 against a partial run while it is still active.
+            return self._analysis_repository.save_run(
+                run.model_copy(
+                    update={
+                        "status": NarrativeAnalysisRunStatus.RUNNING,
+                        "updated_at": datetime.now(UTC),
+                    }
+                )
+            )
         failed_count = sum(
-            window.status == NarrativeAnalysisWindowStatus.FAILED for window in windows
+            window.status
+            in {
+                NarrativeAnalysisWindowStatus.FAILED,
+                NarrativeAnalysisWindowStatus.EXHAUSTED,
+                NarrativeAnalysisWindowStatus.NEEDS_HUMAN_ACTION,
+            }
+            for window in windows
         )
         succeeded_count = sum(
             window.status == NarrativeAnalysisWindowStatus.SUCCEEDED for window in windows
         )
         status = (
-            NarrativeAnalysisRunStatus.SUCCEEDED
+            NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
+            if any(
+                window.status == NarrativeAnalysisWindowStatus.NEEDS_HUMAN_ACTION
+                for window in windows
+            )
+            else NarrativeAnalysisRunStatus.SUCCEEDED
             if failed_count == 0
             else NarrativeAnalysisRunStatus.PARTIAL_FAILED
             if succeeded_count > 0
@@ -365,7 +812,8 @@ class NarrativeAnalysisWorker:
         )
         completed = run.model_copy(update={"status": status, "updated_at": datetime.now(UTC)})
         saved = self._analysis_repository.save_run(completed)
-        self._save_aggregate_result(saved, windows)
+        if saved.status == NarrativeAnalysisRunStatus.SUCCEEDED:
+            self._save_aggregate_result(saved, windows)
         if saved.status == NarrativeAnalysisRunStatus.SUCCEEDED:
             reviewed = NarrativeAnalysisReviewCoordinator(
                 source_repository=self._source_repository,
@@ -373,6 +821,7 @@ class NarrativeAnalysisWorker:
             ).review_if_ready(saved.analysis_run_id)
             self._run_timeline_if_approved(reviewed, windows)
             if self._recovery_repository is not None:
+
                 def rerun(directive, attempt_id):  # type: ignore[no-untyped-def]
                     result = workflow.run(
                         project_id=directive.project_id,
@@ -382,6 +831,7 @@ class NarrativeAnalysisWorker:
                         max_chars_per_chunk=directive.max_chars_per_chunk,
                         execution_nonce=attempt_id,
                         real_llm_requested=real_llm_requested,
+                        allow_fake_provider=self._allow_fake_provider,
                     )
                     return result.agent_run
 
@@ -440,7 +890,17 @@ class NarrativeAnalysisWorker:
             for chunk in self._source_repository.list_document_chunks(run.document_id)
             if chunk.chunk_id in selected_ids
         ]
-        self._timeline_coordinator.run_if_approved(route=route, source_chunks=source_chunks)
+        timeline_run = self._timeline_coordinator.run_if_approved(
+            route=route,
+            source_chunks=source_chunks,
+        )
+        if timeline_run is not None and timeline_run.status == TimelineGate3RunStatus.REJECTED:
+            # Gate 3 itself decides whether every recorded issue is recoverable and
+            # atomically consumes its single persisted retry budget.
+            self._timeline_coordinator.recover(
+                timeline_run_id=timeline_run.timeline_run_id,
+                source_chunks=source_chunks,
+            )
 
     def _run_recovery_timelines(self, root_analysis_run_id: str) -> None:
         """Send only fresh Stage B-approved bundles to Timeline; retain the root rejection."""

@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from comic_agent.config import Settings
 from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
 from comic_agent.repositories.source_repository import SourceRepository
 from comic_agent.schemas.review import SourceReviewDecision
@@ -26,9 +27,11 @@ class NarrativeAnalysisCoordinator:
         *,
         source_repository: SourceRepository,
         analysis_repository: NarrativeAnalysisRepository | None = None,
+        settings: Settings | None = None,
     ) -> None:
         self.source_repository = source_repository
         self.analysis_repository = analysis_repository
+        self.settings = settings or Settings()
 
     def chapter_selection(self, *, project_id: str, document_id: str) -> dict[str, Any]:
         document = self.source_repository.get_document(document_id)
@@ -126,4 +129,10 @@ class NarrativeAnalysisCoordinator:
             modes=modes,
             real_llm_requested=real_llm_requested,
             selected_chunks=selected_chunks,
+            batch_max_chunks=self.settings.narrative_batch_max_chunks,
+            output_token_budget=self.settings.llm_max_output_tokens,
+            time_budget_seconds=self.settings.narrative_window_time_budget_seconds,
+            max_call_attempts=self.settings.narrative_window_max_call_attempts,
+            max_split_depth=self.settings.narrative_window_max_split_depth,
+            min_slice_chars=self.settings.narrative_window_min_slice_chars,
         )

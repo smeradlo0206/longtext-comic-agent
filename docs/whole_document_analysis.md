@@ -71,6 +71,19 @@ left/right controls. Use the scrollbar, a horizontal swipe, or the controls to
 inspect every audit column without compressing or hiding a failure field.
 
 The worker makes at most one automatic retry for a recoverable failed attempt.
+Every new run also reserves a finite root Provider-call budget before invoking a
+Provider. A deterministic split can create only one owned child scope per
+approved SourceChunk, has a persisted maximum depth, and cannot extend that
+root budget. Each window records its call count and elapsed seconds before a
+retry or split. When either the window or root budget is exhausted, the window
+becomes `EXHAUSTED`; the whole Narrative run cannot reach Gate 2 or Timeline.
+
+For `PROVIDER_TIMEOUT` on a multi-SourceChunk window, the failed parent is
+persisted as `SPLIT` and its children inherit the persisted retry deadline.
+Resume does not call the Provider before that deadline, never replays a
+successful sibling, and resumes only the narrower approved child scopes. The
+new child Proposal provenance remains subject to the existing fresh Gate 2
+boundary.
 For `PROVIDER_LENGTH_BEFORE_FINAL_CONTENT` on a multi-SourceChunk window, it
 first records the failed parent and deterministically splits it into one child
 window per parent-owned SourceChunk. Each child may read the parent context but
@@ -88,6 +101,20 @@ The worker never coerces values, drops valid siblings, or persists raw output.
 Retry history remains on the window. A
 failed retry remains failed; validation is never bypassed. Explicit resume still
 selects only `PENDING` or `FAILED` windows and never reruns a successful window.
+
+Structured Provider policy is source-free before execution. `AUTO` may use strict OpenAI-style
+`json_schema` only after a fixed readiness-schema probe has proven support; `JSON_OBJECT_ONLY`
+is the backward-compatible default and `REQUIRE_STRICT` rejects unsupported providers before
+any SourceChunk is sent. Safe diagnostics include schema name, field path, error kind, stable
+rule code and truncation metadata, never invalid input values or raw model JSON. After the single
+format repair fails, Schema recovery splits only the failed scope at approved chunk boundaries;
+for a sole chunk it may create two auditable non-overlapping character slices. At a minimum scope,
+unsupported structured output, or exhausted persisted budget, the terminal state is
+`NEEDS_HUMAN_ACTION`: automatic recovery has stopped and Gate 2/Timeline remain unavailable.
+Length recovery and one schema-format repair have independent persisted budgets for each
+source-bounded child; an earlier length recovery never consumes that child’s schema repair.
+Manual real-LLM validation is allowed only after the mock-based checks pass and never records a
+credential in a command, log, screenshot, or Git artifact.
 
 Provider transport retries are separate from the window retry. The provider
 retries one transient `429` or `5xx` response once; it never automatically
@@ -337,6 +364,54 @@ The normal console path is TXT import → Gate 1 review → chapter selection �
 Narrative Analyst. Omitted modes default to all six implemented extraction modes, while
 the coordinator computes the exact approved chunk intersection server-side. Rejected or
 human-review imports cannot start analysis; this flow remains proposal-only.
+
+## One-click local real-LLM pilot
+
+The local Console's **一键安全分析** card submits all six implemented Narrative
+extraction modes and never requests a real provider unless the checkbox is selected.
+A deterministic Fake pipeline remains available only when the local server is
+explicitly configured for it. To make a small,
+explicit real-provider pilot, first stop the server and configure the local
+environment only:
+
+```powershell
+$env:COMIC_AGENT_ENV = 'development'
+$env:COMIC_AGENT_FAKE_PIPELINE_DEMO = 'false'
+$env:ENABLE_REAL_LLM = 'true'
+$env:LLM_API_KEY = 'your-local-key'
+uv run uvicorn comic_agent.main:app --host 127.0.0.1 --port 8080
+```
+
+Open `http://127.0.0.1:8080/console/`, select a short authorized TXT, check
+**使用真实 LLM**, then click **开始安全分析**. The browser never sends or displays
+the API key. The server rejects a real request before import if real LLM is
+disabled, Fake mode remains enabled, or no local key is configured. The same
+Gate 1 → Narrative → Gate 2 → Timeline → Gate 3 and recovery boundaries apply;
+this entry never writes StoryBible or calls image providers. Start with a short
+text and inspect only the source-free status/result APIs.
+
+### Controlled local Provider acceptance runner
+
+After Fake-provider regression passes, the separate local-only runner may be
+used one tier at a time. It requires `--run-real`, explicitly requests all six
+implemented Narrative extraction modes, uses an isolated SQLite
+database below its output directory, and writes only a source-free summary. It
+never accepts a key as an argument, writes StoryBible, calls image services, or
+uploads text. Set `LLM_STRUCTURED_OUTPUT_POLICY=AUTO` (or `REQUIRE_STRICT`) so
+the source-free per-Schema checks happen before any acceptance text is sent.
+
+```powershell
+uv run python scripts/run_local_real_provider_acceptance.py --tier short --run-real
+uv run python scripts/run_local_real_provider_acceptance.py --tier medium --run-real
+uv run python scripts/run_local_real_provider_acceptance.py --tier long --run-real
+```
+
+Run short, then medium, then long only after the prior summary fully succeeds.
+Exit code `0` requires Narrative `SUCCEEDED`, Gate 2 `APPROVED`, Timeline
+`APPROVED`, and Gate 3 `APPROVED`; exit `3` is a safely rejected startup or
+preflight and exit `4` is a stopped pipeline stage. A real Provider failure
+ends the acceptance run immediately; it is not retried or repaired by this
+runner. It is never part of pytest or GitHub CI.
 
 ## Future Review Gate 1 source-quality boundary
 

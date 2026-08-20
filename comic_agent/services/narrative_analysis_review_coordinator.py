@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import Any, cast
 
 from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
 from comic_agent.repositories.source_repository import SourceRepository
@@ -43,8 +43,8 @@ _NON_RETRYABLE_DIAGNOSTIC_CODES = {
 }
 
 
-class NarrativeAnalysisReviewCoordinator:
-    """Run Gate 2 once after a fully successful whole-document analysis run."""
+class NarrativeGate2HandoffCoordinator:
+    """Claim and complete the deterministic, resumable Gate 2 handoff exactly once."""
 
     def __init__(
         self,
@@ -70,6 +70,13 @@ class NarrativeAnalysisReviewCoordinator:
         aggregate = self._analysis_repository.get_result(analysis_run_id)
         if aggregate is None:
             return run
+        claim_handoff = getattr(self._analysis_repository, "claim_gate2_handoff", None)
+        if callable(claim_handoff):
+            claimed = claim_handoff(analysis_run_id)
+            if claimed is None:
+                current = self._analysis_repository.get_run(analysis_run_id)
+                return current if current is not None else run
+            run = claimed
 
         windows = self._analysis_repository.list_windows(analysis_run_id)
         leaf_windows = [
@@ -106,27 +113,39 @@ class NarrativeAnalysisReviewCoordinator:
             document_id=run.document_id,
             allowed_chunk_ids=allowed_chunk_ids,
         )
-        review_result = self._review_service.review(
-            review_input,
-            ReviewGate2ServiceContext(
-                source_chunks=tuple(selected_chunks),
-                known_agent_run_ids=frozenset(known_agent_run_ids),
-                agent_run_analysis_run_ids={
-                    agent_run_id: run.analysis_run_id for agent_run_id in known_agent_run_ids
-                },
-            ),
-        )
-        route = self._route_for(
-            run=run,
-            review_result=review_result,
-            windows=leaf_windows,
-            review_input=review_input,
-        )
-        return self._analysis_repository.save_review_gate2_artifacts(
-            analysis_run_id=run.analysis_run_id,
-            result=review_result,
-            route=route,
-        )
+        try:
+            review_result = self._review_service.review(
+                review_input,
+                ReviewGate2ServiceContext(
+                    source_chunks=tuple(selected_chunks),
+                    known_agent_run_ids=frozenset(known_agent_run_ids),
+                    agent_run_analysis_run_ids={
+                        agent_run_id: run.analysis_run_id for agent_run_id in known_agent_run_ids
+                    },
+                ),
+            )
+            route = self._route_for(
+                run=run,
+                review_result=review_result,
+                windows=leaf_windows,
+                review_input=review_input,
+            )
+            return self._analysis_repository.save_review_gate2_artifacts(
+                analysis_run_id=run.analysis_run_id,
+                result=review_result,
+                route=route,
+            )
+        except Exception:
+            fail_handoff = getattr(self._analysis_repository, "fail_gate2_handoff", None)
+            if callable(fail_handoff):
+                return cast(
+                    NarrativeAnalysisRunV1,
+                    fail_handoff(
+                        analysis_run_id=run.analysis_run_id,
+                        failure_category="GATE2_EXECUTION_ERROR",
+                    ),
+                )
+            raise
 
     def _route_for(
         self,
@@ -245,3 +264,7 @@ def _stable_unique(values: Iterable[str | None]) -> list[str]:
         seen.add(value)
         items.append(value)
     return items
+
+
+# Public compatibility alias retained for the existing worker and integrations.
+NarrativeAnalysisReviewCoordinator = NarrativeGate2HandoffCoordinator

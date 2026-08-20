@@ -619,35 +619,70 @@
     </aside>
 
     <main>
-      <div class="topbar">
-        <label>API Base URL
-          <input id="apiBase" value="http://127.0.0.1:8080" />
-        </label>
-        <label>Project ID
-          <input id="projectId" placeholder="manual-eval-YYYYMMDD" />
-        </label>
-        <label>访问码
-          <input id="accessCode" type="password" autocomplete="off" />
-        </label>
-        <button id="verifyAccess" class="primary">验证访问码</button>
-        <button id="refreshStatus">刷新状态</button>
-      </div>
-
-      <section id="status">
+      <section id="safePipeline">
         <div class="section-head">
           <div>
-            <h2>Demo Status</h2>
-            <p>后端只返回脱敏配置状态，不返回访问码或模型密钥。</p>
+            <h2>一键安全分析</h2>
+            <p>仅启动既有 Gate 1 → Narrative → Gate 2 → Timeline → Gate 3 流水线。</p>
           </div>
-          <span id="accessBadge" class="pill warn">Access 未验证</span>
         </div>
         <div class="body">
-          <div class="matrix" id="capabilityMatrix"></div>
-          <pre id="demoStatus">{}</pre>
+          <div class="form-grid">
+            <label>项目名称（可选）
+              <input id="safePipelineProjectName" placeholder="留空则使用安全默认名称" />
+            </label>
+            <label>TXT 文件
+              <input id="safePipelineFile" type="file" accept=".txt,text/plain" />
+            </label>
+          </div>
+          <div class="row">
+            <label class="checkline">
+              <input id="safePipelineRealLlmRequested" type="checkbox" />
+              使用真实 LLM（会消耗额度；默认不调用真实模型）
+            </label>
+          </div>
+          <div class="row">
+            <button id="useOfficialSafePipelineText">使用官方示例文本</button>
+            <button id="startSafePipeline" class="primary">开始安全分析</button>
+            <button id="refreshSafePipeline">刷新状态</button>
+          </div>
+          <div class="row" aria-live="polite">
+            <span id="safePipelineRunBadge" class="pill warn">尚未开始</span>
+            <span id="safePipelineRunMessage" class="muted">选择 TXT 后开始；真实 LLM 需要显式勾选。</span>
+          </div>
+          <pre id="safePipelineStatus">{"state":"NOT_STARTED"}</pre>
         </div>
       </section>
 
-      <div class="grid">
+      <details id="advancedDevelopmentDiagnostics">
+        <summary>高级/开发诊断</summary>
+        <div class="topbar">
+          <label>API Base URL
+            <input id="apiBase" value="" placeholder="Same origin" />
+          </label>
+          <label>Project ID
+            <input id="projectId" placeholder="manual-eval-YYYYMMDD" />
+          </label>
+          <label>访问码
+            <input id="accessCode" type="password" autocomplete="off" />
+          </label>
+          <button id="verifyAccess" class="primary">验证访问码</button>
+          <button id="refreshStatus">刷新状态</button>
+        </div>
+        <section id="status">
+          <div class="section-head">
+            <div>
+              <h2>Demo Status</h2>
+              <p>后端只返回脱敏配置状态，不返回访问码或模型密钥。</p>
+            </div>
+            <span id="accessBadge" class="pill warn">Access 未验证</span>
+          </div>
+          <div class="body">
+            <div class="matrix" id="capabilityMatrix"></div>
+            <pre id="demoStatus">{}</pre>
+          </div>
+        </section>
+        <div class="grid">
         <div class="stack">
           <section id="import">
             <div class="section-head">
@@ -970,7 +1005,8 @@
             </div>
           </section>
         </div>
-      </div>
+        </div>
+      </details>
     </main>
   </div>
   <div id="log" class="log"></div>
@@ -999,11 +1035,15 @@
       knowledgeEvaluationBatches: new Map(),
       knowledgeEvaluationRunFailures: new Map(),
       knowledgeEvaluationReport: null,
-      knowledgeEvaluationRunInProgress: false
+      knowledgeEvaluationRunInProgress: false,
+      safePipelineFile: null,
+      safePipelineRunId: null,
+      safePipelinePoll: null,
+      safePipelineSubmitting: false
     };
 
     const $ = (id) => document.getElementById(id);
-    const api = () => $("apiBase").value.replace(/\/$/, "");
+    const api = () => $("apiBase").value.trim().replace(/\/$/, "") || window.location.origin;
     const projectId = () => $("projectId").value.trim();
     const accessCode = () => $("accessCode").value;
     const projectStorageKey = "comic-agent-project-id";
@@ -1051,6 +1091,173 @@
         throw error;
       }
       return data;
+    }
+
+    function safePipelineProjectId() {
+      if (projectId()) return projectId();
+      const id = `local-safe-${Date.now().toString(36)}`;
+      $("projectId").value = id;
+      rememberProjectId();
+      return id;
+    }
+
+    function renderSafePipelineStatus(data) {
+      renderSafePipelineRunState(data);
+      $("safePipelineStatus").textContent = pretty({
+        import_and_gate1: data.gate1 ?? data.pipeline_status ?? "PENDING",
+        provider_health: data.provider_health?.status ?? "NOT_CHECKED",
+        narrative: data.narrative ?? "PENDING",
+        batches: data.batch_summary ?? null,
+        windows: data.window_summary ?? null,
+        structured_execution: data.structured_execution ?? null,
+        narrative_failure_summary: data.narrative_failure_summary ?? null,
+        gate2: data.gate2 ?? "NOT_READY",
+        gate2_handoff: data.gate2_handoff ?? null,
+        narrative_recovery: data.narrative_recovery ?? "NOT_STARTED",
+        timeline: data.timeline ?? "NOT_READY",
+        timeline_recovery: data.timeline_recovery ?? "NOT_STARTED",
+        gate3: data.gate3 ?? "NOT_READY",
+        approved_timeline_bundle: data.approved_timeline_bundle_id ?? null,
+        issue_count: data.gate3_issue_count ?? 0,
+        safe_issue_codes: data.safe_issue_codes ?? [],
+        next_step: data.gate3 === "APPROVED"
+          ? "已生成已审核时间线包，可供未来设定库整合使用。"
+          : "系统只会在既有安全规则允许时自动继续。"
+      });
+    }
+
+    function setSafePipelineRunState(label, message, tone = "warn") {
+      $("safePipelineRunBadge").textContent = label;
+      $("safePipelineRunBadge").className = tone === "bad" ? "pill bad" : tone === "ok" ? "pill" : "pill warn";
+      $("safePipelineRunMessage").textContent = message;
+    }
+
+    function renderSafePipelineRunState(data) {
+      if (data.gate3 === "APPROVED") {
+        setSafePipelineRunState("已成功", "Gate 3 已批准；已生成可供下游使用的时间线包。", "ok");
+      } else if (["REJECTED", "NEEDS_HUMAN_REVIEW", "FAILED"].includes(data.gate2)) {
+        setSafePipelineRunState("已停止", `Gate 2 为 ${data.gate2}；Timeline 没有运行。`, data.gate2 === "NEEDS_HUMAN_REVIEW" ? "warn" : "bad");
+      } else if (data.gate2 === "GATE2_PENDING") {
+        setSafePipelineRunState("Gate 2 待处理", "叙事已完成，正在补齐 Gate 2 审核；不会重跑模型或启动 Timeline。", "warn");
+      } else if (data.gate2 === "GATE2_RECOVERING") {
+        setSafePipelineRunState("Gate 2 审核中", "正在恢复本地确定性 Gate 2 审核；不会重跑 Narrative Provider。", "warn");
+      } else if (data.gate2 === "GATE2_FAILED") {
+        setSafePipelineRunState("Gate 2 审核失败", "Gate 2 审核失败，可安全恢复；Timeline 没有运行。", "bad");
+      } else if (["REJECTED", "NEEDS_HUMAN_REVIEW", "FAILED"].includes(data.gate3)) {
+        setSafePipelineRunState("已停止", `Gate 3 为 ${data.gate3}；不会进入下游。`, data.gate3 === "NEEDS_HUMAN_REVIEW" ? "warn" : "bad");
+      } else if (["PAUSED", "WAITING_RETRY", "CONFIGURATION_ERROR"].includes(data.provider_health?.status)) {
+        setSafePipelineRunState("Provider 暂停", "Provider 当前不可用或等待退避；未开始新的分析调用。", "warn");
+      } else if (data.narrative === "NEEDS_HUMAN_ACTION") {
+        const codes = Array.isArray(data.safe_issue_codes) && data.safe_issue_codes.length
+          ? data.safe_issue_codes.join(", ")
+          : "SCHEMA_REPAIR_EXHAUSTED";
+        setSafePipelineRunState(
+          "已安全停止",
+          `输出结构恢复已停止，无需继续等待；安全错误码：${codes}。Gate 2 与 Timeline 没有运行。`,
+          "bad"
+        );
+      } else if (data.narrative === "FAILED" || data.narrative === "PARTIAL_FAILED") {
+        const failure = data.narrative_failure_summary ?? {};
+        const categories = Array.isArray(failure.failure_categories) && failure.failure_categories.length
+          ? failure.failure_categories.join(", ")
+          : "未提供类别";
+        const actions = Array.isArray(failure.recommended_actions) && failure.recommended_actions.length
+          ? failure.recommended_actions.join("；")
+          : "查看服务端同一时刻的安全日志。";
+        setSafePipelineRunState(
+          "分析失败",
+          `Narrative 状态为 ${data.narrative}（${categories}）。建议：${actions}`,
+          "bad"
+        );
+      } else {
+        setSafePipelineRunState("处理中", "已接收请求，正在执行 Gate 1、Narrative、Gate 2、Timeline 与 Gate 3。", "warn");
+      }
+    }
+
+    function describeSafePipelineStartError(error) {
+      if (error.status === 409) return "真实 LLM 启动前检查未通过：确认服务器已启用真实 LLM、关闭 Fake Mode，并配置本地 Key。";
+      if (error.status === 422 && error.payload?.gate1) return "Gate 1 拒绝了导入文本；请查看 Gate 1 审核结果。";
+      if (error.status === 413) return "TXT 超过当前导入上限，尚未创建分析任务。";
+      if (error.status === 415) return "只允许上传 UTF-8 TXT 文件。";
+      if (error.status === 400) return "导入文本未通过基础校验，尚未创建分析任务。";
+      return `启动请求失败（${error.status ?? "网络"}）。请查看服务端终端的同一时刻日志。`;
+    }
+
+    async function useOfficialSafePipelineText() {
+      const response = await fetch(`${window.location.origin}/console/official_safe_pipeline_demo.txt`);
+      if (!response.ok) throw new Error("无法加载官方示例文本");
+      state.safePipelineFile = new File(
+        [await response.text()],
+        "official_safe_pipeline_demo.txt",
+        {type: "text/plain;charset=utf-8"}
+      );
+      $("safePipelineStatus").textContent = pretty({state: "SAMPLE_READY"});
+      setSafePipelineRunState("样例已就绪", "官方示例文本已准备；点击“开始安全分析”提交。", "ok");
+    }
+
+    async function refreshSafePipeline() {
+      if (!state.safePipelineRunId) return;
+      try {
+        const data = await request(`/pipeline-runs/${encodeURIComponent(state.safePipelineRunId)}`);
+        renderSafePipelineStatus(data);
+        const terminal = ["APPROVED", "REJECTED", "NEEDS_HUMAN_REVIEW", "FAILED"];
+        const stoppedAtGate2 = ["REJECTED", "NEEDS_HUMAN_REVIEW", "FAILED"].includes(data.gate2);
+        if (terminal.includes(data.gate3) || stoppedAtGate2) {
+          clearInterval(state.safePipelinePoll);
+          state.safePipelinePoll = null;
+        }
+      } catch (error) {
+        setSafePipelineRunState("状态读取失败", "无法读取持久化进度；请查看服务端终端日志。", "bad");
+        throw error;
+      }
+    }
+
+    async function startSafePipeline() {
+      const selected = $("safePipelineFile").files[0] || state.safePipelineFile;
+      if (!selected) throw new Error("请选择 TXT 文件或使用官方示例文本");
+      if (state.safePipelineSubmitting) return;
+      const realLlmRequested = $("safePipelineRealLlmRequested").checked;
+      state.safePipelineSubmitting = true;
+      $("startSafePipeline").disabled = true;
+      setSafePipelineRunState("正在提交", realLlmRequested ? "正在验证真实 LLM 配置并提交六类叙事提取。" : "正在提交六类叙事提取。", "warn");
+      try {
+        if (realLlmRequested) await ensureSafePipelineRealLlmEnabled();
+        const body = new FormData();
+        body.append("file", selected);
+        const name = $("safePipelineProjectName").value.trim();
+        if (name) body.append("project_name", name);
+        body.append("real_llm_requested", String(realLlmRequested));
+        body.append("narrative_modes", JSON.stringify([
+          "entity_extraction",
+          "event_extraction",
+          "claim_extraction",
+          "knowledge_state_extraction",
+          "state_change_extraction",
+          "relationship_signal_extraction"
+        ]));
+        const data = await request(
+          `/projects/${encodeURIComponent(safePipelineProjectId())}/pipeline-runs/import-and-analyze`,
+          {method: "POST", body}
+        );
+        state.safePipelineRunId = data.analysis_run_id;
+        renderSafePipelineStatus(data);
+        clearInterval(state.safePipelinePoll);
+        state.safePipelinePoll = setInterval(() => {
+          refreshSafePipeline().catch((error) => showLog(error.message));
+        }, 1000);
+        await refreshSafePipeline();
+      } catch (error) {
+        setSafePipelineRunState("启动失败", describeSafePipelineStartError(error), "bad");
+        $("safePipelineStatus").textContent = pretty({
+          state: "START_FAILED",
+          http_status: error.status ?? null,
+          detail: describeSafePipelineStartError(error)
+        });
+        throw error;
+      } finally {
+        state.safePipelineSubmitting = false;
+        $("startSafePipeline").disabled = false;
+      }
     }
 
     function showLog(message) {
@@ -1334,6 +1541,15 @@
       if (llmStatus.enable_real_llm !== true) {
         throw new Error(
           "Real LLM is disabled by server settings. Restart the API with ENABLE_REAL_LLM=true."
+        );
+      }
+    }
+
+    async function ensureSafePipelineRealLlmEnabled() {
+      const llmStatus = await request("/settings/llm/status");
+      if (llmStatus.real_pipeline_opt_in_available !== true) {
+        throw new Error(
+          "真实 LLM 尚未就绪：请关闭 Fake 演示模式，并确认服务端已启用 ENABLE_REAL_LLM=true 且配置了本地 API Key。"
         );
       }
     }
@@ -2835,6 +3051,9 @@
     }
 
     $("refreshStatus").addEventListener("click", () => refreshStatus().catch((error) => showLog(error.message)));
+    $("useOfficialSafePipelineText").addEventListener("click", () => useOfficialSafePipelineText().catch((error) => showLog(error.message)));
+    $("startSafePipeline").addEventListener("click", () => startSafePipeline().catch((error) => showLog(error.message)));
+    $("refreshSafePipeline").addEventListener("click", () => refreshSafePipeline().catch((error) => showLog(error.message)));
     $("verifyAccess").addEventListener("click", () => verifyAccess().catch((error) => showLog(error.message)));
     $("createProject").addEventListener("click", () => createProject().catch((error) => showLog(error.message)));
     $("importTxt").addEventListener("click", () => importTxt().catch((error) => showLog(error.message)));

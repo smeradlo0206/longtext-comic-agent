@@ -113,7 +113,15 @@ not implement SceneContext, beat generation, panels, images, materials, Gate 3/4
 `NarrativeAnalysisRunV1`, `NarrativeAnalysisWindowV1`, and the six typed Proposal families
 are the source-of-truth contracts for bounded whole-document analysis. Gate 1-approved
 chunk ids and AgentRun provenance are explicit review context; no service expands that scope
-or resolves references implicitly. `ReviewGate2ResultV1` and
+(`NarrativeAnalysisWindowV1` v1.9 adds backward-compatible persisted INITIAL,
+LENGTH_RECOVERY, SCHEMA_REPAIR, SPLIT_CHILD, and TERMINAL budget phases, plus separate
+length/schema repair counters and source-free terminal reasons. It uses the existing JSON
+payload and requires no database migration.)
+or resolves references implicitly.
+`ProviderCapabilityProfileV1` v1.1 adds an optional, source-free capability record for each
+concrete Narrative Proposal batch Schema; v1.0 capability payloads remain readable and fall
+back to their existing provider/model-wide selected mode.
+`ReviewGate2ResultV1` and
 `NarrativeAnalysisReviewRouteV1` persist the fresh automatic decision. APPROVED carries the
 typed `ApprovedProposalBundleV1`; REJECTED carries only sanitized issue summaries;
 NEEDS_HUMAN_REVIEW carries held Proposal ids; FAILED carries sanitized execution diagnostics;

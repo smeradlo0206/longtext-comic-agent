@@ -14,6 +14,15 @@ def test_health_endpoint(tmp_path: Path) -> None:
     assert response.json()["status"] == "ok"
 
 
+def test_console_legacy_readiness_probe_is_not_a_404(tmp_path: Path) -> None:
+    app = create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'api.db'}")
+    with TestClient(app) as client:
+        response = client.get("/demo/status")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "available"}
+
+
 def test_project_import_and_chunk_queries(tmp_path: Path) -> None:
     app = create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'api.db'}")
     with TestClient(app) as client:

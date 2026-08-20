@@ -17,6 +17,11 @@ from comic_agent.schemas.narrative import (
     StateChangeProposalV1,
 )
 from comic_agent.schemas.recovery import RecoveryOutcomeV1
+from comic_agent.schemas.reliability import (
+    ProviderCapabilityState,
+    ProviderExecutionMetadataV1,
+    StructuredOutputMode,
+)
 from comic_agent.schemas.review import NarrativeAnalysisReviewRouteV1, ReviewGate2ResultV1
 
 
@@ -37,16 +42,60 @@ class NarrativeAnalysisRunStatus(StrEnum):
     SUCCEEDED = "SUCCEEDED"
     PARTIAL_FAILED = "PARTIAL_FAILED"
     FAILED = "FAILED"
+    NEEDS_HUMAN_ACTION = "NEEDS_HUMAN_ACTION"
 
 
 class NarrativeAnalysisWindowStatus(StrEnum):
     """Lifecycle states for one bounded analysis window."""
 
     PENDING = "PENDING"
+    RESERVED = "RESERVED"
+    RUNNING = "RUNNING"
+    PROVIDER_SUCCEEDED = "PROVIDER_SUCCEEDED"
+    REVIEWING = "REVIEWING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    EXHAUSTED = "EXHAUSTED"
+    SPLIT = "SPLIT"
+    NEEDS_HUMAN_ACTION = "NEEDS_HUMAN_ACTION"
+
+
+class NarrativeRecoveryPhase(StrEnum):
+    """Durable phase for one source-bounded Provider execution scope."""
+
+    INITIAL = "INITIAL"
+    LENGTH_RECOVERY = "LENGTH_RECOVERY"
+    SCHEMA_REPAIR = "SCHEMA_REPAIR"
+    SPLIT_CHILD = "SPLIT_CHILD"
+    TERMINAL = "TERMINAL"
+
+
+class NarrativeRecoveryTerminalReason(StrEnum):
+    """Source-free terminal reasons for controlled Narrative recovery."""
+
+    SCHEMA_REPAIR_EXHAUSTED = "SCHEMA_REPAIR_EXHAUSTED"
+    STRUCTURED_OUTPUT_UNSUPPORTED = "STRUCTURED_OUTPUT_UNSUPPORTED"
+    PROVIDER_BUDGET_EXHAUSTED = "PROVIDER_BUDGET_EXHAUSTED"
+    MINIMUM_SCOPE_REACHED = "MINIMUM_SCOPE_REACHED"
+
+
+class NarrativeAnalysisBatchStatus(StrEnum):
+    """Source-free lifecycle state for a bounded document batch."""
+
+    PLANNED = "PLANNED"
     RUNNING = "RUNNING"
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
-    SPLIT = "SPLIT"
+    EXHAUSTED = "EXHAUSTED"
+
+
+class NarrativeGate2HandoffStatus(StrEnum):
+    """Durable state of the deterministic post-Narrative Gate 2 handoff."""
+
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
 
 
 class ProviderType(StrEnum):
@@ -74,11 +123,15 @@ class WorkflowRunV1(StrictBaseModel):
 class NarrativeAnalysisWindowPlanV1(StrictBaseModel):
     """Deterministic source chunk window planned before execution."""
 
-    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4"] = Field(
-        default="1.4",
+    schema_version: Literal[
+        "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9"
+    ] = Field(
+        default="1.9",
         description=(
             "Schema version. Historical 1.0 through 1.3 records remain readable; "
-            "1.4 adds deterministic output ownership."
+            "1.4 adds deterministic output ownership; 1.5 adds execution checkpoints; "
+            "1.6 adds batch budgets; 1.7 adds bounded split-recovery accounting; "
+            "1.8 adds schema-recovery slice provenance; 1.9 adds phased recovery budgets."
         ),
     )
     window_index: int = Field(ge=0, description="Zero-based window sequence.")
@@ -92,11 +145,16 @@ class NarrativeAnalysisWindowPlanV1(StrictBaseModel):
 class NarrativeAnalysisWindowV1(NarrativeAnalysisWindowPlanV1):
     """Auditable state for one mode over one planned source window."""
 
-    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4"] = Field(
-        default="1.4",
+    schema_version: Literal[
+        "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9"
+    ] = Field(
+        default="1.9",
         description=(
             "Schema version. Historical 1.0 through 1.3 window records remain readable; "
-            "1.4 adds deterministic split recovery ownership."
+            "1.5 adds source-free retry scheduling and Provider checkpoints; 1.6 adds "
+            "planned batch and execution-budget audit fields; 1.7 adds bounded "
+            "split-recovery accounting; 1.8 adds schema-recovery execution metadata; "
+            "1.9 separates length and schema-repair budgets."
         ),
     )
 
@@ -142,26 +200,164 @@ class NarrativeAnalysisWindowV1(NarrativeAnalysisWindowPlanV1):
         default=None,
         description="Sanitized reason recorded when this window is split.",
     )
+    idempotency_key: str | None = Field(
+        default=None,
+        description="Stable execution identity for this exact mode/window/scope.",
+    )
+    batch_id: str | None = Field(
+        default=None,
+        description="Stable parent batch id; absent on historical records.",
+    )
+    estimated_input_chars: int = Field(
+        default=0,
+        ge=0,
+        description="Conservative source-character estimate; never exact token accounting.",
+    )
+    estimated_input_tokens: int = Field(
+        default=0,
+        ge=0,
+        description="Conservative estimated input-token budget for this window.",
+    )
+    output_token_budget: int = Field(
+        default=2000,
+        ge=1,
+        description="Configured upper bound for structured Provider output tokens.",
+    )
+    time_budget_seconds: int = Field(
+        default=300,
+        ge=1,
+        description="Configured elapsed-time budget for this window's controlled attempts.",
+    )
+    max_call_attempts: int = Field(
+        default=2,
+        ge=1,
+        description="Configured maximum Provider calls for this exact window.",
+    )
+    max_split_depth: int = Field(
+        default=3,
+        ge=0,
+        le=8,
+        description="Maximum deterministic source-boundary split depth for this window tree.",
+    )
+    split_depth: int = Field(
+        default=0,
+        ge=0,
+        le=8,
+        description="Current deterministic split depth; zero denotes an original planned window.",
+    )
+    provider_request_count: int = Field(
+        default=0,
+        ge=0,
+        description="Persisted Provider invocations consumed by this exact window.",
+    )
+    elapsed_seconds_used: int = Field(
+        default=0,
+        ge=0,
+        description="Ceiling-rounded Provider elapsed time consumed by this exact window.",
+    )
+    output_tokens_used: int = Field(
+        default=0,
+        ge=0,
+        description="Provider-reported output tokens when available; zero means unavailable.",
+    )
+    next_eligible_retry_at: datetime | None = Field(
+        default=None,
+        description="Source-free earliest time for a bounded retry.",
+    )
+    initial_provider_attempts: int = Field(default=0, ge=0)
+    length_recovery_attempts_used: int = Field(default=0, ge=0)
+    max_length_recovery_attempts: int = Field(default=1, ge=0, le=1)
+    schema_repair_attempts_used: int = Field(default=0, ge=0)
+    max_schema_repair_attempts: int = Field(default=1, ge=0, le=1)
+    # Retained as a compatibility projection for v1.8 persistence payloads.
+    schema_recovery_attempt_count: int = Field(default=0, ge=0, le=1)
+    schema_recovery_rule_codes: list[str] = Field(default_factory=list)
+    recovery_phase: NarrativeRecoveryPhase = Field(default=NarrativeRecoveryPhase.INITIAL)
+    terminal_reason: NarrativeRecoveryTerminalReason | None = Field(default=None)
+    minimum_slice_chars: int = Field(default=200, ge=1)
+    slice_chunk_id: str | None = Field(default=None)
+    slice_start: int | None = Field(default=None, ge=0)
+    slice_end: int | None = Field(default=None, ge=1)
+    selected_output_mode: StructuredOutputMode | None = None
+    capability_state: ProviderCapabilityState | None = None
+    provider_finish_reason: str | None = None
+    provider_completion_tokens: int | None = Field(default=None, ge=0)
+    started_at: datetime | None = Field(default=None)
+    completed_at: datetime | None = Field(default=None)
 
     @model_validator(mode="after")
     def normalize_owned_chunk_ids(self) -> "NarrativeAnalysisWindowV1":
+        if self.schema_repair_attempts_used == 0 and self.schema_recovery_attempt_count:
+            self.schema_repair_attempts_used = self.schema_recovery_attempt_count
+        elif self.schema_recovery_attempt_count != self.schema_repair_attempts_used:
+            self.schema_recovery_attempt_count = self.schema_repair_attempts_used
         if not self.owned_chunk_ids:
             self.owned_chunk_ids = list(self.chunk_ids)
         if len(self.owned_chunk_ids) != len(set(self.owned_chunk_ids)):
             raise ValueError("owned_chunk_ids must be unique")
         if not set(self.owned_chunk_ids).issubset(self.chunk_ids):
             raise ValueError("owned_chunk_ids must be a subset of chunk_ids")
+        if self.split_depth > self.max_split_depth:
+            raise ValueError("split_depth must not exceed max_split_depth")
+        if (self.slice_start is None) != (self.slice_end is None):
+            raise ValueError("slice_start and slice_end must be present together")
+        if self.slice_start is not None:
+            if (
+                self.slice_chunk_id is None
+                or self.slice_end is None
+                or self.slice_end <= self.slice_start
+            ):
+                raise ValueError("a slice requires one non-empty SourceChunk range")
+            if (
+                self.chunk_ids != [self.slice_chunk_id]
+                or self.owned_chunk_ids != [self.slice_chunk_id]
+            ):
+                raise ValueError(
+                    "a slice must retain exactly its original SourceChunk provenance"
+                )
         return self
+
+
+class NarrativeAnalysisBatchV1(StrictBaseModel):
+    """Stable, source-free manifest for one bounded segment of a document run."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0")
+    batch_id: str = Field(description="Persistent stable batch id.")
+    analysis_run_id: str = Field(description="Owning Narrative analysis run id.")
+    document_id: str = Field(description="Source document identifier.")
+    chunk_ids: list[str] = Field(min_length=1, description="Ordered approved SourceChunk ids.")
+    status: NarrativeAnalysisBatchStatus = Field(default=NarrativeAnalysisBatchStatus.PLANNED)
+    idempotency_key: str = Field(description="Stable identity for this exact batch scope.")
+    estimated_input_chars: int = Field(ge=0)
+    estimated_input_tokens: int = Field(ge=0)
+    output_token_budget: int = Field(ge=1)
+    time_budget_seconds: int = Field(ge=1)
+    max_call_attempts: int = Field(ge=1)
+
+
+class NarrativeGate2HandoffV1(StrictBaseModel):
+    """Source-free, resumable checkpoint for one root run's Gate 2 completion."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0")
+    status: NarrativeGate2HandoffStatus = Field(default=NarrativeGate2HandoffStatus.PENDING)
+    attempt_count: int = Field(default=0, ge=0, le=2)
+    max_attempts: int = Field(default=2, ge=1, le=2)
+    safe_issue_codes: list[str] = Field(default_factory=list)
+    failure_category: str | None = Field(default=None)
+    started_at: datetime | None = Field(default=None)
+    completed_at: datetime | None = Field(default=None)
 
 
 class NarrativeAnalysisRunV1(StrictBaseModel):
     """Persistent, resumable whole-document NarrativeAnalyst task."""
 
-    schema_version: Literal["1.0", "1.1", "1.2"] = Field(
-        default="1.2",
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6"] = Field(
+        default="1.6",
         description=(
             "Schema version; v1.0/v1.1 records remain readable and v1.2 adds "
-            "source-free recovery outcomes."
+            "source-free recovery outcomes; v1.3 adds deterministic batch manifests; "
+            "v1.4 adds root execution-budget reservations; v1.5 adds a durable Gate 2 handoff; "
+            "v1.6 records structured-execution terminal states."
         ),
     )
     analysis_run_id: str = Field(description="Persistent analysis task id.")
@@ -176,6 +372,25 @@ class NarrativeAnalysisRunV1(StrictBaseModel):
         default=False, description="Explicit request-level real LLM opt-in."
     )
     window_ids: list[str] = Field(default_factory=list, description="Persistent window record ids.")
+    batches: list[NarrativeAnalysisBatchV1] = Field(
+        default_factory=list,
+        description="Stable long-document batch manifests without source text.",
+    )
+    max_provider_requests: int = Field(
+        default=0,
+        ge=0,
+        description="Root Provider-call cap; zero preserves historical records without a cap.",
+    )
+    provider_requests_used: int = Field(
+        default=0,
+        ge=0,
+        description="Atomically reserved root Provider calls, persisted before invocation.",
+    )
+    execution_budget_version: int = Field(
+        default=0,
+        ge=0,
+        description="Optimistic version for atomic root execution-budget reservation.",
+    )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC), description="Creation timestamp in UTC."
     )
@@ -194,6 +409,10 @@ class NarrativeAnalysisRunV1(StrictBaseModel):
         default_factory=list,
         description="Append-only source-free summaries for Stage B recovery decisions.",
     )
+    gate2_handoff: NarrativeGate2HandoffV1 | None = Field(
+        default=None,
+        description="Durable source-free checkpoint for deterministic Gate 2 completion.",
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -201,8 +420,18 @@ class NarrativeAnalysisRunV1(StrictBaseModel):
         if not isinstance(value, dict):
             return value
         if "schema_version" in value:
+            updates: dict[str, Any] = {}
             if value.get("schema_version") in {"1.0", "1.1"} and "recovery_outcomes" not in value:
-                return {**value, "recovery_outcomes": []}
+                updates["recovery_outcomes"] = []
+            if value.get("schema_version") in {"1.0", "1.1", "1.2"} and "batches" not in value:
+                updates["batches"] = []
+            if (
+                value.get("schema_version") in {"1.0", "1.1", "1.2", "1.3", "1.4"}
+                and "gate2_handoff" not in value
+            ):
+                updates["gate2_handoff"] = None
+            if updates:
+                return {**value, **updates}
             return value
         return {
             **value,
@@ -210,6 +439,8 @@ class NarrativeAnalysisRunV1(StrictBaseModel):
             "review_gate2_result": None,
             "review_gate2_route": None,
             "recovery_outcomes": [],
+            "batches": [],
+            "gate2_handoff": None,
         }
 
     @model_validator(mode="after")
@@ -274,7 +505,7 @@ class NarrativeAnalysisCreateRequestV1(StrictBaseModel):
 class NarrativeAnalysisProposalSourceV1(StrictBaseModel):
     """One proposal with its source AgentRun for deterministic aggregation."""
 
-    schema_version: Literal["1.0"] = Field(default="1.0", description="Schema version.")
+    schema_version: Literal["1.0", "1.1"] = Field(default="1.1", description="Schema version.")
     mode: str = Field(description="NarrativeAnalyst mode that produced the proposal.")
     agent_run_id: str = Field(description="Auditable AgentRun id.")
     proposal: (
@@ -285,9 +516,7 @@ class NarrativeAnalysisProposalSourceV1(StrictBaseModel):
         | StateChangeProposalV1
         | RelationshipSignalProposalV1
         | CampusContentProfileProposalV1
-    ) = (
-        Field(description="Typed proposal to aggregate.")
-    )
+    ) = Field(description="Typed proposal to aggregate.")
 
 
 class AggregatedEventProposalV1(StrictBaseModel):
@@ -327,9 +556,7 @@ class AggregatedKnowledgeStateProposalV1(StrictBaseModel):
 class AggregatedStateChangeProposalV1(StrictBaseModel):
     """Conservatively merged State Change candidate with audit references."""
 
-    proposal: StateChangeProposalV1 = Field(
-        description="Representative State Change proposal."
-    )
+    proposal: StateChangeProposalV1 = Field(description="Representative State Change proposal.")
     agent_run_ids: list[str] = Field(min_length=1, description="Source AgentRun ids.")
     evidence_refs: list[EvidenceRefV1] = Field(min_length=1, description="All retained evidence.")
 
@@ -364,9 +591,7 @@ class NarrativeAnalysisResultV1(StrictBaseModel):
     claims: list[AggregatedClaimProposalV1] = Field(default_factory=list)
     knowledge_states: list[AggregatedKnowledgeStateProposalV1] = Field(default_factory=list)
     state_changes: list[AggregatedStateChangeProposalV1] = Field(default_factory=list)
-    relationship_signals: list[AggregatedRelationshipSignalProposalV1] = Field(
-        default_factory=list
-    )
+    relationship_signals: list[AggregatedRelationshipSignalProposalV1] = Field(default_factory=list)
     campus_content_profiles: list["AggregatedCampusContentProfileProposalV1"] = Field(
         default_factory=list
     )
@@ -443,6 +668,10 @@ class ProviderResultV1(StrictBaseModel):
     success: bool = Field(description="Whether the provider call succeeded.")
     error_message: str | None = Field(default=None, description="Failure message if any.")
     latency_ms: int | None = Field(default=None, ge=0, description="Optional latency in ms.")
+    execution_metadata: ProviderExecutionMetadataV1 | None = Field(
+        default=None,
+        description="Allowlisted usage, finish reason, mode and safe schema diagnostics.",
+    )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         description="Created at.",

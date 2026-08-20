@@ -13,6 +13,7 @@ from comic_agent.schemas import (
     SourceChunkV1,
     StateChangeProposalV1,
     TimelineAnalysisInputV1,
+    TimelineAnalysisMode,
 )
 from comic_agent.schemas.base import EvidenceRefV1
 
@@ -83,6 +84,7 @@ class NarrativeTimelineInputAdapter:
             project_id=bundle.project_id,
             source_approved_bundle_id=bundle.bundle_id,
             source_review_run_id=bundle.review_run_id,
+            mode=TimelineAnalysisMode.LLM,
             event_proposals=events,
             claim_proposals=claims,
             state_change_proposals=changes,

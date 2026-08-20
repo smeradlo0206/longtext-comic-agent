@@ -1,8 +1,10 @@
 ﻿"""Regression tests for resumable whole-document narrative analysis."""
 
 import json
-from datetime import UTC, datetime
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Barrier, Event
 
 import pytest
 from pydantic import ValidationError
@@ -16,6 +18,7 @@ from comic_agent.providers.openai_compatible import (
     ProviderResponseError,
     ProviderTimeoutError,
 )
+from comic_agent.repositories.agent_run_repository import AgentRunRepository
 from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
 from comic_agent.schemas.base import EvidenceRefV1, RealityLayer
 from comic_agent.schemas.narrative import (
@@ -295,6 +298,283 @@ def test_analysis_repository_persists_auditable_run_and_windows(tmp_path: Path) 
     ]
 
 
+def test_window_claim_is_atomic_across_independent_sessions(tmp_path: Path) -> None:
+    """Only one persisted owner may reserve a window before Provider work starts."""
+
+    engine = create_engine(
+        f"sqlite+pysqlite:///{tmp_path / 'window_claims.db'}",
+        connect_args={"check_same_thread": False},
+        future=True,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    seed = NarrativeAnalysisRepository(session_factory())
+    run = NarrativeAnalysisRunV1(
+        analysis_run_id="analysis-claim",
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        status=NarrativeAnalysisRunStatus.PENDING,
+        window_ids=["window-claim"],
+    )
+    window = NarrativeAnalysisWindowV1(
+        analysis_window_id="window-claim",
+        analysis_run_id=run.analysis_run_id,
+        mode="event_extraction",
+        window_index=0,
+        chunk_ids=["chunk-0"],
+        status=NarrativeAnalysisWindowStatus.PENDING,
+        idempotency_key="stable-window-claim",
+    )
+    seed.create_run(run, [window])
+    seed._session.close()  # type: ignore[attr-defined]
+
+    barrier = Barrier(2)
+
+    def claim() -> bool:
+        session = session_factory()
+        try:
+            repository = NarrativeAnalysisRepository(session)
+            barrier.wait()
+            return repository.claim_window(
+                window.model_copy(update={"status": NarrativeAnalysisWindowStatus.RESERVED})
+            )
+        finally:
+            session.close()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        claimed = list(executor.map(lambda _: claim(), range(2)))
+
+    verify_session = session_factory()
+    try:
+        persisted = NarrativeAnalysisRepository(verify_session).list_windows(run.analysis_run_id)
+    finally:
+        verify_session.close()
+    assert claimed.count(True) == 1
+    assert persisted[0].status == NarrativeAnalysisWindowStatus.RESERVED
+    assert persisted[0].idempotency_key == "stable-window-claim"
+
+
+def test_parallel_worker_reentry_calls_provider_and_creates_agent_run_once(tmp_path: Path) -> None:
+    """A second session must observe the reserved checkpoint, never rerun it."""
+
+    engine = create_engine(
+        f"sqlite+pysqlite:///{tmp_path / 'worker_reentry.db'}",
+        connect_args={"check_same_thread": False},
+        future=True,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    source_repository = _FakeSourceRepository([_chunk(0)])
+    seed_session = session_factory()
+    try:
+        run = create_narrative_analysis_run(
+            source_repository=source_repository,
+            analysis_repository=NarrativeAnalysisRepository(seed_session),
+            project_id="project-1",
+            document_id="document-1",
+            modes=["event_extraction"],
+            window_size=1,
+            stride=1,
+            real_llm_requested=True,
+        )
+    finally:
+        seed_session.close()
+    provider = _BlockingFakeProvider()
+
+    def invoke_worker() -> NarrativeAnalysisRunV1:
+        session = session_factory()
+        try:
+            return NarrativeAnalysisWorker(
+                settings=Settings(_env_file=None, enable_real_llm=True),
+                source_repository=source_repository,
+                agent_run_repository=AgentRunRepository(session),
+                analysis_repository=NarrativeAnalysisRepository(session),
+                provider=provider,
+            ).run_pending(run.analysis_run_id)
+        finally:
+            session.close()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(invoke_worker)
+        assert provider.entered.wait(timeout=5)
+        second = executor.submit(invoke_worker)
+        second.result(timeout=5)
+        provider.release.set()
+        first.result(timeout=5)
+
+    verify_session = session_factory()
+    try:
+        analysis_repository = NarrativeAnalysisRepository(verify_session)
+        persisted = analysis_repository.get_run(run.analysis_run_id)
+        windows = analysis_repository.list_windows(run.analysis_run_id)
+        agent_runs = AgentRunRepository(verify_session).list_agent_runs("project-1")
+    finally:
+        verify_session.close()
+    assert persisted is not None
+    assert persisted.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert [window.status for window in windows] == [NarrativeAnalysisWindowStatus.SUCCEEDED]
+    assert provider.calls == ["event_extraction"]
+    assert len(agent_runs) == 1
+
+
+def test_timeout_backoff_survives_worker_restart_without_recalling_provider(tmp_path: Path) -> None:
+    """A persisted retry deadline prevents duplicate calls after a worker restart."""
+
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'retry_restart.db'}", future=True)
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    source_repository = _FakeSourceRepository([_chunk(0)])
+    setup_session = session_factory()
+    try:
+        repository = NarrativeAnalysisRepository(setup_session)
+        run = create_narrative_analysis_run(
+            source_repository=source_repository,
+            analysis_repository=repository,
+            project_id="project-1",
+            document_id="document-1",
+            modes=["event_extraction"],
+            window_size=1,
+            stride=1,
+            real_llm_requested=True,
+        )
+        provider = _RetryingWindowProvider({1: TimeoutError("synthetic timeout")})
+        first = NarrativeAnalysisWorker(
+            settings=Settings(_env_file=None, enable_real_llm=True),
+            source_repository=source_repository,
+            agent_run_repository=_FakeAgentRunRepository(),
+            analysis_repository=repository,
+            provider=provider,
+        ).run_pending(run.analysis_run_id)
+        deferred = repository.list_windows(run.analysis_run_id)[0]
+        assert first.status == NarrativeAnalysisRunStatus.RUNNING
+        assert deferred.status == NarrativeAnalysisWindowStatus.FAILED
+        assert deferred.next_eligible_retry_at is not None
+    finally:
+        setup_session.close()
+
+    restart_session = session_factory()
+    try:
+        restarted_repository = NarrativeAnalysisRepository(restart_session)
+        resumed = NarrativeAnalysisWorker(
+            settings=Settings(_env_file=None, enable_real_llm=True),
+            source_repository=source_repository,
+            agent_run_repository=_FakeAgentRunRepository(),
+            analysis_repository=restarted_repository,
+            provider=provider,
+        ).run_pending(run.analysis_run_id)
+        deferred = restarted_repository.list_windows(run.analysis_run_id)[0]
+    finally:
+        restart_session.close()
+
+    assert resumed.status == NarrativeAnalysisRunStatus.RUNNING
+    assert provider.input_text_lengths == [len(_chunk(0).text)]
+    assert deferred.next_eligible_retry_at is not None
+
+
+def test_timeout_splits_only_failed_window_after_persisted_backoff(tmp_path: Path) -> None:
+    """A timeout never reruns a successful sibling or bypasses its retry deadline."""
+
+    source_repository = _FakeSourceRepository([_chunk(0), _chunk(1), _chunk(2)])
+    repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        window_size=2,
+        stride=2,
+        real_llm_requested=True,
+    )
+    provider = _RetryingWindowProvider({1: TimeoutError("synthetic timeout")})
+    worker = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=repository,
+        provider=provider,
+    )
+
+    deferred = worker.run_pending(run.analysis_run_id)
+    windows = repository.list_windows(run.analysis_run_id)
+    split_parent = next(window for window in windows if window.status == "SPLIT")
+    children = [
+        window
+        for window in windows
+        if window.parent_window_id == split_parent.analysis_window_id
+    ]
+
+    assert deferred.status == NarrativeAnalysisRunStatus.RUNNING
+    assert split_parent.failure_category == "PROVIDER_TIMEOUT"
+    assert split_parent.provider_request_count == 1
+    assert split_parent.elapsed_seconds_used >= 1
+    # The independent second planned window succeeded; it must not be replayed
+    # while the failed parent waits for its split recovery deadline.
+    assert len(provider.input_text_lengths) == 2
+    assert len(children) == 2
+    assert all(child.next_eligible_retry_at is not None for child in children)
+    assert all(child.split_depth == 1 and child.max_split_depth == 3 for child in children)
+
+    still_deferred = worker.run_pending(run.analysis_run_id)
+    assert still_deferred.status == NarrativeAnalysisRunStatus.RUNNING
+    assert len(provider.input_text_lengths) == 2
+
+    for child in children:
+        repository.save_window(
+            child.model_copy(
+                update={
+                    "next_eligible_retry_at": datetime.now(UTC) - timedelta(seconds=1)
+                }
+            )
+        )
+    completed = worker.run_pending(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert len(provider.input_text_lengths) == 4
+    assert all(
+        window.status == NarrativeAnalysisWindowStatus.SUCCEEDED
+        for window in repository.list_windows(run.analysis_run_id)
+        if window.parent_window_id == split_parent.analysis_window_id
+    )
+
+
+def test_window_budget_exhaustion_stops_before_gate2_or_timeline(tmp_path: Path) -> None:
+    """A failed final Provider call is terminal and cannot make the root run succeed."""
+
+    source_repository = _FakeSourceRepository([_chunk(0)])
+    repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        window_size=1,
+        stride=1,
+        max_call_attempts=1,
+        real_llm_requested=True,
+    )
+    provider = _RetryingWindowProvider({1: TimeoutError("synthetic timeout")})
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+    window = repository.list_windows(run.analysis_run_id)[0]
+
+    assert completed.status == NarrativeAnalysisRunStatus.FAILED
+    assert completed.review_gate2_result is None
+    assert completed.review_gate2_route is None
+    assert window.status == NarrativeAnalysisWindowStatus.EXHAUSTED
+    assert window.failure_category == "PROVIDER_TIMEOUT"
+    assert window.provider_request_count == 1
+    assert window.next_eligible_retry_at is None
+    assert len(provider.input_text_lengths) == 1
+
+
 def test_window_diagnostics_v1_2_keeps_prior_payloads_readable() -> None:
     legacy = NarrativeAnalysisWindowV1.model_validate(
         {
@@ -361,7 +641,7 @@ def test_window_diagnostics_v1_2_keeps_prior_payloads_readable() -> None:
     assert v1_1.attempt_count == 0
     assert v1_2.schema_version == "1.2"
     assert v1_3.schema_version == "1.3"
-    assert current.schema_version == "1.4"
+    assert current.schema_version == "1.9"
     assert current.owned_chunk_ids == ["chunk-0"]
     assert current.provider_error_diagnostics == {"timeout_kind": "read"}
 
@@ -427,6 +707,52 @@ def test_analysis_run_idempotency_keeps_dry_run_and_real_opt_in_separate(
     assert real_opt_in.real_llm_requested is True
 
 
+def test_long_document_plan_persists_stable_budgeted_batch_manifests(tmp_path: Path) -> None:
+    source_repository = _FakeSourceRepository([_chunk(index) for index in range(5)])
+    repository = _repository(tmp_path)
+
+    first = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        window_size=2,
+        stride=1,
+        batch_max_chunks=2,
+        output_token_budget=321,
+        time_budget_seconds=45,
+        max_call_attempts=2,
+    )
+    second = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        window_size=2,
+        stride=1,
+        batch_max_chunks=2,
+        output_token_budget=321,
+        time_budget_seconds=45,
+        max_call_attempts=2,
+    )
+    windows = repository.list_windows(first.analysis_run_id)
+
+    assert second.analysis_run_id == first.analysis_run_id
+    assert [batch.chunk_ids for batch in first.batches] == [
+        ["chunk-0", "chunk-1"],
+        ["chunk-2", "chunk-3"],
+        ["chunk-4"],
+    ]
+    assert all(batch.estimated_input_chars > 0 for batch in first.batches)
+    assert all(batch.estimated_input_tokens > 0 for batch in first.batches)
+    assert all(batch.output_token_budget == 321 for batch in first.batches)
+    assert all(window.batch_id in {batch.batch_id for batch in first.batches} for window in windows)
+    assert all(window.max_call_attempts == 2 for window in windows)
+    assert all(window.time_budget_seconds == 45 for window in windows)
+
+
 class _FakeAgentRunRepository:
     def __init__(self) -> None:
         self.runs: dict[str, object] = {}
@@ -442,13 +768,11 @@ class _FakeAgentRunRepository:
 class _FakeProvider:
     def __init__(self, *, fail_entity_once: bool = False) -> None:
         self.calls: list[str] = []
+        self.invocations: list[tuple[str, list[str]]] = []
         self.fail_entity_once = fail_entity_once
 
     def structured_generate(self, request, output_model):  # type: ignore[no-untyped-def]
         mode_prompt = str(request["system_prompt"])
-        if "EntityExtractionAgent" in mode_prompt and self.fail_entity_once:
-            self.fail_entity_once = False
-            raise TimeoutError("synthetic provider timeout")
         mode = (
             "entity_extraction"
             if "EntityExtractionAgent" in mode_prompt
@@ -456,8 +780,12 @@ class _FakeProvider:
             if "EventExtractionAgent" in mode_prompt
             else "claim_extraction"
         )
-        self.calls.append(mode)
         input_context = request["input_context"]
+        self.invocations.append((mode, list(input_context["source_chunk_ids"])))
+        if "EntityExtractionAgent" in mode_prompt and self.fail_entity_once:
+            self.fail_entity_once = False
+            raise TimeoutError("synthetic provider timeout")
+        self.calls.append(mode)
         chunk_id = input_context["source_chunk_ids"][0]
         quote = input_context["source_chunks"][0]["text"][:4]
         if mode == "event_extraction":
@@ -513,6 +841,20 @@ class _FakeProvider:
                 ],
             }
         )
+
+
+class _BlockingFakeProvider(_FakeProvider):
+    """Keep the winning worker inside its Provider call for re-entry coverage."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = Event()
+        self.release = Event()
+
+    def structured_generate(self, request, output_model):  # type: ignore[no-untyped-def]
+        self.entered.set()
+        assert self.release.wait(timeout=5)
+        return super().structured_generate(request, output_model)
 
 
 class _FailSecondWindowProvider(_FakeProvider):
@@ -975,16 +1317,31 @@ def test_worker_persists_sanitized_workflow_failure_details(
 
     completed = worker.run_pending(run.analysis_run_id)
     windows = analysis_repository.list_windows(run.analysis_run_id)
-    failed_window = next(window for window in windows if window.status == "FAILED")
+    failed_window = next(
+        window
+        for window in windows
+        if window.status
+        in {NarrativeAnalysisWindowStatus.FAILED, NarrativeAnalysisWindowStatus.SPLIT}
+    )
     result = analysis_repository.get_result(run.analysis_run_id)
 
-    assert completed.status == NarrativeAnalysisRunStatus.PARTIAL_FAILED
+    if expected_category == "PROVIDER_TIMEOUT":
+        assert completed.status == NarrativeAnalysisRunStatus.RUNNING
+        deferred_children = [
+            window
+            for window in windows
+            if window.parent_window_id == failed_window.analysis_window_id
+        ]
+        assert deferred_children
+        assert all(window.next_eligible_retry_at is not None for window in deferred_children)
+        assert result is None
+    else:
+        assert completed.status == NarrativeAnalysisRunStatus.PARTIAL_FAILED
+        assert result is None
     assert failed_window.failure_category == expected_category
     assert failed_window.recommended_action is not None
     assert failed_window.provider_error_diagnostics == expected_diagnostics
     assert "synthetic source" not in (failed_window.error_message or "")
-    assert result is not None
-    assert len(result.events) == 1
 
 
 class _FailingAgentRunRepository(_FakeAgentRunRepository):
@@ -1573,7 +1930,7 @@ def test_worker_keeps_schema_failure_diagnostics_after_one_retry(tmp_path: Path)
         if window.window_index == 1
     )
 
-    assert completed.status == NarrativeAnalysisRunStatus.PARTIAL_FAILED
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
     assert failed_window.attempt_count == 2
     assert failed_window.effective_max_chars_per_chunk == 1200
     assert failed_window.previous_failure_category == "SCHEMA_VALIDATION_FAILED"
@@ -1658,6 +2015,24 @@ def test_worker_preserves_successful_windows_and_resume_skips_them(tmp_path: Pat
         for window in analysis_repository.list_windows(run.analysis_run_id)
         if window.status == NarrativeAnalysisWindowStatus.SUCCEEDED
     }
+    successful_scopes_before_resume = {
+        (window.mode, tuple(window.chunk_ids))
+        for window in analysis_repository.list_windows(run.analysis_run_id)
+        if window.status == NarrativeAnalysisWindowStatus.SUCCEEDED
+    }
+    invocation_count_before_resume = len(provider.invocations)
+    for deferred in analysis_repository.list_windows(run.analysis_run_id):
+        if (
+            deferred.parent_window_id is not None
+            and deferred.next_eligible_retry_at is not None
+        ):
+            analysis_repository.save_window(
+                deferred.model_copy(
+                    update={
+                        "next_eligible_retry_at": datetime.now(UTC) - timedelta(seconds=1)
+                    }
+                )
+            )
     second = worker.run_pending(run.analysis_run_id, real_llm_requested=True)
     successful_after_resume = {
         window.analysis_window_id: window.agent_run_id
@@ -1665,12 +2040,12 @@ def test_worker_preserves_successful_windows_and_resume_skips_them(tmp_path: Pat
         if window.status == NarrativeAnalysisWindowStatus.SUCCEEDED
     }
 
-    assert first.status == NarrativeAnalysisRunStatus.PARTIAL_FAILED
+    assert first.status == NarrativeAnalysisRunStatus.RUNNING
     assert second.status == NarrativeAnalysisRunStatus.SUCCEEDED
     assert provider.calls.count("event_extraction") == calls_before_resume.count("event_extraction")
-    assert (
-        provider.calls.count("entity_extraction")
-        == calls_before_resume.count("entity_extraction") + 1
+    assert all(
+        (mode, tuple(chunk_ids)) not in successful_scopes_before_resume
+        for mode, chunk_ids in provider.invocations[invocation_count_before_resume:]
     )
     assert successful_before_resume.items() <= successful_after_resume.items()
     assert all(agent_run_id is not None for agent_run_id in successful_before_resume.values())
@@ -1678,7 +2053,7 @@ def test_worker_preserves_successful_windows_and_resume_skips_them(tmp_path: Pat
     assert result is not None
     assert len(result.events) == 2
     assert len(result.entities) == 1
-    assert len(result.entities[0].evidence_refs) == 2
+    assert len(result.entities[0].evidence_refs) == 3
 
 
 @pytest.mark.parametrize("empty", [False, True])
@@ -1972,8 +2347,7 @@ def test_worker_does_not_convert_source_only_state_change_rejection_to_success(
 
     assert completed.status == NarrativeAnalysisRunStatus.FAILED
     assert provider.calls == ["state_change_extraction"]
-    assert result is not None
-    assert result.state_changes == []
+    assert result is None
 
 
 def test_rockery_cross_window_event_wording_stays_separate_for_manual_review() -> None:
@@ -2642,3 +3016,182 @@ def test_aggregate_knowledge_states_preserves_cross_window_target_kind_and_text_
         "山中有鬼",
         "山中有鬼的传言",
     }
+
+
+def test_schema_repair_exhaustion_is_explicit_and_never_enters_gate2(tmp_path: Path) -> None:
+    """A minimum scope schema failure stops safely instead of producing a partial aggregate."""
+
+    source_repository = _FakeSourceRepository([_long_chunk(0)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        max_split_depth=0,
+        real_llm_requested=True,
+    )
+    schema_error = ProviderResponseError(
+        "LLM provider response failed schema validation",
+        {
+            "schema_error_kind": "missing",
+            "schema_error_field_paths": ["events.0.summary"],
+            "schema_error_rule_codes": ["SCHEMA_CONTRACT_INVALID"],
+            "expected_output_schema": "EventProposalBatchV1",
+        },
+    )
+    provider = _RetryingWindowProvider({1: schema_error, 2: schema_error})
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+
+    window = analysis_repository.list_windows(run.analysis_run_id)[0]
+    assert completed.status == NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
+    assert window.status == NarrativeAnalysisWindowStatus.NEEDS_HUMAN_ACTION
+    assert window.failure_category == "SCHEMA_REPAIR_EXHAUSTED"
+    assert window.provider_request_count == 2
+    assert analysis_repository.get_result(run.analysis_run_id) is None
+    assert completed.review_gate2_result is None
+    assert completed.review_gate2_route is None
+
+
+def test_schema_repair_then_chunk_split_preserves_successful_siblings(tmp_path: Path) -> None:
+    """The second schema failure narrows only its window and may still complete the root."""
+
+    source_repository = _FakeSourceRepository([_long_chunk(index) for index in range(3)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        max_split_depth=1,
+        real_llm_requested=True,
+    )
+    schema_error = ProviderResponseError(
+        "LLM provider response failed schema validation",
+        {"schema_error_kind": "missing", "schema_error_field_paths": ["events.0.summary"]},
+    )
+    provider = _RetryingWindowProvider({1: schema_error, 2: schema_error})
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+
+    windows = analysis_repository.list_windows(run.analysis_run_id)
+    parent = next(
+        window for window in windows if window.status == NarrativeAnalysisWindowStatus.SPLIT
+    )
+    children = [
+        window for window in windows if window.parent_window_id == parent.analysis_window_id
+    ]
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert parent.provider_request_count == 2
+    assert all(child.status == NarrativeAnalysisWindowStatus.SUCCEEDED for child in children)
+    assert all(child.chunk_ids == child.owned_chunk_ids for child in children)
+    assert len(provider.input_text_lengths) == 2 + len(children)
+
+
+def test_schema_repair_single_chunk_uses_non_overlapping_auditable_slices(tmp_path: Path) -> None:
+    source_repository = _FakeSourceRepository([_long_chunk(0)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        max_split_depth=1,
+        real_llm_requested=True,
+    )
+    schema_error = ProviderResponseError(
+        "LLM provider response failed schema validation",
+        {"schema_error_kind": "missing", "schema_error_field_paths": ["events.0.summary"]},
+    )
+    provider = _RetryingWindowProvider({1: schema_error, 2: schema_error})
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(
+            _env_file=None,
+            enable_real_llm=True,
+            narrative_window_min_slice_chars=100,
+        ),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+
+    slices = [
+        window
+        for window in analysis_repository.list_windows(run.analysis_run_id)
+        if window.slice_chunk_id is not None
+    ]
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert [(item.slice_start, item.slice_end) for item in slices] == [
+        (0, 705),
+        (705, 1410),
+    ]
+    assert all(item.status == NarrativeAnalysisWindowStatus.SUCCEEDED for item in slices)
+    assert all(item.chunk_ids == ["chunk-0"] for item in slices)
+
+
+def test_length_split_child_gets_independent_schema_repair_budget(tmp_path: Path) -> None:
+    """A child that used its length retry still receives its one Schema repair call."""
+
+    source_repository = _FakeSourceRepository([_long_chunk(index) for index in range(3)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        max_split_depth=1,
+        real_llm_requested=True,
+    )
+    length_error = ProviderResponseError(
+        "LLM provider response exceeded max output tokens before final content",
+        {"finish_reason": "length"},
+    )
+    schema_error = ProviderResponseError(
+        "LLM provider response failed schema validation",
+        {
+            "schema_error_kind": "missing",
+            "schema_error_field_paths": ["events.0.summary"],
+            "schema_error_rule_codes": ["SCHEMA_CONTRACT_INVALID"],
+            "expected_output_schema": "EventProposalBatchV1",
+        },
+    )
+    provider = _RetryingWindowProvider({1: length_error, 2: length_error, 3: schema_error})
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+
+    windows = analysis_repository.list_windows(run.analysis_run_id)
+    schema_child = next(
+        window
+        for window in windows
+        if window.failure_category is None
+        and window.previous_failure_category == "SCHEMA_VALIDATION_FAILED"
+    )
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert schema_child.provider_request_count == 3
+    assert schema_child.schema_recovery_attempt_count == 1
+    assert schema_child.schema_repair_attempts_used == 1
+    assert schema_child.length_recovery_attempts_used == 1
+    assert str(schema_child.recovery_phase) == "SCHEMA_REPAIR"
+    assert "schema_validation" in provider.output_recovery_markers
+    assert analysis_repository.get_result(run.analysis_run_id) is not None

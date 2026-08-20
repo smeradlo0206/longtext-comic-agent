@@ -422,8 +422,9 @@ def _run_whole_document_analysis(
 
     session = session_factory()
     try:
+        settings = get_settings()
         worker = NarrativeAnalysisWorker(
-            settings=get_settings(),
+            settings=settings,
             source_repository=SourceRepository(session),
             agent_run_repository=AgentRunRepository(session),
             analysis_repository=NarrativeAnalysisRepository(session),
@@ -434,6 +435,7 @@ def _run_whole_document_analysis(
                 timeline_runner=getattr(app_state, "timeline_runner", app_state.timeline_agent),
                 agent_run_repository=AgentRunRepository(session),
             ),
+            allow_fake_provider=settings.fake_pipeline_demo,
         )
         worker.run_pending(analysis_run_id, real_llm_requested=real_llm_requested)
     finally:

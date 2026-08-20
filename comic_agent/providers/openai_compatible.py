@@ -12,6 +12,15 @@ from pydantic import BaseModel, SecretStr, ValidationError
 
 from comic_agent.config import Settings
 from comic_agent.providers.llm import OutputModelT as ProviderOutputModelT
+from comic_agent.schemas.reliability import (
+    ProviderCapabilityProfileV1,
+    ProviderCapabilityState,
+    ProviderExecutionMetadataV1,
+    ProviderPreflightResponseV1,
+    ProviderSchemaCapabilityV1,
+    StructuredOutputMode,
+    StructuredOutputPolicy,
+)
 
 
 class OpenAICompatibleProvider:
@@ -68,6 +77,7 @@ class OpenAICompatibleProvider:
         if not isinstance(content, str):
             raise ValueError("provider message content must be a JSON string")
         return content
+
 
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
 ProviderDiagnostics = dict[str, object]
@@ -127,7 +137,9 @@ class OpenAICompatibleLLMProvider:
         api_key: str | None,
         base_url: str = "https://api.llm.ustc.edu.cn/v1",
         model: str = "deepseek-v4-pro",
+        provider_name: str = "ustc-openai-compatible",
         response_format: str | None = None,
+        structured_output_policy: StructuredOutputPolicy = StructuredOutputPolicy.JSON_OBJECT_ONLY,
         timeout_seconds: int = 60,
         max_output_tokens: int = 2000,
         http_client: HttpClient | None = None,
@@ -137,7 +149,11 @@ class OpenAICompatibleLLMProvider:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._model = model
+        self._provider_name_value = provider_name
         self._response_format = response_format.strip() if response_format else None
+        self._structured_output_policy = structured_output_policy
+        self._capability_profile: ProviderCapabilityProfileV1 | None = None
+        self._last_execution_metadata: ProviderExecutionMetadataV1 | None = None
         self._timeout_seconds = timeout_seconds
         self._max_output_tokens = max_output_tokens
         self._http_client = http_client or httpx.Client()
@@ -155,8 +171,10 @@ class OpenAICompatibleLLMProvider:
             "temperature": 0,
             "max_tokens": self._max_output_tokens,
         }
-        if self._response_format == "json_object":
-            payload["response_format"] = {"type": "json_object"}
+        output_mode = self._selected_output_mode(output_model)
+        response_format = self._response_format_for(output_mode, output_model)
+        if response_format is not None:
+            payload["response_format"] = response_format
 
         request_attempts = 1
         try:
@@ -190,6 +208,19 @@ class OpenAICompatibleLLMProvider:
         except (KeyError, IndexError, TypeError) as exc:
             raise ValueError("LLM provider response format is invalid") from exc
         diagnostics = self._response_diagnostics(response_payload)
+        self._last_execution_metadata = ProviderExecutionMetadataV1(
+            selected_output_mode=output_mode,
+            capability_state=(self._capability_profile.state if self._capability_profile else None),
+            finish_reason=(
+                diagnostics.get("finish_reason")
+                if isinstance(diagnostics.get("finish_reason"), str)
+                else None
+            ),
+            prompt_tokens=self._diagnostic_int(diagnostics, "usage_prompt_tokens"),
+            completion_tokens=self._diagnostic_int(diagnostics, "usage_completion_tokens"),
+            total_tokens=self._diagnostic_int(diagnostics, "usage_total_tokens"),
+            expected_output_schema=output_model.__name__,
+        )
         self._validate_response_content(content, diagnostics)
 
         try:
@@ -209,6 +240,9 @@ class OpenAICompatibleLLMProvider:
             return output_model.model_validate(payload)
         except ValidationError as exc:
             diagnostics.update(self.schema_validation_diagnostics(exc, output_model))
+            self._last_execution_metadata = self._last_execution_metadata.model_copy(
+                update={"schema_diagnostics": self._safe_schema_diagnostics(diagnostics)}
+            )
             raise ProviderResponseError(
                 (
                     self._max_output_tokens_error_message()
@@ -217,6 +251,249 @@ class OpenAICompatibleLLMProvider:
                 ),
                 diagnostics=diagnostics,
             ) from exc
+
+    def apply_capability_profile(self, profile: ProviderCapabilityProfileV1) -> None:
+        """Apply only a source-free profile resolved by the capability service."""
+
+        if profile.provider_name != self._provider_name() or profile.model_name != self._model:
+            raise ValueError("capability profile does not match configured provider/model")
+        self._capability_profile = profile
+
+    def last_execution_metadata(self) -> ProviderExecutionMetadataV1 | None:
+        """Return allowlisted metadata from the latest call; never response content."""
+
+        return self._last_execution_metadata
+
+    def probe_structured_output(
+        self, policy: StructuredOutputPolicy
+    ) -> ProviderCapabilityProfileV1:
+        """Probe the configured endpoint using only fixed readiness messages and schema."""
+
+        supports_strict = False
+        supports_json_object = False
+        supports_usage = False
+        supports_finish = False
+        strict_error: ProviderHttpError | None = None
+        if policy != StructuredOutputPolicy.JSON_OBJECT_ONLY:
+            try:
+                diagnostics = self._probe(StructuredOutputMode.STRICT_JSON_SCHEMA)
+                supports_strict = True
+                supports_json_object = True
+                supports_usage = self._diagnostic_int(diagnostics, "usage_total_tokens") is not None
+                supports_finish = isinstance(diagnostics.get("finish_reason"), str)
+            except ProviderHttpError as exc:
+                strict_error = exc
+                status = exc.diagnostics.get("http_status_code")
+                if not isinstance(status, int) or status not in {400, 404, 415, 422}:
+                    raise
+        if policy != StructuredOutputPolicy.REQUIRE_STRICT and not supports_strict:
+            try:
+                diagnostics = self._probe(StructuredOutputMode.JSON_OBJECT)
+                supports_json_object = True
+                supports_usage = self._diagnostic_int(diagnostics, "usage_total_tokens") is not None
+                supports_finish = isinstance(diagnostics.get("finish_reason"), str)
+            except ProviderHttpError as exc:
+                status = exc.diagnostics.get("http_status_code")
+                if not isinstance(status, int) or status not in {400, 404, 415, 422}:
+                    raise
+        mode = (
+            StructuredOutputMode.STRICT_JSON_SCHEMA
+            if supports_strict
+            else StructuredOutputMode.JSON_OBJECT
+            if supports_json_object and policy != StructuredOutputPolicy.REQUIRE_STRICT
+            else StructuredOutputMode.UNAVAILABLE
+        )
+        return ProviderCapabilityProfileV1(
+            provider_name=self._provider_name(),
+            model_name=self._model,
+            state=(
+                ProviderCapabilityState.AVAILABLE
+                if mode != StructuredOutputMode.UNAVAILABLE
+                else ProviderCapabilityState.UNSUPPORTED
+            ),
+            supports_json_object=supports_json_object,
+            supports_strict_json_schema=supports_strict,
+            supports_usage_reporting=supports_usage,
+            supports_finish_reason=supports_finish,
+            selected_output_mode=mode,
+            http_status_code=(
+                strict_error.diagnostics.get("http_status_code")
+                if strict_error is not None
+                and isinstance(strict_error.diagnostics.get("http_status_code"), int)
+                else None
+            ),
+            safe_issue_codes=(
+                []
+                if mode != StructuredOutputMode.UNAVAILABLE
+                else ["UNSUPPORTED_STRUCTURED_OUTPUT"]
+            ),
+        )
+
+    def probe_output_schema(
+        self, policy: StructuredOutputPolicy, output_model: type[BaseModel]
+    ) -> ProviderSchemaCapabilityV1:
+        """Probe one real output Schema with fixed, source-free instructions."""
+
+        supports_strict = False
+        supports_json_object = False
+        strict_rejected = False
+        if policy != StructuredOutputPolicy.JSON_OBJECT_ONLY:
+            try:
+                self._probe(
+                    StructuredOutputMode.STRICT_JSON_SCHEMA,
+                    output_model,
+                    validate_output=False,
+                )
+                supports_strict = True
+                supports_json_object = True
+            except (ProviderHttpError, ProviderResponseError, ValueError):
+                strict_rejected = True
+        if policy != StructuredOutputPolicy.REQUIRE_STRICT and not supports_strict:
+            try:
+                self._probe(
+                    StructuredOutputMode.JSON_OBJECT,
+                    output_model,
+                    validate_output=False,
+                )
+                supports_json_object = True
+            except (ProviderHttpError, ProviderResponseError, ValueError):
+                pass
+        selected = (
+            StructuredOutputMode.STRICT_JSON_SCHEMA
+            if supports_strict
+            else StructuredOutputMode.JSON_OBJECT
+            if supports_json_object and policy != StructuredOutputPolicy.REQUIRE_STRICT
+            else StructuredOutputMode.UNAVAILABLE
+        )
+        return ProviderSchemaCapabilityV1(
+            output_schema_name=output_model.__name__,
+            state=(
+                ProviderCapabilityState.AVAILABLE
+                if selected != StructuredOutputMode.UNAVAILABLE
+                else ProviderCapabilityState.UNSUPPORTED
+            ),
+            supports_json_object=supports_json_object,
+            supports_strict_json_schema=supports_strict,
+            selected_output_mode=selected,
+            safe_issue_codes=(
+                []
+                if selected != StructuredOutputMode.UNAVAILABLE
+                else (
+                    ["STRICT_SCHEMA_REJECTED"]
+                    if strict_rejected
+                    else ["UNSUPPORTED_STRUCTURED_OUTPUT"]
+                )
+            ),
+        )
+
+    def _probe(
+        self,
+        mode: StructuredOutputMode,
+        output_model: type[BaseModel] = ProviderPreflightResponseV1,
+        *,
+        validate_output: bool = True,
+    ) -> ProviderDiagnostics:
+        schema = output_model.model_json_schema()
+        payload: dict[str, Any] = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": "Return only the required readiness JSON."},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Return one minimal valid {output_model.__name__} JSON object. "
+                        "Use no external context, markdown, explanation, or source text. "
+                        f"Schema: {json.dumps(schema, ensure_ascii=False, sort_keys=True)}"
+                    ),
+                },
+            ],
+            "temperature": 0,
+            "max_tokens": 1024 if output_model is not ProviderPreflightResponseV1 else 32,
+            "response_format": self._response_format_for(mode, output_model),
+        }
+        response, attempts = self._post_with_one_timeout_retry(payload)
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise ProviderHttpError(
+                self._classify_http_status_error(exc.response.status_code),
+                diagnostics={
+                    "http_status_code": exc.response.status_code,
+                    "request_attempts": attempts,
+                },
+            ) from exc
+        response_payload = response.json()
+        content = response_payload["choices"][0]["message"]["content"]
+        decoded = json.loads(self._extract_json(content))
+        if validate_output:
+            output_model.model_validate(decoded)
+        elif not isinstance(decoded, dict):
+            raise ProviderResponseError(
+                "structured Provider probe did not return a JSON object",
+                diagnostics={"safe_issue_code": "STRUCTURED_OUTPUT_NOT_OBJECT"},
+            )
+        return self._response_diagnostics(response_payload)
+
+    def _selected_output_mode(self, output_model: type[BaseModel]) -> StructuredOutputMode:
+        if self._capability_profile is not None:
+            schema_mode = next(
+                (
+                    item.selected_output_mode
+                    for item in self._capability_profile.schema_capabilities
+                    if item.output_schema_name == output_model.__name__
+                ),
+                self._capability_profile.selected_output_mode,
+            )
+            if schema_mode == StructuredOutputMode.UNAVAILABLE:
+                raise ProviderResponseError(
+                    "structured Provider output is unavailable",
+                    diagnostics={"safe_issue_code": "UNSUPPORTED_STRUCTURED_OUTPUT"},
+                )
+            return schema_mode
+        # Preserve the historical explicit environment override. New source-bearing
+        # paths resolve a persisted profile before calling this provider.
+        if self._response_format == "json_object":
+            return StructuredOutputMode.JSON_OBJECT
+        return StructuredOutputMode.PROMPT_ONLY
+
+    @staticmethod
+    def _response_format_for(
+        mode: StructuredOutputMode, output_model: type[BaseModel]
+    ) -> dict[str, Any] | None:
+        if mode == StructuredOutputMode.JSON_OBJECT:
+            return {"type": "json_object"}
+        if mode == StructuredOutputMode.STRICT_JSON_SCHEMA:
+            return {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": output_model.__name__.lower(),
+                    "schema": output_model.model_json_schema(),
+                    "strict": True,
+                },
+            }
+        return None
+
+    @staticmethod
+    def _diagnostic_int(diagnostics: ProviderDiagnostics, key: str) -> int | None:
+        value = diagnostics.get(key)
+        return value if isinstance(value, int) and value >= 0 else None
+
+    @staticmethod
+    def _safe_schema_diagnostics(diagnostics: ProviderDiagnostics) -> ProviderDiagnostics:
+        keys = {
+            "finish_reason",
+            "usage_prompt_tokens",
+            "usage_completion_tokens",
+            "usage_total_tokens",
+            "schema_error_kind",
+            "schema_error_field_paths",
+            "schema_error_rule_codes",
+            "expected_output_schema",
+        }
+        return {key: value for key, value in diagnostics.items() if key in keys}
+
+    def _provider_name(self) -> str:
+        return self._provider_name_value
 
     @staticmethod
     def schema_validation_diagnostics(
@@ -471,14 +748,14 @@ class OpenAICompatibleLLMProvider:
         knowledge_state_shape = ""
         if schema_name == "KnowledgeStateProposalBatchV1":
             knowledge_state_shape = (
-                ' For each v1.1 state, use this unresolved-reference shape: '
+                " For each v1.1 state, use this unresolved-reference shape: "
                 '{"schema_version":"1.1","subject":{"mention_text":"...",'
                 '"entity_proposal_id":null,"resolution_status":"UNRESOLVED"},'
                 '"target":{"target_kind":"WORLD_FACT","target_text":"...",'
                 '"proposal_id":null,"proposal_schema":null,'
                 '"resolution_status":"UNRESOLVED"},"valid_from":null,"valid_until":null}. '
-                'Do not emit legacy id fields. Use EVENT instead of WORLD_FACT only when '
-                'the target is a concrete occurrence.'
+                "Do not emit legacy id fields. Use EVENT instead of WORLD_FACT only when "
+                "the target is a concrete occurrence."
             )
         state_change_shape = ""
         if schema_name == "StateChangeProposalBatchV1":
@@ -493,25 +770,25 @@ class OpenAICompatibleLLMProvider:
             statement_support_recovery = ""
             if "RELATIONSHIP_SIGNAL_STATEMENT_SUPPORT_LEVEL_INVALID" in safe_rule_codes:
                 statement_support_recovery = (
-                    ' For DIRECT_STATEMENT or REPORTED_STATEMENT, include source_speaker and use '
-                    'support_level=LIMITED or support_level=STRONG, never EXPLICIT. '
+                    " For DIRECT_STATEMENT or REPORTED_STATEMENT, include source_speaker and use "
+                    "support_level=LIMITED or support_level=STRONG, never EXPLICIT. "
                 )
             relationship_signal_shape = (
-                ' For every signal, return a complete v1.0 RelationshipSignalProposalV1. '
-                'Use UNRESOLVED participant, speaker, context-event, and temporal-event references '
-                'with null candidate IDs and schemas, for example '
+                " For every signal, return a complete v1.0 RelationshipSignalProposalV1. "
+                "Use UNRESOLVED participant, speaker, context-event, and temporal-event references "
+                "with null candidate IDs and schemas, for example "
                 '"resolution_status":"UNRESOLVED","entity_proposal_id":null,'
                 '"proposal_schema":null. NARRATED may use EXPLICIT and forbids a speaker; '
-                'DIRECT_STATEMENT or REPORTED_STATEMENT require a speaker and cannot use EXPLICIT; '
-                'OBSERVED_ACTION forbids a speaker and EXPLICIT. '
-                'Use PRESENT unless an explicit temporal anchor supports a change effect. '
+                "DIRECT_STATEMENT or REPORTED_STATEMENT require a speaker and cannot use EXPLICIT; "
+                "OBSERVED_ACTION forbids a speaker and EXPLICIT. "
+                "Use PRESENT unless an explicit temporal anchor supports a change effect. "
                 'A denial requires signal_effect="DENIAL" and assertion_polarity="DENIED". '
-                'A traitor label is Claim-only: never output BETRAYS unless the evidence quote '
-                'explicitly describes a betrayal action between the two participants. '
-                'no longer trusts means DISTRUSTS plus FORMATION with an explicit anchor. '
-                'Do not output INFERRED, resolved links, legacy fields, '
-                'or a non-batch object.'
-                f'{statement_support_recovery}'
+                "A traitor label is Claim-only: never output BETRAYS unless the evidence quote "
+                "explicitly describes a betrayal action between the two participants. "
+                "no longer trusts means DISTRUSTS plus FORMATION with an explicit anchor. "
+                "Do not output INFERRED, resolved links, legacy fields, "
+                "or a non-batch object."
+                f"{statement_support_recovery}"
             )
         rule_hint = (
             f" The previous output violated these safe schema rules: {', '.join(safe_rule_codes)}."
@@ -726,7 +1003,9 @@ def build_openai_compatible_provider(settings: Settings) -> OpenAICompatibleLLMP
         api_key=api_key,
         base_url=settings.llm_base_url,
         model=settings.llm_model,
+        provider_name=settings.llm_provider_name,
         response_format=settings.llm_response_format,
+        structured_output_policy=settings.llm_structured_output_policy,
         timeout_seconds=settings.llm_timeout_seconds,
         max_output_tokens=settings.llm_max_output_tokens,
     )

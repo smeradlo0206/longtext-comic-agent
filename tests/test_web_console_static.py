@@ -18,6 +18,7 @@ def test_web_console_static_html_exposes_demo_controls_without_local_secrets() -
     assert 'id="narrativeChunkOffset"' in html
     assert 'id="narrativeMaxChars"' in html
     assert 'id="narrativeRealLlmRequested"' in html
+    assert 'body.append("narrative_modes", JSON.stringify([' in html
     assert 'id="runNarrativeAnalyst"' in html
     assert 'id="narrativeSummary"' in html
     assert 'id="narrativeProposal"' in html
@@ -152,7 +153,8 @@ def test_web_console_does_not_default_to_demo_project_after_refresh() -> None:
     html = Path("web_console/index.html").read_text(encoding="utf-8")
 
     assert 'id="projectId" value="demo-project"' not in html
-    assert 'id="apiBase" value="http://127.0.0.1:8080"' in html
+    assert 'id="apiBase" value="" placeholder="Same origin"' in html
+    assert "window.location.origin" in html
     assert "initializeProjectId" in html
     assert "localStorage" in html
     assert "comic-agent-project-id" in html
@@ -211,7 +213,31 @@ def test_web_console_manual_review_empty_values_are_explained_in_chinese() -> No
 def test_web_console_exposes_whole_document_analysis_as_the_normal_flow() -> None:
     html = Path("web_console/index.html").read_text(encoding="utf-8")
 
-    assert '<input id="apiBase" value="http://127.0.0.1:8080" />' in html
+    assert 'id="safePipeline"' in html
+    assert 'id="safePipelineProjectName"' in html
+    assert 'id="safePipelineFile"' in html
+    assert 'id="safePipelineRealLlmRequested"' in html
+    assert html.index('id="safePipelineFile"') < html.index('id="safePipelineRealLlmRequested"')
+    assert html.index('id="safePipelineRealLlmRequested"') < html.index('id="startSafePipeline"')
+    assert 'id="useOfficialSafePipelineText"' in html
+    assert 'id="startSafePipeline"' in html
+    assert 'id="refreshSafePipeline"' in html
+    assert 'id="safePipelineStatus"' in html
+    assert 'id="safePipelineRunBadge"' in html
+    assert 'id="safePipelineRunMessage"' in html
+    assert "narrative_failure_summary" in html
+    assert "provider_health" in html
+    assert 'id="advancedDevelopmentDiagnostics"' in html
+    assert 'id="advancedDevelopmentDiagnostics" open' not in html
+    assert "/pipeline-runs/import-and-analyze" in html
+    assert "batch_summary" in html
+    assert "GATE2_PENDING" in html
+    assert "叙事已完成，正在补齐 Gate 2 审核" in html
+    assert "ensureSafePipelineRealLlmEnabled" in html
+    assert "describeSafePipelineStartError" in html
+    assert "START_FAILED" in html
+    assert 'body.append("real_llm_requested", String(realLlmRequested))' in html
+    assert "const stoppedAtGate2" in html
     assert 'id="analysisDocumentId"' in html
     assert 'id="loadAnalysisDocuments"' in html
     assert 'data-analysis-mode="event_extraction"' in html
