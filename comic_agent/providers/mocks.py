@@ -103,17 +103,35 @@ class LocalSafeDemoProvider:
         request: dict[str, object],
         output_model: type[OutputModelT],
     ) -> OutputModelT:
-        """Return evidence-backed event batches and ordered Timeline relations."""
+        """Return valid, evidence-backed Narrative batches and Timeline relations."""
 
         self.calls += 1
         if output_model.__name__ == "EventProposalBatchV1":
             self._event_calls += 1
             return output_model.model_validate(self._event_batch(request))
+        if output_model.__name__ == "EntityProposalBatchV1":
+            return output_model.model_validate(self._entity_batch(request))
+        if output_model.__name__ == "ClaimProposalBatchV1":
+            return output_model.model_validate(self._claim_batch(request))
+        if output_model.__name__ == "KnowledgeStateProposalBatchV1":
+            return output_model.model_validate(
+                {"batch_id": "local-safe-demo-knowledge-states", "states": []}
+            )
+        if output_model.__name__ == "StateChangeProposalBatchV1":
+            return output_model.model_validate(
+                {"batch_id": "local-safe-demo-state-changes", "changes": []}
+            )
+        if output_model.__name__ == "RelationshipSignalProposalBatchV1":
+            return output_model.model_validate(
+                {"batch_id": "local-safe-demo-relationship-signals", "signals": []}
+            )
         if output_model.__name__ == "TemporalRelationProposalV1":
             return output_model.model_validate(self._temporal_relation(request))
         return output_model.model_validate({"batch_id": "local-demo-empty", "items": []})
 
-    def _event_batch(self, request: dict[str, object]) -> dict[str, object]:
+    def _source_evidence(self, request: dict[str, object]) -> tuple[str, str]:
+        """Return one exact, bounded source reference for deterministic proposals."""
+
         input_context = request.get("input_context")
         if not isinstance(input_context, dict):
             raise ValueError("local demo requires Narrative input context")
@@ -127,6 +145,48 @@ class LocalSafeDemoProvider:
         text = first_chunk.get("text")
         if not isinstance(chunk_id, str) or not isinstance(text, str):
             raise ValueError("local demo source chunk is invalid")
+        return chunk_id, text
+
+    def _entity_batch(self, request: dict[str, object]) -> dict[str, object]:
+        chunk_id, text = self._source_evidence(request)
+        return {
+            "batch_id": "local-safe-demo-entities",
+            "entities": [
+                {
+                    "schema_version": "1.1",
+                    "proposal_id": "local-demo-entity-1",
+                    "entity_type": "CHARACTER",
+                    "canonical_name": "小林",
+                    "aliases": [],
+                    "evidence_refs": [{"chunk_id": chunk_id, "quote_text": text[:80]}],
+                    "confidence": 1.0,
+                }
+            ],
+        }
+
+    def _claim_batch(self, request: dict[str, object]) -> dict[str, object]:
+        chunk_id, text = self._source_evidence(request)
+        return {
+            "schema_version": "1.2",
+            "batch_id": "local-safe-demo-claims",
+            "claims": [
+                {
+                    "schema_version": "1.2",
+                    "proposal_id": "local-demo-claim-1",
+                    "claim_type": "FACTUAL_ASSERTION",
+                    "claim_text": "小林张贴志愿者招募海报。",
+                    "temporal_scope": "PRESENT",
+                    "source_type": "NARRATOR",
+                    "verification_status": "UNVERIFIED",
+                    "evidence_refs": [{"chunk_id": chunk_id, "quote_text": text[:80]}],
+                    "confidence": 1.0,
+                    "reality_layer": "PRIMARY",
+                }
+            ],
+        }
+
+    def _event_batch(self, request: dict[str, object]) -> dict[str, object]:
+        chunk_id, text = self._source_evidence(request)
         sentences = [
             sentence.strip()
             for sentence in text.replace("！", "。").replace("!", ".").split("。")

@@ -1,5 +1,6 @@
 """HTTP acceptance coverage for the development-only one-click safe pipeline."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from comic_agent.agents.timeline_agent import TimelineAgent
+from comic_agent.api.pipeline import _parse_narrative_modes
 from comic_agent.config import Settings, get_settings
 from comic_agent.main import create_app
 from comic_agent.providers.mocks import LocalSafeDemoProvider, MockLLMProvider
@@ -16,6 +18,46 @@ _OFFICIAL_TEXT = """下午四点，小林先到学校礼堂，在公告栏张贴
 十分钟后，天下起雨；小周撑着一把蓝色雨伞赶到礼堂。
 小林把备用雨伞交给小周，两人随后一起进入礼堂。
 活动开始时，小周仍拿着蓝色雨伞，小林已经不在公告栏旁。"""
+
+_ALL_NARRATIVE_MODES = [
+    "entity_extraction",
+    "event_extraction",
+    "claim_extraction",
+    "knowledge_state_extraction",
+    "state_change_extraction",
+    "relationship_signal_extraction",
+]
+
+
+def test_pipeline_accepts_only_distinct_known_requested_narrative_modes() -> None:
+    assert _parse_narrative_modes(
+        '["entity_extraction", "event_extraction"]'
+    ) == ["entity_extraction", "event_extraction"]
+    with pytest.raises(ValueError, match="distinct"):
+        _parse_narrative_modes('["event_extraction", "event_extraction"]')
+    with pytest.raises(ValueError, match="unsupported"):
+        _parse_narrative_modes('["unknown_mode"]')
+
+
+def test_pipeline_defaults_to_all_six_narrative_modes() -> None:
+    assert _parse_narrative_modes(None) == _ALL_NARRATIVE_MODES
+
+
+def test_pipeline_persists_an_explicit_six_mode_request(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    client = _client(tmp_path, monkeypatch)
+    modes = _ALL_NARRATIVE_MODES
+
+    started = client.post(
+        "/projects/six-mode-request/pipeline-runs/import-and-analyze",
+        data={"narrative_modes": json.dumps(modes)},
+        files={"file": ("official.txt", _OFFICIAL_TEXT.encode("utf-8"), "text/plain")},
+    )
+
+    assert started.status_code == 200
+    run_id = started.json()["analysis_run_id"]
+    run = client.get(f"/narrative-analysis-runs/{run_id}")
+    assert run.status_code == 200
+    assert run.json()["modes"] == modes
 
 
 @pytest.fixture(autouse=True)
@@ -113,7 +155,7 @@ def test_one_click_pipeline_only_uses_real_provider_after_explicit_opt_in(
     assert "test-local-key" not in status.text
     assert started.status_code == 200
     assert started.json()["real_llm_requested"] is True
-    assert narrative_provider.calls == 1
+    assert narrative_provider.calls == 6
     run_id = started.json()["analysis_run_id"]
     assert client.get(f"/pipeline-runs/{run_id}").json()["gate3"] == "APPROVED"
 
@@ -158,7 +200,7 @@ def test_one_click_pipeline_exposes_sanitized_narrative_failure_summary(
     payload = status.json()
     assert payload["narrative"] == "NEEDS_HUMAN_ACTION"
     assert payload["narrative_failure_summary"] == {
-        "failed_window_count": 1,
+        "failed_window_count": 6,
         "failure_categories": ["SCHEMA_REPAIR_EXHAUSTED"],
         "recommended_actions": [
             "automatic schema recovery stopped; inspect safe rule codes"
@@ -217,7 +259,7 @@ def test_one_click_pipeline_recovers_gate2_once_with_the_original_scope(
     assert status["narrative_recovery"] == "SUCCEEDED"
     assert status["narrative_recovery_attempts"] == 1
     assert status["timeline"] == "APPROVED"
-    assert provider.calls == 2
+    assert provider.calls == 7
 
 
 def test_one_click_pipeline_recovers_gate3_once_with_the_same_gate2_bundle(
@@ -254,7 +296,7 @@ def test_double_click_reuses_the_durable_pipeline_run_without_a_second_provider_
     assert first.status_code == 200
     assert second.status_code == 200
     assert first.json()["analysis_run_id"] == second.json()["analysis_run_id"]
-    assert provider.calls == 1
+    assert provider.calls == 6
 
 
 def test_pipeline_status_reports_gate2_pending_for_saved_aggregate_without_route(

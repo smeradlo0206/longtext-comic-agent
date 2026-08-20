@@ -1,17 +1,35 @@
 """Unit coverage for the opt-in local real Provider acceptance runner."""
 
+import json
+
 import pytest
 from pydantic import SecretStr
 
 from comic_agent.config import Settings
 from comic_agent.schemas.reliability import StructuredOutputPolicy
-from scripts.run_local_real_provider_acceptance import acceptance_text, validate_live_settings
+from scripts.run_local_real_provider_acceptance import (
+    NARRATIVE_ACCEPTANCE_MODES,
+    acceptance_text,
+    pipeline_form,
+    validate_live_settings,
+)
 
 
 def test_acceptance_text_tiers_increase_scope_without_user_source() -> None:
     assert len(acceptance_text("short")) < len(acceptance_text("medium"))
     assert len(acceptance_text("medium")) < len(acceptance_text("long"))
     assert "林岚" in acceptance_text("short")
+
+
+def test_runner_requests_all_six_narrative_modes_with_real_opt_in() -> None:
+    request = pipeline_form(tier="short")
+
+    assert request == {
+        "project_name": "Local real Provider acceptance (short)",
+        "real_llm_requested": "true",
+        "narrative_modes": json.dumps(list(NARRATIVE_ACCEPTANCE_MODES)),
+    }
+    assert len(NARRATIVE_ACCEPTANCE_MODES) == 6
 
 
 def test_runner_refuses_real_execution_without_safe_local_opt_in() -> None:

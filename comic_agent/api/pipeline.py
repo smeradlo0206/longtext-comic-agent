@@ -1,5 +1,6 @@
 """One-click, safe local pipeline entrypoints built from existing Gate services."""
 
+import json
 from typing import Annotated, Any
 
 from fastapi import (
@@ -39,7 +40,10 @@ from comic_agent.schemas.reliability import (
 )
 from comic_agent.schemas.source import FidelityMode, ProjectSpecV1, ProjectType
 from comic_agent.schemas.workflow import NarrativeAnalysisRunStatus, NarrativeGate2HandoffStatus
-from comic_agent.services.narrative_analysis_coordinator import NarrativeAnalysisCoordinator
+from comic_agent.services.narrative_analysis_coordinator import (
+    DEFAULT_NARRATIVE_ANALYST_MODES,
+    NarrativeAnalysisCoordinator,
+)
 from comic_agent.services.provider_capability_service import ProviderCapabilityService
 from comic_agent.services.provider_health_service import ProviderHealthService
 
@@ -60,7 +64,8 @@ CircuitRepositoryDep = Annotated[
 ]
 UploadFileDep = Annotated[UploadFile, File(...)]
 
-_SAFE_NARRATIVE_MODES = ["event_extraction"]
+_SAFE_NARRATIVE_MODES = list(DEFAULT_NARRATIVE_ANALYST_MODES)
+_SUPPORTED_NARRATIVE_MODES = frozenset(DEFAULT_NARRATIVE_ANALYST_MODES)
 
 
 @router.get("/provider-health", response_model=ProviderHealthResultV1)
@@ -96,6 +101,7 @@ async def import_and_analyze(
     circuit_repository: CircuitRepositoryDep,
     project_name: Annotated[str | None, Form()] = None,
     real_llm_requested: Annotated[bool, Form()] = False,
+    narrative_modes: Annotated[str | None, Form()] = None,
 ) -> dict[str, object] | JSONResponse:
     """Import once, then schedule the established Gate 1 -> Narrative worker path."""
 
@@ -104,6 +110,10 @@ async def import_and_analyze(
         request=request,
         circuit_repository=circuit_repository,
     )
+    try:
+        selected_modes = _parse_narrative_modes(narrative_modes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     _ensure_project(repository, project_id, project_name)
     imported = await import_document(project_id=project_id, file=file, repository=repository)
     if isinstance(imported, JSONResponse):
@@ -120,7 +130,7 @@ async def import_and_analyze(
             project_id=project_id,
             document_id=document["document_id"],
             chapter_ids=None,
-            modes=_SAFE_NARRATIVE_MODES,
+            modes=selected_modes,
             real_llm_requested=real_llm_requested,
         )
     except ValueError as exc:
@@ -140,6 +150,30 @@ async def import_and_analyze(
         "status_url": f"/pipeline-runs/{run.analysis_run_id}",
         "real_llm_requested": real_llm_requested,
     }
+
+
+def _parse_narrative_modes(value: str | None) -> list[str]:
+    """Use all supported modes by default and validate explicit bounded requests."""
+
+    if value is None:
+        return list(_SAFE_NARRATIVE_MODES)
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError("narrative_modes must be a JSON array") from exc
+    if (
+        not isinstance(decoded, list)
+        or not decoded
+        or not all(isinstance(item, str) for item in decoded)
+    ):
+        raise ValueError("narrative_modes must be a non-empty JSON string array")
+    modes = [item for item in decoded]
+    if len(set(modes)) != len(modes):
+        raise ValueError("narrative_modes must be distinct")
+    unsupported = [mode for mode in modes if mode not in _SUPPORTED_NARRATIVE_MODES]
+    if unsupported:
+        raise ValueError("narrative_modes contains an unsupported mode")
+    return modes
 
 
 @router.get("/pipeline-runs/{analysis_run_id}")

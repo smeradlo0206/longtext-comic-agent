@@ -1219,7 +1219,7 @@
       const realLlmRequested = $("safePipelineRealLlmRequested").checked;
       state.safePipelineSubmitting = true;
       $("startSafePipeline").disabled = true;
-      setSafePipelineRunState("正在提交", realLlmRequested ? "正在验证真实 LLM 配置并提交文本。" : "正在提交文本。", "warn");
+      setSafePipelineRunState("正在提交", realLlmRequested ? "正在验证真实 LLM 配置并提交六类叙事提取。" : "正在提交六类叙事提取。", "warn");
       try {
         if (realLlmRequested) await ensureSafePipelineRealLlmEnabled();
         const body = new FormData();
@@ -1227,6 +1227,14 @@
         const name = $("safePipelineProjectName").value.trim();
         if (name) body.append("project_name", name);
         body.append("real_llm_requested", String(realLlmRequested));
+        body.append("narrative_modes", JSON.stringify([
+          "entity_extraction",
+          "event_extraction",
+          "claim_extraction",
+          "knowledge_state_extraction",
+          "state_change_extraction",
+          "relationship_signal_extraction"
+        ]));
         const data = await request(
           `/projects/${encodeURIComponent(safePipelineProjectId())}/pipeline-runs/import-and-analyze`,
           {method: "POST", body}

@@ -17,6 +17,14 @@ from comic_agent.main import create_app
 from comic_agent.schemas.reliability import StructuredOutputPolicy
 
 AcceptanceTier = Literal["short", "medium", "long"]
+NARRATIVE_ACCEPTANCE_MODES = (
+    "entity_extraction",
+    "event_extraction",
+    "claim_extraction",
+    "knowledge_state_extraction",
+    "state_change_extraction",
+    "relationship_signal_extraction",
+)
 
 
 def _scene(index: int) -> str:
@@ -33,6 +41,16 @@ def acceptance_text(tier: AcceptanceTier) -> str:
 
     count = {"short": 2, "medium": 10, "long": 30}[tier]
     return "\n".join(_scene(index) for index in range(1, count + 1))
+
+
+def pipeline_form(*, tier: AcceptanceTier) -> dict[str, str]:
+    """Build the one-click API form that explicitly requests all six modes."""
+
+    return {
+        "project_name": f"Local real Provider acceptance ({tier})",
+        "real_llm_requested": "true",
+        "narrative_modes": json.dumps(list(NARRATIVE_ACCEPTANCE_MODES)),
+    }
 
 
 def validate_live_settings(settings: Settings) -> None:
@@ -95,10 +113,7 @@ def run_acceptance(
     with TestClient(app) as client:
         started = client.post(
             f"/projects/{project_id}/pipeline-runs/import-and-analyze",
-            data={
-                "project_name": f"Local real Provider acceptance ({tier})",
-                "real_llm_requested": "true",
-            },
+            data=pipeline_form(tier=tier),
             files={
                 "file": (
                     f"acceptance-{tier}.txt",
