@@ -367,9 +367,10 @@ human-review imports cannot start analysis; this flow remains proposal-only.
 
 ## One-click local real-LLM pilot
 
-The local Console's **一键安全分析** card never requests a real provider unless
-the checkbox is selected. A deterministic Fake pipeline remains available only
-when the local server is explicitly configured for it. To make a small,
+The local Console's **一键安全分析** card submits all six implemented Narrative
+extraction modes and never requests a real provider unless the checkbox is selected.
+A deterministic Fake pipeline remains available only when the local server is
+explicitly configured for it. To make a small,
 explicit real-provider pilot, first stop the server and configure the local
 environment only:
 
@@ -392,7 +393,8 @@ text and inspect only the source-free status/result APIs.
 ### Controlled local Provider acceptance runner
 
 After Fake-provider regression passes, the separate local-only runner may be
-used one tier at a time. It requires `--run-real`, uses an isolated SQLite
+used one tier at a time. It requires `--run-real`, explicitly requests all six
+implemented Narrative extraction modes, uses an isolated SQLite
 database below its output directory, and writes only a source-free summary. It
 never accepts a key as an argument, writes StoryBible, calls image services, or
 uploads text. Set `LLM_STRUCTURED_OUTPUT_POLICY=AUTO` (or `REQUIRE_STRICT`) so

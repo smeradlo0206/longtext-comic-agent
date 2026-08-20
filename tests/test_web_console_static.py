@@ -18,6 +18,7 @@ def test_web_console_static_html_exposes_demo_controls_without_local_secrets() -
     assert 'id="narrativeChunkOffset"' in html
     assert 'id="narrativeMaxChars"' in html
     assert 'id="narrativeRealLlmRequested"' in html
+    assert 'body.append("narrative_modes", JSON.stringify([' in html
     assert 'id="runNarrativeAnalyst"' in html
     assert 'id="narrativeSummary"' in html
     assert 'id="narrativeProposal"' in html
