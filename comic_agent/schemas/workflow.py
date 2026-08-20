@@ -60,6 +60,25 @@ class NarrativeAnalysisWindowStatus(StrEnum):
     NEEDS_HUMAN_ACTION = "NEEDS_HUMAN_ACTION"
 
 
+class NarrativeRecoveryPhase(StrEnum):
+    """Durable phase for one source-bounded Provider execution scope."""
+
+    INITIAL = "INITIAL"
+    LENGTH_RECOVERY = "LENGTH_RECOVERY"
+    SCHEMA_REPAIR = "SCHEMA_REPAIR"
+    SPLIT_CHILD = "SPLIT_CHILD"
+    TERMINAL = "TERMINAL"
+
+
+class NarrativeRecoveryTerminalReason(StrEnum):
+    """Source-free terminal reasons for controlled Narrative recovery."""
+
+    SCHEMA_REPAIR_EXHAUSTED = "SCHEMA_REPAIR_EXHAUSTED"
+    STRUCTURED_OUTPUT_UNSUPPORTED = "STRUCTURED_OUTPUT_UNSUPPORTED"
+    PROVIDER_BUDGET_EXHAUSTED = "PROVIDER_BUDGET_EXHAUSTED"
+    MINIMUM_SCOPE_REACHED = "MINIMUM_SCOPE_REACHED"
+
+
 class NarrativeAnalysisBatchStatus(StrEnum):
     """Source-free lifecycle state for a bounded document batch."""
 
@@ -104,13 +123,15 @@ class WorkflowRunV1(StrictBaseModel):
 class NarrativeAnalysisWindowPlanV1(StrictBaseModel):
     """Deterministic source chunk window planned before execution."""
 
-    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8"] = Field(
-        default="1.8",
+    schema_version: Literal[
+        "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9"
+    ] = Field(
+        default="1.9",
         description=(
             "Schema version. Historical 1.0 through 1.3 records remain readable; "
             "1.4 adds deterministic output ownership; 1.5 adds execution checkpoints; "
             "1.6 adds batch budgets; 1.7 adds bounded split-recovery accounting; "
-            "1.8 adds schema-recovery slice provenance."
+            "1.8 adds schema-recovery slice provenance; 1.9 adds phased recovery budgets."
         ),
     )
     window_index: int = Field(ge=0, description="Zero-based window sequence.")
@@ -124,13 +145,16 @@ class NarrativeAnalysisWindowPlanV1(StrictBaseModel):
 class NarrativeAnalysisWindowV1(NarrativeAnalysisWindowPlanV1):
     """Auditable state for one mode over one planned source window."""
 
-    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8"] = Field(
-        default="1.8",
+    schema_version: Literal[
+        "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9"
+    ] = Field(
+        default="1.9",
         description=(
             "Schema version. Historical 1.0 through 1.3 window records remain readable; "
             "1.5 adds source-free retry scheduling and Provider checkpoints; 1.6 adds "
             "planned batch and execution-budget audit fields; 1.7 adds bounded "
-            "split-recovery accounting; 1.8 adds schema-recovery execution metadata."
+            "split-recovery accounting; 1.8 adds schema-recovery execution metadata; "
+            "1.9 separates length and schema-repair budgets."
         ),
     )
 
@@ -210,7 +234,7 @@ class NarrativeAnalysisWindowV1(NarrativeAnalysisWindowPlanV1):
         description="Configured maximum Provider calls for this exact window.",
     )
     max_split_depth: int = Field(
-        default=1,
+        default=3,
         ge=0,
         le=8,
         description="Maximum deterministic source-boundary split depth for this window tree.",
@@ -240,8 +264,17 @@ class NarrativeAnalysisWindowV1(NarrativeAnalysisWindowPlanV1):
         default=None,
         description="Source-free earliest time for a bounded retry.",
     )
+    initial_provider_attempts: int = Field(default=0, ge=0)
+    length_recovery_attempts_used: int = Field(default=0, ge=0)
+    max_length_recovery_attempts: int = Field(default=1, ge=0, le=1)
+    schema_repair_attempts_used: int = Field(default=0, ge=0)
+    max_schema_repair_attempts: int = Field(default=1, ge=0, le=1)
+    # Retained as a compatibility projection for v1.8 persistence payloads.
     schema_recovery_attempt_count: int = Field(default=0, ge=0, le=1)
     schema_recovery_rule_codes: list[str] = Field(default_factory=list)
+    recovery_phase: NarrativeRecoveryPhase = Field(default=NarrativeRecoveryPhase.INITIAL)
+    terminal_reason: NarrativeRecoveryTerminalReason | None = Field(default=None)
+    minimum_slice_chars: int = Field(default=200, ge=1)
     slice_chunk_id: str | None = Field(default=None)
     slice_start: int | None = Field(default=None, ge=0)
     slice_end: int | None = Field(default=None, ge=1)
@@ -254,6 +287,10 @@ class NarrativeAnalysisWindowV1(NarrativeAnalysisWindowPlanV1):
 
     @model_validator(mode="after")
     def normalize_owned_chunk_ids(self) -> "NarrativeAnalysisWindowV1":
+        if self.schema_repair_attempts_used == 0 and self.schema_recovery_attempt_count:
+            self.schema_repair_attempts_used = self.schema_recovery_attempt_count
+        elif self.schema_recovery_attempt_count != self.schema_repair_attempts_used:
+            self.schema_recovery_attempt_count = self.schema_repair_attempts_used
         if not self.owned_chunk_ids:
             self.owned_chunk_ids = list(self.chunk_ids)
         if len(self.owned_chunk_ids) != len(set(self.owned_chunk_ids)):

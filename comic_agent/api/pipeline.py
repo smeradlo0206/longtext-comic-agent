@@ -415,6 +415,20 @@ def _structured_execution_summary(windows: list[Any]) -> dict[str, object]:
         "schema_recovery_attempt_count": sum(
             window.schema_recovery_attempt_count for window in windows
         ),
+        "recovery_phases": sorted({str(window.recovery_phase) for window in windows}),
+        "terminal_reasons": sorted(
+            {
+                str(window.terminal_reason)
+                for window in windows
+                if window.terminal_reason is not None
+            }
+        ),
+        "length_recovery_attempts_used": sum(
+            window.length_recovery_attempts_used for window in windows
+        ),
+        "schema_repair_attempts_used": sum(
+            window.schema_repair_attempts_used for window in windows
+        ),
         "max_split_depth": max((window.split_depth for window in windows), default=0),
         "completion_tokens": sum(completion_values) if completion_values else None,
         "completion_tokens_status": (

@@ -134,4 +134,5 @@ class NarrativeAnalysisCoordinator:
             time_budget_seconds=self.settings.narrative_window_time_budget_seconds,
             max_call_attempts=self.settings.narrative_window_max_call_attempts,
             max_split_depth=self.settings.narrative_window_max_split_depth,
+            min_slice_chars=self.settings.narrative_window_min_slice_chars,
         )

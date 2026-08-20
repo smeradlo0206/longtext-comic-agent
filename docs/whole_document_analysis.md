@@ -111,6 +111,8 @@ format repair fails, Schema recovery splits only the failed scope at approved ch
 for a sole chunk it may create two auditable non-overlapping character slices. At a minimum scope,
 unsupported structured output, or exhausted persisted budget, the terminal state is
 `NEEDS_HUMAN_ACTION`: automatic recovery has stopped and Gate 2/Timeline remain unavailable.
+Length recovery and one schema-format repair have independent persisted budgets for each
+source-bounded child; an earlier length recovery never consumes that child’s schema repair.
 Manual real-LLM validation is allowed only after the mock-based checks pass and never records a
 credential in a command, log, screenshot, or Git artifact.
 

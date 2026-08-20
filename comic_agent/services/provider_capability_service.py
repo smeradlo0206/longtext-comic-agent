@@ -3,12 +3,23 @@
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
+from pydantic import BaseModel
+
 from comic_agent.config import Settings
 from comic_agent.providers.llm import LLMProvider
+from comic_agent.schemas.narrative import (
+    ClaimProposalBatchV1,
+    EntityProposalBatchV1,
+    EventProposalBatchV1,
+    KnowledgeStateProposalBatchV1,
+    RelationshipSignalProposalBatchV1,
+    StateChangeProposalBatchV1,
+)
 from comic_agent.schemas.reliability import (
     ProviderCapabilityProfileV1,
     ProviderCapabilityState,
     ProviderFailureCategory,
+    ProviderSchemaCapabilityV1,
     StructuredOutputMode,
     StructuredOutputPolicy,
 )
@@ -24,7 +35,16 @@ class CapabilityStore(Protocol):
 
 
 class ProviderCapabilityService:
-    """Resolve and persist one safe profile per provider/model until its TTL expires."""
+    """Resolve source-free base and per-output-Schema capabilities until TTL expiry."""
+
+    _NARRATIVE_OUTPUT_MODELS: tuple[type[BaseModel], ...] = (
+        EntityProposalBatchV1,
+        EventProposalBatchV1,
+        ClaimProposalBatchV1,
+        KnowledgeStateProposalBatchV1,
+        StateChangeProposalBatchV1,
+        RelationshipSignalProposalBatchV1,
+    )
 
     def __init__(self, *, settings: Settings, repository: CapabilityStore) -> None:
         self._settings = settings
@@ -50,6 +70,11 @@ class ProviderCapabilityService:
         else:
             try:
                 profile = probe(effective_policy)
+                profile = self._with_schema_capabilities(
+                    provider=provider,
+                    profile=profile,
+                    policy=effective_policy,
+                )
             except Exception as exc:
                 profile = self._failed_profile(provider_key, exc, now)
         profile = profile.model_copy(
@@ -62,6 +87,59 @@ class ProviderCapabilityService:
         self._repository.save_capability_profile(profile)
         self._apply(provider, profile)
         return profile
+
+    def _with_schema_capabilities(
+        self,
+        *,
+        provider: LLMProvider,
+        profile: ProviderCapabilityProfileV1,
+        policy: StructuredOutputPolicy,
+    ) -> ProviderCapabilityProfileV1:
+        """Probe each actual Narrative batch contract without source text.
+
+        A provider accepting a tiny readiness object is not evidence that it can
+        satisfy our six constrained Proposal batches.  Providers that do not
+        offer this optional capability remain compatible, but cannot claim a
+        per-Schema strict guarantee.
+        """
+
+        probe_schema = getattr(provider, "probe_output_schema", None)
+        if not callable(probe_schema) or profile.state != ProviderCapabilityState.AVAILABLE:
+            return profile
+
+        capabilities = []
+        for output_model in self._NARRATIVE_OUTPUT_MODELS:
+            try:
+                capabilities.append(probe_schema(policy, output_model))
+            except Exception as exc:
+                capabilities.append(
+                    self._failed_schema_capability(
+                        output_schema_name=output_model.__name__,
+                        exc=exc,
+                    )
+                )
+        return profile.model_copy(
+            update={"schema_version": "1.1", "schema_capabilities": capabilities}
+        )
+
+    @staticmethod
+    def _failed_schema_capability(
+        *, output_schema_name: str, exc: BaseException
+    ) -> ProviderSchemaCapabilityV1:
+        category = classify_exception(exc)
+        return ProviderSchemaCapabilityV1(
+            output_schema_name=output_schema_name,
+            state=ProviderCapabilityState.FAILED,
+            supports_json_object=False,
+            supports_strict_json_schema=False,
+            selected_output_mode=StructuredOutputMode.UNAVAILABLE,
+            safe_issue_codes=[
+                "OUTPUT_SCHEMA_PREFLIGHT_FAILED",
+                "SCHEMA_VALIDATION_FAILED"
+                if category == "SCHEMA_VALIDATION_FAILED"
+                else "OUTPUT_SCHEMA_PROBE_ERROR",
+            ],
+        )
 
     @staticmethod
     def _apply(provider: LLMProvider, profile: ProviderCapabilityProfileV1) -> None:

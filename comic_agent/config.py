@@ -87,7 +87,7 @@ class Settings(BaseSettings):
         validation_alias="NARRATIVE_WINDOW_TIME_BUDGET_SECONDS",
     )
     narrative_window_max_split_depth: int = Field(
-        default=1,
+        default=3,
         ge=0,
         le=8,
         validation_alias="NARRATIVE_WINDOW_MAX_SPLIT_DEPTH",

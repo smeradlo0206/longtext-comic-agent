@@ -12,6 +12,7 @@ from comic_agent.providers.openai_compatible import OpenAICompatibleLLMProvider
 from comic_agent.schemas.reliability import (
     ProviderCapabilityProfileV1,
     ProviderCapabilityState,
+    ProviderSchemaCapabilityV1,
     StructuredOutputMode,
     StructuredOutputPolicy,
 )
@@ -96,6 +97,7 @@ class _Store:
 class _ProbeProvider:
     def __init__(self) -> None:
         self.calls = 0
+        self.schema_calls: list[str] = []
 
     def probe_structured_output(
         self, policy: StructuredOutputPolicy
@@ -109,6 +111,18 @@ class _ProbeProvider:
             supports_strict_json_schema=True,
             supports_usage_reporting=True,
             supports_finish_reason=True,
+            selected_output_mode=StructuredOutputMode.STRICT_JSON_SCHEMA,
+        )
+
+    def probe_output_schema(
+        self, policy: StructuredOutputPolicy, output_model: type[BaseModel]
+    ) -> ProviderSchemaCapabilityV1:
+        self.schema_calls.append(output_model.__name__)
+        return ProviderSchemaCapabilityV1(
+            output_schema_name=output_model.__name__,
+            state=ProviderCapabilityState.AVAILABLE,
+            supports_json_object=True,
+            supports_strict_json_schema=True,
             selected_output_mode=StructuredOutputMode.STRICT_JSON_SCHEMA,
         )
 
@@ -144,6 +158,39 @@ def test_strict_profile_sends_openai_json_schema_and_preserves_execution_metadat
     assert "source must not be copied here" not in metadata.model_dump_json()
 
 
+def test_schema_specific_capability_overrides_provider_wide_mode() -> None:
+    client = _Client()
+    provider = OpenAICompatibleLLMProvider(
+        api_key="secret",
+        http_client=client,
+        structured_output_policy=StructuredOutputPolicy.AUTO,
+    )
+    provider.apply_capability_profile(
+        ProviderCapabilityProfileV1(
+            provider_name="ustc-openai-compatible",
+            model_name="deepseek-v4-pro",
+            state=ProviderCapabilityState.AVAILABLE,
+            supports_json_object=True,
+            supports_strict_json_schema=True,
+            supports_usage_reporting=True,
+            supports_finish_reason=True,
+            selected_output_mode=StructuredOutputMode.STRICT_JSON_SCHEMA,
+            schema_capabilities=[
+                ProviderSchemaCapabilityV1(
+                    output_schema_name="_Output",
+                    state=ProviderCapabilityState.AVAILABLE,
+                    supports_json_object=True,
+                    supports_strict_json_schema=False,
+                    selected_output_mode=StructuredOutputMode.JSON_OBJECT,
+                )
+            ],
+        )
+    )
+
+    assert provider.structured_generate({}, _Output) == _Output(answer="ok")
+    assert client.requests[0]["response_format"] == {"type": "json_object"}
+
+
 def test_capability_service_caches_source_free_probe_until_ttl() -> None:
     store = _Store()
     provider = _ProbeProvider()
@@ -155,6 +202,36 @@ def test_capability_service_caches_source_free_probe_until_ttl() -> None:
     assert first.selected_output_mode == StructuredOutputMode.STRICT_JSON_SCHEMA
     assert second == first
     assert provider.calls == 1
+    assert len(first.schema_capabilities) == 6
+    assert len(provider.schema_calls) == 6
+
+
+def test_schema_probe_uses_each_concrete_schema_and_json_object_fallback() -> None:
+    client = _ProbeClient(
+        [
+            _StatusResponse(400, {}),
+            _StatusResponse(
+                200,
+                {"choices": [{"message": {"content": "{}"}}]},
+            ),
+        ]
+    )
+    provider = OpenAICompatibleLLMProvider(
+        api_key="secret", http_client=client, structured_output_policy=StructuredOutputPolicy.AUTO
+    )
+
+    capability = provider.probe_output_schema(StructuredOutputPolicy.AUTO, _Output)
+
+    assert capability.output_schema_name == "_Output"
+    assert capability.selected_output_mode == StructuredOutputMode.JSON_OBJECT
+    assert [item["response_format"]["type"] for item in client.requests] == [
+        "json_schema",
+        "json_object",
+    ]
+    assert (
+        client.requests[0]["response_format"]["json_schema"]["schema"]
+        == _Output.model_json_schema()
+    )
 
 
 def test_auto_probe_falls_back_to_json_object_only_for_explicit_strict_rejection() -> None:

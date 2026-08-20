@@ -86,8 +86,10 @@ StoryBible or invokes CommitService.
 ### Structured Provider execution
 
 Before a real source-bearing Narrative call, the configured provider/model may be probed with
-only a fixed readiness request and a fixed Pydantic schema. The persisted capability profile
-selects `STRICT_JSON_SCHEMA`, `JSON_OBJECT`, or `UNAVAILABLE`; it never stores an endpoint,
+only fixed, source-free readiness requests. The capability profile records the result separately
+for each of the six actual Narrative Proposal-batch Pydantic schemas, rather than treating a
+tiny readiness object as proof that every batch contract works. The worker selects the proven
+mode for its own batch schema: `STRICT_JSON_SCHEMA`, `JSON_OBJECT`, or `UNAVAILABLE`; it never stores an endpoint,
 credential, prompt, source text, or raw response. `JSON_OBJECT_ONLY` remains the compatible
 default, while `AUTO` prefers an explicitly proven strict schema path and `REQUIRE_STRICT`
 stops before source text when strict support is unavailable. Provider usage and finish reason

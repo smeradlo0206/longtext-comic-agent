@@ -514,7 +514,7 @@ def test_timeout_splits_only_failed_window_after_persisted_backoff(tmp_path: Pat
     assert len(provider.input_text_lengths) == 2
     assert len(children) == 2
     assert all(child.next_eligible_retry_at is not None for child in children)
-    assert all(child.split_depth == 1 and child.max_split_depth == 1 for child in children)
+    assert all(child.split_depth == 1 and child.max_split_depth == 3 for child in children)
 
     still_deferred = worker.run_pending(run.analysis_run_id)
     assert still_deferred.status == NarrativeAnalysisRunStatus.RUNNING
@@ -641,7 +641,7 @@ def test_window_diagnostics_v1_2_keeps_prior_payloads_readable() -> None:
     assert v1_1.attempt_count == 0
     assert v1_2.schema_version == "1.2"
     assert v1_3.schema_version == "1.3"
-    assert current.schema_version == "1.8"
+    assert current.schema_version == "1.9"
     assert current.owned_chunk_ids == ["chunk-0"]
     assert current.provider_error_diagnostics == {"timeout_kind": "read"}
 
@@ -3142,3 +3142,56 @@ def test_schema_repair_single_chunk_uses_non_overlapping_auditable_slices(tmp_pa
     ]
     assert all(item.status == NarrativeAnalysisWindowStatus.SUCCEEDED for item in slices)
     assert all(item.chunk_ids == ["chunk-0"] for item in slices)
+
+
+def test_length_split_child_gets_independent_schema_repair_budget(tmp_path: Path) -> None:
+    """A child that used its length retry still receives its one Schema repair call."""
+
+    source_repository = _FakeSourceRepository([_long_chunk(index) for index in range(3)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        max_split_depth=1,
+        real_llm_requested=True,
+    )
+    length_error = ProviderResponseError(
+        "LLM provider response exceeded max output tokens before final content",
+        {"finish_reason": "length"},
+    )
+    schema_error = ProviderResponseError(
+        "LLM provider response failed schema validation",
+        {
+            "schema_error_kind": "missing",
+            "schema_error_field_paths": ["events.0.summary"],
+            "schema_error_rule_codes": ["SCHEMA_CONTRACT_INVALID"],
+            "expected_output_schema": "EventProposalBatchV1",
+        },
+    )
+    provider = _RetryingWindowProvider({1: length_error, 2: length_error, 3: schema_error})
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+
+    windows = analysis_repository.list_windows(run.analysis_run_id)
+    schema_child = next(
+        window
+        for window in windows
+        if window.failure_category is None
+        and window.previous_failure_category == "SCHEMA_VALIDATION_FAILED"
+    )
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert schema_child.provider_request_count == 3
+    assert schema_child.schema_recovery_attempt_count == 1
+    assert schema_child.schema_repair_attempts_used == 1
+    assert schema_child.length_recovery_attempts_used == 1
+    assert str(schema_child.recovery_phase) == "SCHEMA_REPAIR"
+    assert "schema_validation" in provider.output_recovery_markers
+    assert analysis_repository.get_result(run.analysis_run_id) is not None

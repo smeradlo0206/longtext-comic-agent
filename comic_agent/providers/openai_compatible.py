@@ -17,6 +17,7 @@ from comic_agent.schemas.reliability import (
     ProviderCapabilityState,
     ProviderExecutionMetadataV1,
     ProviderPreflightResponseV1,
+    ProviderSchemaCapabilityV1,
     StructuredOutputMode,
     StructuredOutputPolicy,
 )
@@ -170,7 +171,7 @@ class OpenAICompatibleLLMProvider:
             "temperature": 0,
             "max_tokens": self._max_output_tokens,
         }
-        output_mode = self._selected_output_mode()
+        output_mode = self._selected_output_mode(output_model)
         response_format = self._response_format_for(output_mode, output_model)
         if response_format is not None:
             payload["response_format"] = response_format
@@ -328,16 +329,87 @@ class OpenAICompatibleLLMProvider:
             ),
         )
 
-    def _probe(self, mode: StructuredOutputMode) -> ProviderDiagnostics:
+    def probe_output_schema(
+        self, policy: StructuredOutputPolicy, output_model: type[BaseModel]
+    ) -> ProviderSchemaCapabilityV1:
+        """Probe one real output Schema with fixed, source-free instructions."""
+
+        supports_strict = False
+        supports_json_object = False
+        strict_rejected = False
+        if policy != StructuredOutputPolicy.JSON_OBJECT_ONLY:
+            try:
+                self._probe(
+                    StructuredOutputMode.STRICT_JSON_SCHEMA,
+                    output_model,
+                    validate_output=False,
+                )
+                supports_strict = True
+                supports_json_object = True
+            except (ProviderHttpError, ProviderResponseError, ValueError):
+                strict_rejected = True
+        if policy != StructuredOutputPolicy.REQUIRE_STRICT and not supports_strict:
+            try:
+                self._probe(
+                    StructuredOutputMode.JSON_OBJECT,
+                    output_model,
+                    validate_output=False,
+                )
+                supports_json_object = True
+            except (ProviderHttpError, ProviderResponseError, ValueError):
+                pass
+        selected = (
+            StructuredOutputMode.STRICT_JSON_SCHEMA
+            if supports_strict
+            else StructuredOutputMode.JSON_OBJECT
+            if supports_json_object and policy != StructuredOutputPolicy.REQUIRE_STRICT
+            else StructuredOutputMode.UNAVAILABLE
+        )
+        return ProviderSchemaCapabilityV1(
+            output_schema_name=output_model.__name__,
+            state=(
+                ProviderCapabilityState.AVAILABLE
+                if selected != StructuredOutputMode.UNAVAILABLE
+                else ProviderCapabilityState.UNSUPPORTED
+            ),
+            supports_json_object=supports_json_object,
+            supports_strict_json_schema=supports_strict,
+            selected_output_mode=selected,
+            safe_issue_codes=(
+                []
+                if selected != StructuredOutputMode.UNAVAILABLE
+                else (
+                    ["STRICT_SCHEMA_REJECTED"]
+                    if strict_rejected
+                    else ["UNSUPPORTED_STRUCTURED_OUTPUT"]
+                )
+            ),
+        )
+
+    def _probe(
+        self,
+        mode: StructuredOutputMode,
+        output_model: type[BaseModel] = ProviderPreflightResponseV1,
+        *,
+        validate_output: bool = True,
+    ) -> ProviderDiagnostics:
+        schema = output_model.model_json_schema()
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": [
                 {"role": "system", "content": "Return only the required readiness JSON."},
-                {"role": "user", "content": "Readiness probe. No external context."},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Return one minimal valid {output_model.__name__} JSON object. "
+                        "Use no external context, markdown, explanation, or source text. "
+                        f"Schema: {json.dumps(schema, ensure_ascii=False, sort_keys=True)}"
+                    ),
+                },
             ],
             "temperature": 0,
-            "max_tokens": 32,
-            "response_format": self._response_format_for(mode, ProviderPreflightResponseV1),
+            "max_tokens": 1024 if output_model is not ProviderPreflightResponseV1 else 32,
+            "response_format": self._response_format_for(mode, output_model),
         }
         response, attempts = self._post_with_one_timeout_retry(payload)
         try:
@@ -352,17 +424,32 @@ class OpenAICompatibleLLMProvider:
             ) from exc
         response_payload = response.json()
         content = response_payload["choices"][0]["message"]["content"]
-        ProviderPreflightResponseV1.model_validate(json.loads(self._extract_json(content)))
+        decoded = json.loads(self._extract_json(content))
+        if validate_output:
+            output_model.model_validate(decoded)
+        elif not isinstance(decoded, dict):
+            raise ProviderResponseError(
+                "structured Provider probe did not return a JSON object",
+                diagnostics={"safe_issue_code": "STRUCTURED_OUTPUT_NOT_OBJECT"},
+            )
         return self._response_diagnostics(response_payload)
 
-    def _selected_output_mode(self) -> StructuredOutputMode:
+    def _selected_output_mode(self, output_model: type[BaseModel]) -> StructuredOutputMode:
         if self._capability_profile is not None:
-            if self._capability_profile.selected_output_mode == StructuredOutputMode.UNAVAILABLE:
+            schema_mode = next(
+                (
+                    item.selected_output_mode
+                    for item in self._capability_profile.schema_capabilities
+                    if item.output_schema_name == output_model.__name__
+                ),
+                self._capability_profile.selected_output_mode,
+            )
+            if schema_mode == StructuredOutputMode.UNAVAILABLE:
                 raise ProviderResponseError(
                     "structured Provider output is unavailable",
                     diagnostics={"safe_issue_code": "UNSUPPORTED_STRUCTURED_OUTPUT"},
                 )
-            return self._capability_profile.selected_output_mode
+            return schema_mode
         # Preserve the historical explicit environment override. New source-bearing
         # paths resolve a persisted profile before calling this provider.
         if self._response_format == "json_object":
