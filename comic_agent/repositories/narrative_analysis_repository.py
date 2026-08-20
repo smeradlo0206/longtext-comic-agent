@@ -121,6 +121,52 @@ class NarrativeAnalysisRepository:
         self._session.commit()
         return bool(result.rowcount)
 
+    def reserve_root_provider_request(
+        self, analysis_run_id: str
+    ) -> NarrativeAnalysisRunV1 | None:
+        """Atomically reserve one root Provider-call budget slot before invocation.
+
+        Historical runs with a zero cap remain readable and keep their legacy
+        behaviour. New planned runs use the optimistic budget version so two
+        worker sessions cannot both consume the final slot.
+        """
+
+        row = self._session.get(NarrativeAnalysisRunModel, analysis_run_id)
+        if row is None:
+            raise ValueError(f"NarrativeAnalysisRun not found: {analysis_run_id}")
+        current = NarrativeAnalysisRunV1.model_validate(row.payload)
+        if (
+            current.max_provider_requests > 0
+            and current.provider_requests_used >= current.max_provider_requests
+        ):
+            return None
+        now = datetime.now(UTC)
+        reserved = current.model_copy(
+            update={
+                "schema_version": "1.4",
+                "provider_requests_used": current.provider_requests_used + 1,
+                "execution_budget_version": current.execution_budget_version + 1,
+                "updated_at": now,
+            }
+        )
+        result = cast(
+            CursorResult[Any],
+            self._session.execute(
+                update(NarrativeAnalysisRunModel)
+                .where(
+                    NarrativeAnalysisRunModel.analysis_run_id == analysis_run_id,
+                    NarrativeAnalysisRunModel.updated_at == row.updated_at,
+                )
+                .values(
+                    status=str(reserved.status),
+                    payload=reserved.model_dump(mode="json"),
+                    updated_at=now,
+                )
+            ),
+        )
+        self._session.commit()
+        return reserved if result.rowcount else None
+
     def create_windows(self, windows: list[NarrativeAnalysisWindowV1]) -> None:
         """Create deterministic recovery windows idempotently."""
 
@@ -163,7 +209,7 @@ class NarrativeAnalysisRepository:
             return run
         saved = run.model_copy(
             update={
-                "schema_version": "1.1",
+                "schema_version": "1.4",
                 "review_gate2_result": result,
                 "review_gate2_route": route,
                 "updated_at": datetime.now(UTC),

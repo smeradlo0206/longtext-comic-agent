@@ -285,7 +285,11 @@ def _recovery_status(attempts: list[Any]) -> str:
 def _narrative_failure_summary(windows: list[Any]) -> dict[str, object] | None:
     """Expose only persisted, source-free failure categories for the one-click Console."""
 
-    failed_windows = [window for window in windows if str(window.status) == "FAILED"]
+    failed_windows = [
+        window
+        for window in windows
+        if str(window.status) in {"FAILED", "EXHAUSTED"}
+    ]
     if not failed_windows:
         return None
     categories = sorted(
@@ -315,16 +319,25 @@ def _window_summary(windows: list[Any]) -> dict[str, object]:
     counts: dict[str, int] = {}
     retry_times = []
     attempts_used = 0
+    provider_requests_used = 0
+    elapsed_seconds_used = 0
+    output_tokens_used = 0
     for window in windows:
         status = str(window.status)
         counts[status] = counts.get(status, 0) + 1
         attempts_used += int(window.attempt_count)
+        provider_requests_used += int(window.provider_request_count)
+        elapsed_seconds_used += int(window.elapsed_seconds_used)
+        output_tokens_used += int(window.output_tokens_used)
         if window.next_eligible_retry_at is not None:
             retry_times.append(window.next_eligible_retry_at)
     return {
         "total": len(windows),
         "status_counts": counts,
         "attempts_used": attempts_used,
+        "provider_requests_used": provider_requests_used,
+        "elapsed_seconds_used": elapsed_seconds_used,
+        "output_tokens_used": output_tokens_used,
         "next_eligible_retry_at": min(retry_times).isoformat() if retry_times else None,
     }
 

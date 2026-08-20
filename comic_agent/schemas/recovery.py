@@ -51,6 +51,26 @@ class RecoveryOutcomeStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class RecoveryTargetKind(StrEnum):
+    """Bounded execution target; future modules share the same recovery vocabulary."""
+
+    NARRATIVE_PROPOSAL = "NARRATIVE_PROPOSAL"
+    NARRATIVE_WINDOW = "NARRATIVE_WINDOW"
+    TIMELINE_RUN = "TIMELINE_RUN"
+    STORYBIBLE_CANDIDATE = "STORYBIBLE_CANDIDATE"
+    STORYBOARD_RUN = "STORYBOARD_RUN"
+
+
+class RecoveryStrategy(StrEnum):
+    """Fixed strategies only; recovery never contains free-form instructions."""
+
+    RETRY_SAME_SCOPE = "RETRY_SAME_SCOPE"
+    SPLIT_WINDOW = "SPLIT_WINDOW"
+    RESUME_REVIEW = "RESUME_REVIEW"
+    DEFER_UNTIL_RETRY = "DEFER_UNTIL_RETRY"
+    STOP = "STOP"
+
+
 class RecoveryBudgetUsageV1(StrictBaseModel):
     """Persisted recovery consumption, kept independent from Provider content."""
 
@@ -92,9 +112,16 @@ class RecoveryPolicyV1(StrictBaseModel):
 class RecoveryDirectiveV1(StrictBaseModel):
     """Deterministic original-window rerun instruction without source text or prompts."""
 
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["1.0", "1.1"] = "1.1"
     directive_id: str
     idempotency_key: str
+    target_kind: RecoveryTargetKind = RecoveryTargetKind.NARRATIVE_PROPOSAL
+    target_id: str | None = None
+    recovery_strategy: RecoveryStrategy = RecoveryStrategy.RETRY_SAME_SCOPE
+    parent_attempt_id: str | None = None
+    split_depth: int = Field(default=0, ge=0, le=8)
+    max_split_depth: int = Field(default=0, ge=0, le=8)
+    retry_not_before: datetime | None = None
     root_analysis_run_id: str
     project_id: str
     document_id: str
@@ -125,6 +152,17 @@ class RecoveryDirectiveV1(StrictBaseModel):
             "original_agent_run_id",
         ):
             _require_nonblank(getattr(self, field_name), field_name)
+        if self.target_id is not None:
+            _require_nonblank(self.target_id, "target_id")
+        if self.parent_attempt_id is not None:
+            _require_nonblank(self.parent_attempt_id, "parent_attempt_id")
+        if self.split_depth > self.max_split_depth:
+            raise ValueError("split_depth must not exceed max_split_depth")
+        if self.target_kind == RecoveryTargetKind.NARRATIVE_PROPOSAL and self.target_id not in {
+            None,
+            self.proposal_id,
+        }:
+            raise ValueError("Narrative proposal target_id must match proposal_id")
         for field_name in (
             "ordered_source_chunk_ids",
             "approved_source_chunk_ids",

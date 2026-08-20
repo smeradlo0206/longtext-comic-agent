@@ -84,6 +84,12 @@ class Settings(BaseSettings):
         le=86_400,
         validation_alias="NARRATIVE_WINDOW_TIME_BUDGET_SECONDS",
     )
+    narrative_window_max_split_depth: int = Field(
+        default=1,
+        ge=0,
+        le=8,
+        validation_alias="NARRATIVE_WINDOW_MAX_SPLIT_DEPTH",
+    )
     enable_real_llm: bool = Field(default=False, validation_alias="ENABLE_REAL_LLM")
     comic_agent_env: str = Field(default="production", validation_alias="COMIC_AGENT_ENV")
     fake_pipeline_demo: bool = Field(

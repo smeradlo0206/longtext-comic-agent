@@ -2,7 +2,7 @@
 
 import json
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier, Event
 
@@ -472,6 +472,109 @@ def test_timeout_backoff_survives_worker_restart_without_recalling_provider(tmp_
     assert deferred.next_eligible_retry_at is not None
 
 
+def test_timeout_splits_only_failed_window_after_persisted_backoff(tmp_path: Path) -> None:
+    """A timeout never reruns a successful sibling or bypasses its retry deadline."""
+
+    source_repository = _FakeSourceRepository([_chunk(0), _chunk(1), _chunk(2)])
+    repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        window_size=2,
+        stride=2,
+        real_llm_requested=True,
+    )
+    provider = _RetryingWindowProvider({1: TimeoutError("synthetic timeout")})
+    worker = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=repository,
+        provider=provider,
+    )
+
+    deferred = worker.run_pending(run.analysis_run_id)
+    windows = repository.list_windows(run.analysis_run_id)
+    split_parent = next(window for window in windows if window.status == "SPLIT")
+    children = [
+        window
+        for window in windows
+        if window.parent_window_id == split_parent.analysis_window_id
+    ]
+
+    assert deferred.status == NarrativeAnalysisRunStatus.RUNNING
+    assert split_parent.failure_category == "PROVIDER_TIMEOUT"
+    assert split_parent.provider_request_count == 1
+    assert split_parent.elapsed_seconds_used >= 1
+    # The independent second planned window succeeded; it must not be replayed
+    # while the failed parent waits for its split recovery deadline.
+    assert len(provider.input_text_lengths) == 2
+    assert len(children) == 2
+    assert all(child.next_eligible_retry_at is not None for child in children)
+    assert all(child.split_depth == 1 and child.max_split_depth == 1 for child in children)
+
+    still_deferred = worker.run_pending(run.analysis_run_id)
+    assert still_deferred.status == NarrativeAnalysisRunStatus.RUNNING
+    assert len(provider.input_text_lengths) == 2
+
+    for child in children:
+        repository.save_window(
+            child.model_copy(
+                update={
+                    "next_eligible_retry_at": datetime.now(UTC) - timedelta(seconds=1)
+                }
+            )
+        )
+    completed = worker.run_pending(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert len(provider.input_text_lengths) == 4
+    assert all(
+        window.status == NarrativeAnalysisWindowStatus.SUCCEEDED
+        for window in repository.list_windows(run.analysis_run_id)
+        if window.parent_window_id == split_parent.analysis_window_id
+    )
+
+
+def test_window_budget_exhaustion_stops_before_gate2_or_timeline(tmp_path: Path) -> None:
+    """A failed final Provider call is terminal and cannot make the root run succeed."""
+
+    source_repository = _FakeSourceRepository([_chunk(0)])
+    repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        window_size=1,
+        stride=1,
+        max_call_attempts=1,
+        real_llm_requested=True,
+    )
+    provider = _RetryingWindowProvider({1: TimeoutError("synthetic timeout")})
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+    window = repository.list_windows(run.analysis_run_id)[0]
+
+    assert completed.status == NarrativeAnalysisRunStatus.FAILED
+    assert completed.review_gate2_result is None
+    assert completed.review_gate2_route is None
+    assert window.status == NarrativeAnalysisWindowStatus.EXHAUSTED
+    assert window.failure_category == "PROVIDER_TIMEOUT"
+    assert window.provider_request_count == 1
+    assert window.next_eligible_retry_at is None
+    assert len(provider.input_text_lengths) == 1
+
+
 def test_window_diagnostics_v1_2_keeps_prior_payloads_readable() -> None:
     legacy = NarrativeAnalysisWindowV1.model_validate(
         {
@@ -538,7 +641,7 @@ def test_window_diagnostics_v1_2_keeps_prior_payloads_readable() -> None:
     assert v1_1.attempt_count == 0
     assert v1_2.schema_version == "1.2"
     assert v1_3.schema_version == "1.3"
-    assert current.schema_version == "1.6"
+    assert current.schema_version == "1.7"
     assert current.owned_chunk_ids == ["chunk-0"]
     assert current.provider_error_diagnostics == {"timeout_kind": "read"}
 
@@ -665,13 +768,11 @@ class _FakeAgentRunRepository:
 class _FakeProvider:
     def __init__(self, *, fail_entity_once: bool = False) -> None:
         self.calls: list[str] = []
+        self.invocations: list[tuple[str, list[str]]] = []
         self.fail_entity_once = fail_entity_once
 
     def structured_generate(self, request, output_model):  # type: ignore[no-untyped-def]
         mode_prompt = str(request["system_prompt"])
-        if "EntityExtractionAgent" in mode_prompt and self.fail_entity_once:
-            self.fail_entity_once = False
-            raise TimeoutError("synthetic provider timeout")
         mode = (
             "entity_extraction"
             if "EntityExtractionAgent" in mode_prompt
@@ -679,8 +780,12 @@ class _FakeProvider:
             if "EventExtractionAgent" in mode_prompt
             else "claim_extraction"
         )
-        self.calls.append(mode)
         input_context = request["input_context"]
+        self.invocations.append((mode, list(input_context["source_chunk_ids"])))
+        if "EntityExtractionAgent" in mode_prompt and self.fail_entity_once:
+            self.fail_entity_once = False
+            raise TimeoutError("synthetic provider timeout")
+        self.calls.append(mode)
         chunk_id = input_context["source_chunk_ids"][0]
         quote = input_context["source_chunks"][0]["text"][:4]
         if mode == "event_extraction":
@@ -1212,12 +1317,23 @@ def test_worker_persists_sanitized_workflow_failure_details(
 
     completed = worker.run_pending(run.analysis_run_id)
     windows = analysis_repository.list_windows(run.analysis_run_id)
-    failed_window = next(window for window in windows if window.status == "FAILED")
+    failed_window = next(
+        window
+        for window in windows
+        if window.status
+        in {NarrativeAnalysisWindowStatus.FAILED, NarrativeAnalysisWindowStatus.SPLIT}
+    )
     result = analysis_repository.get_result(run.analysis_run_id)
 
     if expected_category == "PROVIDER_TIMEOUT":
         assert completed.status == NarrativeAnalysisRunStatus.RUNNING
-        assert failed_window.next_eligible_retry_at is not None
+        deferred_children = [
+            window
+            for window in windows
+            if window.parent_window_id == failed_window.analysis_window_id
+        ]
+        assert deferred_children
+        assert all(window.next_eligible_retry_at is not None for window in deferred_children)
         assert result is None
     else:
         assert completed.status == NarrativeAnalysisRunStatus.PARTIAL_FAILED
@@ -1900,6 +2016,24 @@ def test_worker_preserves_successful_windows_and_resume_skips_them(tmp_path: Pat
         for window in analysis_repository.list_windows(run.analysis_run_id)
         if window.status == NarrativeAnalysisWindowStatus.SUCCEEDED
     }
+    successful_scopes_before_resume = {
+        (window.mode, tuple(window.chunk_ids))
+        for window in analysis_repository.list_windows(run.analysis_run_id)
+        if window.status == NarrativeAnalysisWindowStatus.SUCCEEDED
+    }
+    invocation_count_before_resume = len(provider.invocations)
+    for deferred in analysis_repository.list_windows(run.analysis_run_id):
+        if (
+            deferred.parent_window_id is not None
+            and deferred.next_eligible_retry_at is not None
+        ):
+            analysis_repository.save_window(
+                deferred.model_copy(
+                    update={
+                        "next_eligible_retry_at": datetime.now(UTC) - timedelta(seconds=1)
+                    }
+                )
+            )
     second = worker.run_pending(run.analysis_run_id, real_llm_requested=True)
     successful_after_resume = {
         window.analysis_window_id: window.agent_run_id
@@ -1907,12 +2041,12 @@ def test_worker_preserves_successful_windows_and_resume_skips_them(tmp_path: Pat
         if window.status == NarrativeAnalysisWindowStatus.SUCCEEDED
     }
 
-    assert first.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert first.status == NarrativeAnalysisRunStatus.RUNNING
     assert second.status == NarrativeAnalysisRunStatus.SUCCEEDED
     assert provider.calls.count("event_extraction") == calls_before_resume.count("event_extraction")
-    assert (
-        provider.calls.count("entity_extraction")
-        == calls_before_resume.count("entity_extraction")
+    assert all(
+        (mode, tuple(chunk_ids)) not in successful_scopes_before_resume
+        for mode, chunk_ids in provider.invocations[invocation_count_before_resume:]
     )
     assert successful_before_resume.items() <= successful_after_resume.items()
     assert all(agent_run_id is not None for agent_run_id in successful_before_resume.values())

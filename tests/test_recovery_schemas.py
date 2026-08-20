@@ -12,6 +12,8 @@ from comic_agent.schemas.recovery import (
     RecoveryDirectiveV1,
     RecoveryOutcomeStatus,
     RecoveryPolicyV1,
+    RecoveryStrategy,
+    RecoveryTargetKind,
 )
 from comic_agent.schemas.review import ReviewIssueCode
 from comic_agent.schemas.workflow import NarrativeAnalysisRunV1
@@ -68,6 +70,8 @@ def test_recovery_directive_locks_ordered_original_scope_and_policy_snapshot() -
 
     assert directive.ordered_source_chunk_ids == ["chunk-1", "chunk-2"]
     assert directive.policy.policy_id == "recovery-policy-v1"
+    assert directive.target_kind == RecoveryTargetKind.NARRATIVE_PROPOSAL
+    assert directive.recovery_strategy == RecoveryStrategy.RETRY_SAME_SCOPE
     with pytest.raises(ValidationError, match="approved_source_chunk_ids"):
         directive.model_copy(
             update={"approved_source_chunk_ids": ["chunk-2", "chunk-1"]}
@@ -75,6 +79,41 @@ def test_recovery_directive_locks_ordered_original_scope_and_policy_snapshot() -
             directive.model_copy(
                 update={"approved_source_chunk_ids": ["chunk-2", "chunk-1"]}
             ).model_dump(mode="json")
+        )
+
+
+def test_recovery_directive_has_typed_future_target_and_split_boundaries() -> None:
+    """The shared contract reserves future module targets without free-form commands."""
+
+    directive = RecoveryDirectiveV1(
+        directive_id="directive-timeline",
+        idempotency_key="recovery-key-timeline",
+        target_kind=RecoveryTargetKind.TIMELINE_RUN,
+        target_id="timeline-run-1",
+        recovery_strategy=RecoveryStrategy.DEFER_UNTIL_RETRY,
+        split_depth=0,
+        max_split_depth=0,
+        root_analysis_run_id="analysis-1",
+        project_id="project-1",
+        document_id="document-1",
+        proposal_id="proposal-1",
+        proposal_schema="EventProposalV1",
+        mode="event_extraction",
+        original_window_id="window-1",
+        original_agent_run_id="agent-run-1",
+        ordered_source_chunk_ids=["chunk-1"],
+        approved_source_chunk_ids=["chunk-1"],
+        issue_ids=["issue-1"],
+        issue_codes=[ReviewIssueCode.EVIDENCE_QUOTE_NOT_FOUND],
+        policy=_policy(),
+        budget_usage=RecoveryBudgetUsageV1(),
+    )
+
+    assert directive.target_kind == RecoveryTargetKind.TIMELINE_RUN
+    assert directive.target_id == "timeline-run-1"
+    with pytest.raises(ValidationError, match="split_depth"):
+        RecoveryDirectiveV1.model_validate(
+            directive.model_copy(update={"split_depth": 1}).model_dump(mode="json")
         )
 
 

@@ -88,12 +88,12 @@ class WorkflowRunV1(StrictBaseModel):
 class NarrativeAnalysisWindowPlanV1(StrictBaseModel):
     """Deterministic source chunk window planned before execution."""
 
-    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6"] = Field(
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7"] = Field(
         default="1.4",
         description=(
             "Schema version. Historical 1.0 through 1.3 records remain readable; "
             "1.4 adds deterministic output ownership; 1.5 adds execution checkpoints; "
-            "1.6 adds batch budgets."
+            "1.6 adds batch budgets; 1.7 adds bounded split-recovery accounting."
         ),
     )
     window_index: int = Field(ge=0, description="Zero-based window sequence.")
@@ -107,12 +107,13 @@ class NarrativeAnalysisWindowPlanV1(StrictBaseModel):
 class NarrativeAnalysisWindowV1(NarrativeAnalysisWindowPlanV1):
     """Auditable state for one mode over one planned source window."""
 
-    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6"] = Field(
-        default="1.6",
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7"] = Field(
+        default="1.7",
         description=(
             "Schema version. Historical 1.0 through 1.3 window records remain readable; "
             "1.5 adds source-free retry scheduling and Provider checkpoints; 1.6 adds "
-            "planned batch and execution-budget audit fields."
+            "planned batch and execution-budget audit fields; 1.7 adds bounded "
+            "split-recovery accounting."
         ),
     )
 
@@ -191,6 +192,33 @@ class NarrativeAnalysisWindowV1(NarrativeAnalysisWindowPlanV1):
         ge=1,
         description="Configured maximum Provider calls for this exact window.",
     )
+    max_split_depth: int = Field(
+        default=1,
+        ge=0,
+        le=8,
+        description="Maximum deterministic source-boundary split depth for this window tree.",
+    )
+    split_depth: int = Field(
+        default=0,
+        ge=0,
+        le=8,
+        description="Current deterministic split depth; zero denotes an original planned window.",
+    )
+    provider_request_count: int = Field(
+        default=0,
+        ge=0,
+        description="Persisted Provider invocations consumed by this exact window.",
+    )
+    elapsed_seconds_used: int = Field(
+        default=0,
+        ge=0,
+        description="Ceiling-rounded Provider elapsed time consumed by this exact window.",
+    )
+    output_tokens_used: int = Field(
+        default=0,
+        ge=0,
+        description="Provider-reported output tokens when available; zero means unavailable.",
+    )
     next_eligible_retry_at: datetime | None = Field(
         default=None,
         description="Source-free earliest time for a bounded retry.",
@@ -206,6 +234,8 @@ class NarrativeAnalysisWindowV1(NarrativeAnalysisWindowPlanV1):
             raise ValueError("owned_chunk_ids must be unique")
         if not set(self.owned_chunk_ids).issubset(self.chunk_ids):
             raise ValueError("owned_chunk_ids must be a subset of chunk_ids")
+        if self.split_depth > self.max_split_depth:
+            raise ValueError("split_depth must not exceed max_split_depth")
         return self
 
 
@@ -229,11 +259,12 @@ class NarrativeAnalysisBatchV1(StrictBaseModel):
 class NarrativeAnalysisRunV1(StrictBaseModel):
     """Persistent, resumable whole-document NarrativeAnalyst task."""
 
-    schema_version: Literal["1.0", "1.1", "1.2", "1.3"] = Field(
-        default="1.3",
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4"] = Field(
+        default="1.4",
         description=(
             "Schema version; v1.0/v1.1 records remain readable and v1.2 adds "
-            "source-free recovery outcomes; v1.3 adds deterministic batch manifests."
+            "source-free recovery outcomes; v1.3 adds deterministic batch manifests; "
+            "v1.4 adds root execution-budget reservations."
         ),
     )
     analysis_run_id: str = Field(description="Persistent analysis task id.")
@@ -251,6 +282,21 @@ class NarrativeAnalysisRunV1(StrictBaseModel):
     batches: list[NarrativeAnalysisBatchV1] = Field(
         default_factory=list,
         description="Stable long-document batch manifests without source text.",
+    )
+    max_provider_requests: int = Field(
+        default=0,
+        ge=0,
+        description="Root Provider-call cap; zero preserves historical records without a cap.",
+    )
+    provider_requests_used: int = Field(
+        default=0,
+        ge=0,
+        description="Atomically reserved root Provider calls, persisted before invocation.",
+    )
+    execution_budget_version: int = Field(
+        default=0,
+        ge=0,
+        description="Optimistic version for atomic root execution-budget reservation.",
     )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC), description="Creation timestamp in UTC."
