@@ -56,10 +56,24 @@ class StructuredOutputPolicy(StrEnum):
     JSON_OBJECT_ONLY = "JSON_OBJECT_ONLY"
 
 
+class ProviderSchemaCapabilityV1(StrictBaseModel):
+    """Source-free structured-output capability for one concrete output Schema."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    output_schema_name: str = Field(min_length=1)
+    state: ProviderCapabilityState
+    supports_json_object: bool
+    supports_strict_json_schema: bool
+    selected_output_mode: StructuredOutputMode
+    checked_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    expires_at: datetime | None = None
+    safe_issue_codes: list[str] = Field(default_factory=list)
+
+
 class ProviderCapabilityProfileV1(StrictBaseModel):
     """Persisted, source-free structured-output capability result."""
 
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["1.0", "1.1"] = "1.1"
     provider_name: str = Field(min_length=1)
     model_name: str = Field(min_length=1)
     state: ProviderCapabilityState
@@ -73,6 +87,7 @@ class ProviderCapabilityProfileV1(StrictBaseModel):
     error_category: ProviderFailureCategory | None = None
     http_status_code: int | None = Field(default=None, ge=100, le=599)
     safe_issue_codes: list[str] = Field(default_factory=list)
+    schema_capabilities: list[ProviderSchemaCapabilityV1] = Field(default_factory=list)
 
 
 class ProviderExecutionMetadataV1(StrictBaseModel):

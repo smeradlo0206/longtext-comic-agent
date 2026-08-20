@@ -104,6 +104,7 @@ from comic_agent.schemas.reliability import (
     ProviderHealthResultV1,
     ProviderHealthStatus,
     ProviderPreflightResponseV1,
+    ProviderSchemaCapabilityV1,
     StructuredOutputMode,
     StructuredOutputPolicy,
 )
@@ -320,6 +321,7 @@ __all__ = [
     "ProviderCircuitStateV1",
     "ProviderCapabilityProfileV1",
     "ProviderCapabilityState",
+    "ProviderSchemaCapabilityV1",
     "ProviderExecutionMetadataV1",
     "ProviderFailureCategory",
     "ProviderHealthResultV1",
