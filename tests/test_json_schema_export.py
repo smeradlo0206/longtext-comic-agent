@@ -235,9 +235,10 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
         "1.2",
         "1.3",
         "1.4",
-        "1.5",
-        "1.6",
-    ]
+            "1.5",
+            "1.6",
+            "1.7",
+        ]
     assert "owned_chunk_ids" in window_schema["properties"]
     assert "parent_window_id" in window_schema["properties"]
     assert relationship_schema["properties"]["schema_version"]["const"] == "1.0"

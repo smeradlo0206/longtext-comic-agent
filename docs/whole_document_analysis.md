@@ -71,6 +71,19 @@ left/right controls. Use the scrollbar, a horizontal swipe, or the controls to
 inspect every audit column without compressing or hiding a failure field.
 
 The worker makes at most one automatic retry for a recoverable failed attempt.
+Every new run also reserves a finite root Provider-call budget before invoking a
+Provider. A deterministic split can create only one owned child scope per
+approved SourceChunk, has a persisted maximum depth, and cannot extend that
+root budget. Each window records its call count and elapsed seconds before a
+retry or split. When either the window or root budget is exhausted, the window
+becomes `EXHAUSTED`; the whole Narrative run cannot reach Gate 2 or Timeline.
+
+For `PROVIDER_TIMEOUT` on a multi-SourceChunk window, the failed parent is
+persisted as `SPLIT` and its children inherit the persisted retry deadline.
+Resume does not call the Provider before that deadline, never replays a
+successful sibling, and resumes only the narrower approved child scopes. The
+new child Proposal provenance remains subject to the existing fresh Gate 2
+boundary.
 For `PROVIDER_LENGTH_BEFORE_FINAL_CONTENT` on a multi-SourceChunk window, it
 first records the failed parent and deterministically splits it into one child
 window per parent-owned SourceChunk. Each child may read the parent context but

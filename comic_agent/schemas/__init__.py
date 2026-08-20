@@ -92,6 +92,8 @@ from comic_agent.schemas.recovery import (
     RecoveryOutcomeStatus,
     RecoveryOutcomeV1,
     RecoveryPolicyV1,
+    RecoveryStrategy,
+    RecoveryTargetKind,
 )
 from comic_agent.schemas.reliability import (
     ProviderCircuitStateV1,
@@ -319,6 +321,8 @@ __all__ = [
     "RecoveryOutcomeStatus",
     "RecoveryOutcomeV1",
     "RecoveryPolicyV1",
+    "RecoveryStrategy",
+    "RecoveryTargetKind",
     "ApprovedProposalBundleV1",
     "ApprovedProposalItemV1",
     "ApprovedSourceChunkBundleV1",
