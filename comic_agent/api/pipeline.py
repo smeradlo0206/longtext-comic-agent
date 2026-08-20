@@ -34,6 +34,7 @@ from comic_agent.repositories.source_repository import SourceRepository
 from comic_agent.repositories.timeline_gate3_repository import TimelineGate3Repository
 from comic_agent.schemas.reliability import ProviderHealthResultV1, ProviderHealthStatus
 from comic_agent.schemas.source import FidelityMode, ProjectSpecV1, ProjectType
+from comic_agent.schemas.workflow import NarrativeAnalysisRunStatus, NarrativeGate2HandoffStatus
 from comic_agent.services.narrative_analysis_coordinator import NarrativeAnalysisCoordinator
 from comic_agent.services.provider_health_service import ProviderHealthService
 
@@ -156,6 +157,7 @@ def get_pipeline_status(
     provider_health = get_provider_health(circuit_repository)
     gate1 = repository.get_review_gate1(run.document_id)
     route = run.review_gate2_route
+    aggregate = analysis_repository.get_result(analysis_run_id)
     attempts = recovery_repository.list_attempts(analysis_run_id)
     fresh_routes = [attempt.fresh_route for attempt in attempts if attempt.fresh_route is not None]
     latest_gate2_route = fresh_routes[-1] if fresh_routes else route
@@ -175,6 +177,7 @@ def get_pipeline_status(
             for code in attempt.original_gate2_issue_codes
         }
         | set(str(code) for code in (gate3_route.safe_issue_codes if gate3_route else []))
+        | set(run.gate2_handoff.safe_issue_codes if run.gate2_handoff is not None else [])
     )
     return {
         "analysis_run_id": run.analysis_run_id,
@@ -186,10 +189,9 @@ def get_pipeline_status(
         "batch_summary": _batch_summary(run, windows),
         "window_summary": _window_summary(windows),
         "provider_health": provider_health.model_dump(mode="json"),
-        "gate2": (
-            str(latest_gate2_route.decision)
-            if latest_gate2_route is not None
-            else "NOT_READY"
+        "gate2": _gate2_status(run, aggregate, latest_gate2_route),
+        "gate2_handoff": (
+            run.gate2_handoff.model_dump(mode="json") if run.gate2_handoff is not None else None
         ),
         "narrative_recovery": _recovery_status(attempts),
         "timeline": str(timeline.status) if timeline is not None else "NOT_READY",
@@ -270,6 +272,23 @@ def _require_real_pipeline_opt_in(
     )
     if str(result.status) != "AVAILABLE":
         raise HTTPException(status_code=409, detail=result.model_dump(mode="json"))
+
+
+def _gate2_status(run: Any, aggregate: Any, route: Any) -> str:
+    """Separate deterministic Gate 2 handoff progress from its eventual route."""
+
+    if route is not None:
+        return str(route.decision)
+    if run.status != NarrativeAnalysisRunStatus.SUCCEEDED or aggregate is None:
+        return "NOT_READY"
+    handoff = run.gate2_handoff
+    if handoff is None or handoff.status == NarrativeGate2HandoffStatus.PENDING:
+        return "GATE2_PENDING"
+    if handoff.status == NarrativeGate2HandoffStatus.RUNNING:
+        return "GATE2_RECOVERING"
+    if handoff.status == NarrativeGate2HandoffStatus.FAILED:
+        return "GATE2_FAILED"
+    return "GATE2_PENDING"
 
 
 def _recovery_status(attempts: list[Any]) -> str:

@@ -10,6 +10,7 @@ from comic_agent.agents.timeline_agent import TimelineAgent
 from comic_agent.config import Settings, get_settings
 from comic_agent.main import create_app
 from comic_agent.providers.mocks import LocalSafeDemoProvider, MockLLMProvider
+from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
 
 _OFFICIAL_TEXT = """下午四点，小林先到学校礼堂，在公告栏张贴志愿者招募海报。
 十分钟后，天下起雨；小周撑着一把蓝色雨伞赶到礼堂。
@@ -252,3 +253,38 @@ def test_double_click_reuses_the_durable_pipeline_run_without_a_second_provider_
     assert second.status_code == 200
     assert first.json()["analysis_run_id"] == second.json()["analysis_run_id"]
     assert provider.calls == 1
+
+
+def test_pipeline_status_reports_gate2_pending_for_saved_aggregate_without_route(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    client = _client(tmp_path, monkeypatch)
+    started = client.post(
+        "/projects/gate2-pending/pipeline-runs/import-and-analyze",
+        files={"file": ("official.txt", _OFFICIAL_TEXT.encode("utf-8"), "text/plain")},
+    )
+    run_id = started.json()["analysis_run_id"]
+    session = client.app.state.session_factory()
+    try:
+        repository = NarrativeAnalysisRepository(session)
+        run = repository.get_run(run_id)
+        assert run is not None
+        repository.save_run(
+            run.model_copy(
+                update={
+                    "schema_version": "1.5",
+                    "review_gate2_result": None,
+                    "review_gate2_route": None,
+                    "gate2_handoff": None,
+                }
+            )
+        )
+    finally:
+        session.close()
+
+    response = client.get(f"/pipeline-runs/{run_id}")
+
+    assert response.status_code == 200
+    assert response.json()["gate2"] == "GATE2_PENDING"
+    assert "quote_text" not in response.text
+    assert _OFFICIAL_TEXT not in response.text
