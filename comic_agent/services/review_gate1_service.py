@@ -40,6 +40,13 @@ _SEVERITY_ORDER = {
     ReviewIssueSeverity.INFO: 3,
 }
 
+# Temporary permissive boundary requested by the interactive workflow: only an
+# empty document blocks import.  Every other content-quality finding remains
+# auditable in the Gate 1 result but is downgraded to a warning so downstream
+# analysis can proceed.  UTF-8 decoding itself is enforced at the upload API
+# before this service is called.
+_HARD_INPUT_BOUNDARY_CODES = {ReviewGate1IssueCode.DOCUMENT_EMPTY}
+
 
 def _enum_value(value: object) -> str:
     return str(getattr(value, "value", value))
@@ -92,6 +99,7 @@ class ReviewGate1Service:
         drafts.extend(self._document_issues(value, normalized))
         drafts.extend(self._chapter_issues(value))
         drafts.extend(self._chunk_issues(value, normalized))
+        drafts = [self._apply_permissive_boundary(draft) for draft in drafts]
         drafts = sorted(drafts, key=self._draft_sort_key)
         issues = self._materialize_issues(value, drafts)
         issue_by_id = {issue.issue_id: issue for issue in issues}
@@ -123,6 +131,24 @@ class ReviewGate1Service:
             metrics=metrics,
             routing_advice=routing,
         )
+
+    def _apply_permissive_boundary(self, draft: _IssueDraft) -> _IssueDraft:
+        """Keep only the explicitly requested input failures as hard blocks."""
+
+        if draft.code in _HARD_INPUT_BOUNDARY_CODES:
+            return draft
+        if draft.severity in {
+            ReviewIssueSeverity.BLOCKING,
+            ReviewIssueSeverity.REVIEW_REQUIRED,
+        }:
+            return _IssueDraft(
+                code=draft.code,
+                severity=ReviewIssueSeverity.WARNING,
+                chapter_indexes=draft.chapter_indexes,
+                chunk_indexes=draft.chunk_indexes,
+                field_path=draft.field_path,
+            )
+        return draft
 
     def _document_issues(self, value: ReviewGate1InputV1, normalized: str) -> list[_IssueDraft]:
         result: list[_IssueDraft] = []

@@ -304,7 +304,7 @@ def test_one_click_pipeline_exposes_sanitized_narrative_failure_summary(
     assert "raw_output" not in status.text
 
 
-def test_gate1_rejection_stops_one_click_pipeline_before_narrative(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_gate1_quality_warning_allows_one_click_pipeline_to_continue(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     client = _client(tmp_path, monkeypatch)
     provider = client.app.state.narrative_analyst_provider
     unsafe_text = "第一章\n\n正常段落。\ufffd\n"
@@ -314,10 +314,12 @@ def test_gate1_rejection_stops_one_click_pipeline_before_narrative(tmp_path, mon
         files={"file": ("unsafe.txt", unsafe_text.encode("utf-8"), "text/plain")},
     )
 
-    assert response.status_code == 422
-    assert response.json()["gate1"]["decision"] == "NEEDS_HUMAN_REVIEW"
-    assert unsafe_text not in response.text
-    assert provider.calls == 0
+    assert response.status_code == 200
+    payload = response.json()
+    status = client.get(f"/pipeline-runs/{payload['analysis_run_id']}")
+    status_payload = status.json()
+    assert status_payload["gate1"] == "APPROVED"
+    assert provider.calls == 6
 
 
 def test_fake_pipeline_configuration_rejects_production_and_real_llm() -> None:

@@ -58,7 +58,7 @@ def test_import_runs_gate1_before_persisting_and_returns_selection_data(tmp_path
     )
 
 
-def test_gate1_rejection_does_not_persist_document_or_expose_source_text(tmp_path: Path) -> None:
+def test_utf8_quality_anomalies_are_warnings_and_do_not_block_import(tmp_path: Path) -> None:
     bad_text = "第一章\n\n正常段落。\ufffd\n"
     with _client(tmp_path) as client:
         assert client.post("/projects", json=PROJECT_PAYLOAD).status_code == 201
@@ -68,12 +68,16 @@ def test_gate1_rejection_does_not_persist_document_or_expose_source_text(tmp_pat
         )
         documents = client.get("/projects/gate-project/documents")
 
-    assert response.status_code == 422
+    assert response.status_code == 201
     payload = response.json()
-    assert payload["gate1"]["decision"] == "NEEDS_HUMAN_REVIEW"
-    assert payload["gate1"]["routing_advice"]["action"] == "HOLD_FOR_HUMAN_REVIEW"
-    assert bad_text not in response.text
-    assert documents.json() == []
+    assert payload["gate1"]["decision"] == "APPROVED"
+    assert payload["gate1"]["routing_advice"]["action"] == "CONTINUE_TO_CONTEXT_BUILDER"
+    assert any(
+        issue["code"] == "DOCUMENT_TEXT_REPLACEMENT_CHARACTER"
+        and issue["severity"] == "WARNING"
+        for issue in payload["gate1"]["issues"]
+    )
+    assert len(documents.json()) == 1
 
 
 def test_same_approved_revision_import_is_idempotent(tmp_path: Path) -> None:
@@ -92,7 +96,7 @@ def test_same_approved_revision_import_is_idempotent(tmp_path: Path) -> None:
     assert second.json()["gate1"]["review_run_id"] == first.json()["gate1"]["review_run_id"]
 
 
-def test_excessive_whitespace_import_is_review_blocked(tmp_path: Path) -> None:
+def test_excessive_whitespace_import_is_warning_and_continues(tmp_path: Path) -> None:
     abnormal = "第一章 开始" + ("\n" * 5) + "正文。\n"
     with _client(tmp_path) as client:
         assert client.post("/projects", json=PROJECT_PAYLOAD).status_code == 201
@@ -102,13 +106,13 @@ def test_excessive_whitespace_import_is_review_blocked(tmp_path: Path) -> None:
         )
         documents = client.get("/projects/gate-project/documents")
 
-    assert response.status_code == 422
+    assert response.status_code == 201
     payload = response.json()
-    assert payload["gate1"]["decision"] == "NEEDS_HUMAN_REVIEW"
-    assert payload["gate1"]["routing_advice"]["action"] == "HOLD_FOR_HUMAN_REVIEW"
+    assert payload["gate1"]["decision"] == "APPROVED"
+    assert payload["gate1"]["routing_advice"]["action"] == "CONTINUE_TO_CONTEXT_BUILDER"
     assert any(
         issue["code"] == "DOCUMENT_EXCESSIVE_WHITESPACE"
-        and issue["severity"] == "REVIEW_REQUIRED"
+        and issue["severity"] == "WARNING"
         for issue in payload["gate1"]["issues"]
     )
-    assert documents.json() == []
+    assert len(documents.json()) == 1

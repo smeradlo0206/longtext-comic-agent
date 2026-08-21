@@ -422,13 +422,18 @@ duplicate ids/orders, scope mismatches, checksum/range errors, whitespace-only c
 gaps, and overlaps without losing the audit record. It must not include Provider output or expose
 the normalized text in a Result/Bundle/log.
 
-Gate 1 counts newline runs only after CRLF/CR to LF normalization. Under policy v1.1,
-four newline characters are warning-only layout whitespace while five or more require
-human review; these are fixed policy literals. Explicit v1.0 policies retain the
-historical four-newline review boundary.
+Gate 1 counts newline runs only after CRLF/CR to LF normalization. The current interactive
+workflow uses a permissive boundary: an empty document is the only content-quality issue
+that blocks import. Checksum, scope, range, duplicate, control-character, replacement
+character, chunk-length, and whitespace findings remain in the audit result but are
+downgraded to warnings so a non-empty UTF-8 document can continue. Strict review behavior
+can be restored later by reintroducing those codes as hard-boundary rules. UTF-8 decoding
+itself is still enforced by the upload API before Gate 1 runs.
 
 Only an APPROVED `ApprovedSourceChunkBundleV1` may be handed to Orchestrator/ContextBuilder;
-REJECTED, pending, or failed Gate 1 results halt whole-document analysis. Gate 1 does not perform
+the current permissive Gate 1 produces that bundle for non-empty UTF-8 inputs while retaining
+all detected warnings. Empty inputs, invalid UTF-8 uploads, and failed review execution halt
+whole-document analysis. Gate 1 does not perform
 semantic review, fuzzy text deduplication, automatic repair, LLM calls, canonical writes, or
 database persistence. The synchronous `ReviewGate1Service.review()` now executes this
 deterministic review and returns source-free metrics plus bounded routing advice. TXT import now
