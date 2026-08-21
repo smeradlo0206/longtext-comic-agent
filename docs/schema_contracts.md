@@ -121,7 +121,10 @@ back to their existing provider/model-wide selected mode.
 typed `ApprovedProposalBundleV1`; REJECTED carries only sanitized issue summaries;
 NEEDS_HUMAN_REVIEW carries held Proposal ids; FAILED carries sanitized execution diagnostics;
 NOT_READY carries no review artifact. Historical run and Proposal payload versions remain
-readable.
+readable. `NarrativeAnalysisRunV1` v1.7 adds source-free `pipeline_phase` and
+`pipeline_safe_issue_codes` fields for asynchronous Console polling. Existing v1.0-v1.6
+run payloads remain readable with `QUEUED` and an empty issue-code list. No database
+migration is required because these fields remain in the existing JSON payload container.
 Stage B `RecoveryAttemptV1` is an append-only, non-canonical audit contract. Its directive
 locks the original mode, leaf window, approved source scope, and AgentRun provenance; its
 budget records root/proposal/window counts, tokens, and time. A persistent idempotency key

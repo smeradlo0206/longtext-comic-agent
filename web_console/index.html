@@ -1105,6 +1105,8 @@
       renderSafePipelineRunState(data);
       $("safePipelineStatus").textContent = pretty({
         import_and_gate1: data.gate1 ?? data.pipeline_status ?? "PENDING",
+        pipeline_phase: data.pipeline_phase ?? "QUEUED",
+        pipeline_safe_issue_codes: data.pipeline_safe_issue_codes ?? [],
         provider_health: data.provider_health?.status ?? "NOT_CHECKED",
         narrative: data.narrative ?? "PENDING",
         batches: data.batch_summary ?? null,
@@ -1133,7 +1135,19 @@
     }
 
     function renderSafePipelineRunState(data) {
-      if (data.gate3 === "APPROVED") {
+      if (data.pipeline_phase === "PROVIDER_CHECKING") {
+        setSafePipelineRunState("Provider 检查中", "任务已排队，正在后台检查真实 Provider；页面不会等待请求返回。", "warn");
+      } else if (data.pipeline_phase === "NARRATIVE_RUNNING") {
+        setSafePipelineRunState("Narrative 运行中", "后台正在执行六类叙事提取；可通过窗口计数查看具体进度。", "warn");
+      } else if (data.pipeline_phase === "GATE2_REVIEWING") {
+        setSafePipelineRunState("Gate 2 审核中", "叙事结果已生成，后台正在执行 Gate 2。", "warn");
+      } else if (data.pipeline_phase === "TIMELINE_RUNNING") {
+        setSafePipelineRunState("Timeline 运行中", "Gate 2 已通过，后台正在生成时间线。", "warn");
+      } else if (data.pipeline_phase === "GATE3_REVIEWING") {
+        setSafePipelineRunState("Gate 3 审核中", "时间线已生成，后台正在执行 Gate 3。", "warn");
+      } else if (data.pipeline_phase === "FAILED" && Array.isArray(data.pipeline_safe_issue_codes) && data.pipeline_safe_issue_codes.length) {
+        setSafePipelineRunState("后台启动失败", `后台任务已停止；安全错误码：${data.pipeline_safe_issue_codes.join(", ")}`, "bad");
+      } else if (data.pipeline_phase === "COMPLETED" && data.gate3 === "APPROVED") {
         setSafePipelineRunState("已成功", "Gate 3 已批准；已生成可供下游使用的时间线包。", "ok");
       } else if (["REJECTED", "NEEDS_HUMAN_REVIEW", "FAILED"].includes(data.gate2)) {
         setSafePipelineRunState("已停止", `Gate 2 为 ${data.gate2}；Timeline 没有运行。`, data.gate2 === "NEEDS_HUMAN_REVIEW" ? "warn" : "bad");
@@ -1202,7 +1216,8 @@
         renderSafePipelineStatus(data);
         const terminal = ["APPROVED", "REJECTED", "NEEDS_HUMAN_REVIEW", "FAILED"];
         const stoppedAtGate2 = ["REJECTED", "NEEDS_HUMAN_REVIEW", "FAILED"].includes(data.gate2);
-        if (terminal.includes(data.gate3) || stoppedAtGate2) {
+        const pipelineTerminal = ["COMPLETED", "FAILED", "NEEDS_HUMAN_ACTION"].includes(data.pipeline_phase);
+        if (terminal.includes(data.gate3) || stoppedAtGate2 || pipelineTerminal) {
           clearInterval(state.safePipelinePoll);
           state.safePipelinePoll = null;
         }
@@ -1219,7 +1234,7 @@
       const realLlmRequested = $("safePipelineRealLlmRequested").checked;
       state.safePipelineSubmitting = true;
       $("startSafePipeline").disabled = true;
-      setSafePipelineRunState("正在提交", realLlmRequested ? "正在验证真实 LLM 配置并提交六类叙事提取。" : "正在提交六类叙事提取。", "warn");
+      setSafePipelineRunState("正在排队", realLlmRequested ? "请求已提交；真实 LLM 检查将在后台执行。" : "请求已提交；六类叙事提取将在后台执行。", "warn");
       try {
         if (realLlmRequested) await ensureSafePipelineRealLlmEnabled();
         const body = new FormData();

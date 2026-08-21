@@ -14,6 +14,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import JSONResponse
+from starlette.datastructures import State
 
 from comic_agent.api.agent_runs import _require_real_llm_enabled, _run_whole_document_analysis
 from comic_agent.api.dependencies import (
@@ -39,7 +40,11 @@ from comic_agent.schemas.reliability import (
     StructuredOutputMode,
 )
 from comic_agent.schemas.source import FidelityMode, ProjectSpecV1, ProjectType
-from comic_agent.schemas.workflow import NarrativeAnalysisRunStatus, NarrativeGate2HandoffStatus
+from comic_agent.schemas.workflow import (
+    NarrativeAnalysisRunStatus,
+    NarrativeGate2HandoffStatus,
+    NarrativePipelinePhase,
+)
 from comic_agent.services.narrative_analysis_coordinator import (
     DEFAULT_NARRATIVE_ANALYST_MODES,
     NarrativeAnalysisCoordinator,
@@ -98,18 +103,12 @@ async def import_and_analyze(
     file: UploadFileDep,
     repository: RepositoryDep,
     analysis_repository: AnalysisRepositoryDep,
-    circuit_repository: CircuitRepositoryDep,
     project_name: Annotated[str | None, Form()] = None,
     real_llm_requested: Annotated[bool, Form()] = False,
     narrative_modes: Annotated[str | None, Form()] = None,
 ) -> dict[str, object] | JSONResponse:
     """Import once, then schedule the established Gate 1 -> Narrative worker path."""
 
-    _require_real_pipeline_opt_in(
-        real_llm_requested,
-        request=request,
-        circuit_repository=circuit_repository,
-    )
     try:
         selected_modes = _parse_narrative_modes(narrative_modes)
     except ValueError as exc:
@@ -136,7 +135,7 @@ async def import_and_analyze(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     background_tasks.add_task(
-        _run_whole_document_analysis,
+        _run_pipeline_background,
         request.app.state.session_factory,
         request.app.state,
         run.analysis_run_id,
@@ -146,7 +145,8 @@ async def import_and_analyze(
         "project_id": project_id,
         "document_id": document["document_id"],
         "analysis_run_id": run.analysis_run_id,
-        "pipeline_status": "NARRATIVE_QUEUED",
+        "pipeline_status": "QUEUED",
+        "pipeline_phase": str(run.pipeline_phase),
         "status_url": f"/pipeline-runs/{run.analysis_run_id}",
         "real_llm_requested": real_llm_requested,
     }
@@ -208,7 +208,8 @@ def get_pipeline_status(
     gate3_route = timeline.gate3_route if timeline is not None else None
     gate3_result = timeline.gate3_result if timeline is not None else None
     safe_codes = sorted(
-        {str(code) for attempt in attempts for code in attempt.original_gate2_issue_codes}
+        set(run.pipeline_safe_issue_codes)
+        | {str(code) for attempt in attempts for code in attempt.original_gate2_issue_codes}
         | set(str(code) for code in (gate3_route.safe_issue_codes if gate3_route else []))
         | set(run.gate2_handoff.safe_issue_codes if run.gate2_handoff is not None else [])
         | {
@@ -231,6 +232,8 @@ def get_pipeline_status(
         "analysis_run_id": run.analysis_run_id,
         "project_id": run.project_id,
         "document_id": run.document_id,
+        "pipeline_phase": str(run.pipeline_phase),
+        "pipeline_safe_issue_codes": list(run.pipeline_safe_issue_codes),
         "gate1": str(gate1.decision) if gate1 is not None else "PENDING",
         "narrative": str(run.status),
         "narrative_failure_summary": _narrative_failure_summary(windows),
@@ -290,10 +293,10 @@ def _ensure_project(repository: SourceRepository, project_id: str, name: str | N
 def _require_real_pipeline_opt_in(
     real_llm_requested: bool,
     *,
-    request: Request,
+    app_state: State,
     circuit_repository: ProviderCircuitRepository,
 ) -> None:
-    """Reject unsafe real-provider requests before importing or scheduling work."""
+    """Validate real-provider readiness inside the background execution boundary."""
 
     if not real_llm_requested:
         return
@@ -310,7 +313,7 @@ def _require_real_pipeline_opt_in(
             status_code=409,
             detail="Real LLM requires a configured local API key",
         )
-    provider = getattr(request.app.state, "narrative_analyst_provider", None)
+    provider = getattr(app_state, "narrative_analyst_provider", None)
     if provider is None:
         provider = build_openai_compatible_provider(settings)
     result = ProviderHealthService(settings=settings, repository=circuit_repository).preflight(
@@ -334,6 +337,139 @@ def _require_real_pipeline_opt_in(
                 "structured_output": "UNAVAILABLE",
             },
         )
+
+
+def _safe_preflight_issue_codes(exc: HTTPException) -> list[str]:
+    """Extract only allowlisted issue identifiers from a preflight failure."""
+
+    detail = exc.detail
+    if isinstance(detail, dict):
+        values = detail.get("safe_issue_codes", [])
+        if isinstance(values, list):
+            return sorted({str(value) for value in values if isinstance(value, str)})
+    if isinstance(detail, str):
+        if "API key" in detail:
+            return ["PROVIDER_API_KEY_MISSING"]
+        if "Fake" in detail or "ENABLE_REAL_LLM" in detail:
+            return ["REAL_LLM_NOT_ENABLED"]
+    return ["PROVIDER_PREFLIGHT_FAILED"]
+
+
+def _save_pipeline_failure(
+    session_factory: Any,
+    analysis_run_id: str,
+    issue_codes: list[str],
+) -> None:
+    """Persist a source-free terminal startup failure after the request returned."""
+
+    session = session_factory()
+    try:
+        repository = NarrativeAnalysisRepository(session)
+        run = repository.get_run(analysis_run_id)
+        if run is None:
+            return
+        repository.save_run(
+            run.model_copy(
+                update={
+                    "status": NarrativeAnalysisRunStatus.FAILED,
+                    "pipeline_phase": NarrativePipelinePhase.FAILED,
+                    "pipeline_safe_issue_codes": sorted(set(issue_codes)),
+                }
+            )
+        )
+    finally:
+        session.close()
+
+
+def _run_pipeline_background(
+    session_factory: Any,
+    app_state: State,
+    analysis_run_id: str,
+    real_llm_requested: bool,
+) -> None:
+    """Run preflight and the existing worker after the run id has been returned."""
+
+    session = session_factory()
+    try:
+        analysis_repository = NarrativeAnalysisRepository(session)
+        run = analysis_repository.get_run(analysis_run_id)
+        if run is None:
+            return
+        analysis_repository.save_run(
+            run.model_copy(
+                update={
+                    "pipeline_phase": (
+                        NarrativePipelinePhase.PROVIDER_CHECKING
+                        if real_llm_requested
+                        else NarrativePipelinePhase.NARRATIVE_RUNNING
+                    )
+                }
+            )
+        )
+        if real_llm_requested:
+            try:
+                _require_real_pipeline_opt_in(
+                    True,
+                    app_state=app_state,
+                    circuit_repository=ProviderCircuitRepository(session),
+                )
+            except HTTPException as exc:
+                issue_codes = _safe_preflight_issue_codes(exc)
+                run = analysis_repository.get_run(analysis_run_id)
+                if run is not None:
+                    analysis_repository.save_run(
+                        run.model_copy(
+                            update={
+                                "status": NarrativeAnalysisRunStatus.FAILED,
+                                "pipeline_phase": NarrativePipelinePhase.FAILED,
+                                "pipeline_safe_issue_codes": issue_codes,
+                            }
+                        )
+                    )
+                return
+            except Exception:
+                run = analysis_repository.get_run(analysis_run_id)
+                if run is not None:
+                    analysis_repository.save_run(
+                        run.model_copy(
+                            update={
+                                "status": NarrativeAnalysisRunStatus.FAILED,
+                                "pipeline_phase": NarrativePipelinePhase.FAILED,
+                                "pipeline_safe_issue_codes": ["PROVIDER_PREFLIGHT_FAILED"],
+                            }
+                        )
+                    )
+                return
+    finally:
+        session.close()
+
+    try:
+        _run_whole_document_analysis(
+            session_factory,
+            app_state,
+            analysis_run_id,
+            real_llm_requested,
+        )
+    except Exception:
+        _save_pipeline_failure(session_factory, analysis_run_id, ["PIPELINE_WORKER_FAILED"])
+        return
+
+    session = session_factory()
+    try:
+        repository = NarrativeAnalysisRepository(session)
+        run = repository.get_run(analysis_run_id)
+        if run is None:
+            return
+        phase = (
+            NarrativePipelinePhase.COMPLETED
+            if run.status == NarrativeAnalysisRunStatus.SUCCEEDED
+            else NarrativePipelinePhase.NEEDS_HUMAN_ACTION
+            if run.status == NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
+            else NarrativePipelinePhase.FAILED
+        )
+        repository.save_run(run.model_copy(update={"pipeline_phase": phase}))
+    finally:
+        session.close()
 
 
 def _gate2_status(run: Any, aggregate: Any, route: Any) -> str:

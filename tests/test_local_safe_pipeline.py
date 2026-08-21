@@ -160,7 +160,7 @@ def test_one_click_pipeline_only_uses_real_provider_after_explicit_opt_in(
     assert client.get(f"/pipeline-runs/{run_id}").json()["gate3"] == "APPROVED"
 
 
-def test_one_click_real_llm_opt_in_requires_a_local_key_before_import(
+def test_one_click_real_llm_opt_in_missing_key_is_reported_by_durable_run(
     tmp_path, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setenv("COMIC_AGENT_ENV", "development")
@@ -177,9 +177,15 @@ def test_one_click_real_llm_opt_in_requires_a_local_key_before_import(
         files={"file": ("official.txt", _OFFICIAL_TEXT.encode("utf-8"), "text/plain")},
     )
 
-    assert response.status_code == 409
-    assert response.json()["detail"] == "Real LLM requires a configured local API key"
-    assert client.get("/projects/no-key/documents").json() == []
+    assert response.status_code == 200
+    run_id = response.json()["analysis_run_id"]
+    status = client.get(f"/pipeline-runs/{run_id}")
+    assert status.status_code == 200
+    assert status.json()["narrative"] == "FAILED"
+    assert status.json()["pipeline_phase"] == "FAILED"
+    assert status.json()["pipeline_safe_issue_codes"] == ["PROVIDER_API_KEY_MISSING"]
+    assert "PROVIDER_API_KEY_MISSING" in status.json()["safe_issue_codes"]
+    assert client.get("/projects/no-key/documents").status_code == 200
 
 
 def test_one_click_pipeline_exposes_sanitized_narrative_failure_summary(

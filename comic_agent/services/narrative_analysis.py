@@ -216,7 +216,7 @@ def create_narrative_analysis_run(
     ]
     now = datetime.now(UTC)
     run = NarrativeAnalysisRunV1(
-        schema_version="1.3",
+        schema_version="1.7",
         analysis_run_id=analysis_run_id,
         project_id=project_id,
         document_id=document_id,

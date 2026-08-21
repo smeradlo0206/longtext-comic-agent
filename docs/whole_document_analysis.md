@@ -384,8 +384,10 @@ uv run uvicorn comic_agent.main:app --host 127.0.0.1 --port 8080
 
 Open `http://127.0.0.1:8080/console/`, select a short authorized TXT, check
 **使用真实 LLM**, then click **开始安全分析**. The browser never sends or displays
-the API key. The server rejects a real request before import if real LLM is
-disabled, Fake mode remains enabled, or no local key is configured. The same
+the API key. The server creates a persistent run id and queues real-provider
+preflight after import. If real LLM is disabled, Fake mode remains enabled, or no
+local key is configured, the background task records a sanitized terminal phase and
+issue code without calling a proposal Provider. The same
 Gate 1 → Narrative → Gate 2 → Timeline → Gate 3 and recovery boundaries apply;
 this entry never writes StoryBible or calls image providers. Start with a short
 text and inspect only the source-free status/result APIs.
