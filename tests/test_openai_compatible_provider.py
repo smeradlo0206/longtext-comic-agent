@@ -27,6 +27,7 @@ from comic_agent.schemas.narrative import (
     RelationshipSignalProposalBatchV1,
     StateChangeProposalBatchV1,
 )
+from comic_agent.schemas.reliability import StructuredOutputPolicy
 
 
 class OutputModel(BaseModel):
@@ -107,6 +108,45 @@ def test_settings_load_openai_compatible_provider_environment(
     assert settings.llm_api_key.get_secret_value() == "test-api-key"
     assert settings.storybible_model == "deepseek-v4-pro"
     assert settings.llm_timeout_seconds == 60.0
+
+
+def test_llm_output_token_budget_defaults_to_8000_and_honors_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("LLM_MAX_OUTPUT_TOKENS", raising=False)
+    assert Settings(_env_file=None).llm_max_output_tokens == 8000
+
+    monkeypatch.setenv("LLM_MAX_OUTPUT_TOKENS", "8000")
+    assert Settings(_env_file=None).llm_max_output_tokens == 8000
+
+
+def test_real_provider_sends_configured_8000_output_token_budget() -> None:
+    client = FakeHttpClient(
+        FakeResponse(200, {"choices": [{"message": {"content": '{"answer":"ok"}'}}]})
+    )
+    provider = OpenAICompatibleLLMProvider(
+        api_key="secret",
+        http_client=client,
+        max_output_tokens=8000,
+        structured_output_policy=StructuredOutputPolicy.JSON_OBJECT_ONLY,
+    )
+
+    assert provider.structured_generate({}, OutputModel) == OutputModel(answer="ok")
+    assert client.requests[0]["json"]["max_tokens"] == 8000
+
+
+def test_provider_without_cached_capability_profile_uses_json_object_not_prompt_only() -> None:
+    client = FakeHttpClient(
+        FakeResponse(200, {"choices": [{"message": {"content": '{"answer":"ok"}'}}]})
+    )
+    provider = OpenAICompatibleLLMProvider(
+        api_key="secret",
+        http_client=client,
+        structured_output_policy=StructuredOutputPolicy.JSON_OBJECT_ONLY,
+    )
+
+    assert provider.structured_generate({}, OutputModel) == OutputModel(answer="ok")
+    assert client.requests[0]["json"]["response_format"] == {"type": "json_object"}
 
 
 def test_settings_redacts_llm_api_key_from_repr_and_model_dump(
@@ -519,13 +559,13 @@ def test_openai_compatible_provider_parses_standard_string_json_content() -> Non
     assert proposal.proposal_id == "proposal-1"
 
 
-def test_openai_compatible_provider_omits_response_format_by_default() -> None:
+def test_openai_compatible_provider_uses_json_object_by_default() -> None:
     client = FakeHttpClient(response=_chat_response(json.dumps(_event_json(), ensure_ascii=False)))
     provider = OpenAICompatibleLLMProvider(api_key="secret-test-key", http_client=client)
 
     provider.structured_generate({}, EventProposalV1)
 
-    assert "response_format" not in client.requests[0]["json"]
+    assert client.requests[0]["json"]["response_format"] == {"type": "json_object"}
 
 
 def test_openai_compatible_provider_sends_json_object_response_format() -> None:

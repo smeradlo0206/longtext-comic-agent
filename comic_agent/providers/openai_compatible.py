@@ -141,7 +141,7 @@ class OpenAICompatibleLLMProvider:
         response_format: str | None = None,
         structured_output_policy: StructuredOutputPolicy = StructuredOutputPolicy.JSON_OBJECT_ONLY,
         timeout_seconds: int = 60,
-        max_output_tokens: int = 2000,
+        max_output_tokens: int = 8000,
         http_client: HttpClient | None = None,
     ) -> None:
         if api_key is None or api_key.strip() == "":
@@ -450,11 +450,19 @@ class OpenAICompatibleLLMProvider:
                     diagnostics={"safe_issue_code": "UNSUPPORTED_STRUCTURED_OUTPUT"},
                 )
             return schema_mode
-        # Preserve the historical explicit environment override. New source-bearing
-        # paths resolve a persisted profile before calling this provider.
+        # The source-bearing path normally applies a persisted profile during
+        # preflight.  If a caller reaches the provider without a profile, the
+        # safe JSON_OBJECT_ONLY/AUTO fallback must still send a structured
+        # request; silently falling back to PROMPT_ONLY is what caused long
+        # runs to drift into repeated schema failures.
         if self._response_format == "json_object":
             return StructuredOutputMode.JSON_OBJECT
-        return StructuredOutputMode.PROMPT_ONLY
+        if self._structured_output_policy == StructuredOutputPolicy.REQUIRE_STRICT:
+            raise ProviderResponseError(
+                "strict structured-output capability preflight is required",
+                diagnostics={"safe_issue_code": "CAPABILITY_PRECHECK_REQUIRED"},
+            )
+        return StructuredOutputMode.JSON_OBJECT
 
     @staticmethod
     def _response_format_for(

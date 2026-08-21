@@ -46,7 +46,6 @@ from comic_agent.services.narrative_timeline_coordinator import NarrativeTimelin
 from comic_agent.workflows.narrative_analyst_workflow import NarrativeAnalystWorkflow
 
 MAX_AUTOMATIC_WINDOW_ATTEMPTS = 2
-LENGTH_RETRY_MAX_CHARS_PER_CHUNK = 800
 RETRYABLE_FAILURE_CATEGORIES = {
     "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT",
     "SCHEMA_VALIDATION_FAILED",
@@ -563,8 +562,12 @@ class NarrativeAnalysisWorker:
                 owned_chunk_ids=[chunk.chunk_id],
                 status=NarrativeAnalysisWindowStatus.PENDING,
                 effective_max_chars_per_chunk=max(
-                    failed_window.effective_max_chars_per_chunk,
-                    len(chunk.text),
+                    self._settings.narrative_window_min_slice_chars,
+                    min(
+                        self._settings.narrative_window_length_retry_max_chars_per_chunk,
+                        failed_window.effective_max_chars_per_chunk,
+                        len(chunk.text),
+                    ),
                 ),
                 previous_failure_category=failed_window.failure_category,
                 parent_window_id=failed_window.analysis_window_id,
@@ -738,7 +741,10 @@ class NarrativeAnalysisWorker:
         """Reduce only a length-truncated window; schema retries retain the same context."""
 
         if window.failure_category == "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT":
-            return min(LENGTH_RETRY_MAX_CHARS_PER_CHUNK, window.effective_max_chars_per_chunk)
+            return min(
+                self._settings.narrative_window_length_retry_max_chars_per_chunk,
+                window.effective_max_chars_per_chunk,
+            )
         return window.effective_max_chars_per_chunk
 
     def _output_recovery(self, window: NarrativeAnalysisWindowV1) -> str | None:
@@ -749,7 +755,10 @@ class NarrativeAnalysisWorker:
                 return "state_change_schema_recovery"
             return "schema_validation"
         if window.previous_failure_category == "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT":
-            if window.effective_max_chars_per_chunk > LENGTH_RETRY_MAX_CHARS_PER_CHUNK:
+            if (
+                window.effective_max_chars_per_chunk
+                > self._settings.narrative_window_length_retry_max_chars_per_chunk
+            ):
                 return "length_split"
             return "length_reduction"
         return None

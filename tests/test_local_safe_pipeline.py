@@ -8,11 +8,16 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from comic_agent.agents.timeline_agent import TimelineAgent
-from comic_agent.api.pipeline import _parse_narrative_modes
+from comic_agent.api.pipeline import (
+    _parse_narrative_modes,
+    _pipeline_retry_wait_seconds,
+    _require_real_pipeline_opt_in,
+)
 from comic_agent.config import Settings, get_settings
 from comic_agent.main import create_app
 from comic_agent.providers.mocks import LocalSafeDemoProvider, MockLLMProvider
 from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
+from comic_agent.repositories.provider_circuit_repository import ProviderCircuitRepository
 
 _OFFICIAL_TEXT = """下午四点，小林先到学校礼堂，在公告栏张贴志愿者招募海报。
 十分钟后，天下起雨；小周撑着一把蓝色雨伞赶到礼堂。
@@ -41,6 +46,41 @@ def test_pipeline_accepts_only_distinct_known_requested_narrative_modes() -> Non
 
 def test_pipeline_defaults_to_all_six_narrative_modes() -> None:
     assert _parse_narrative_modes(None) == _ALL_NARRATIVE_MODES
+
+
+def test_overdue_pipeline_retry_checkpoint_is_immediately_eligible() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    assert _pipeline_retry_wait_seconds(now - timedelta(seconds=1), now=now) == 0
+    assert _pipeline_retry_wait_seconds(now + timedelta(seconds=30), now=now) == 5
+
+
+def test_real_preflight_reuses_the_provider_instance_for_narrative_execution(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("COMIC_AGENT_ENV", "development")
+    monkeypatch.setenv("COMIC_AGENT_FAKE_PIPELINE_DEMO", "false")
+    monkeypatch.setenv("ENABLE_REAL_LLM", "true")
+    monkeypatch.setenv("LLM_API_KEY", "test-local-key")
+    get_settings.cache_clear()
+    app = create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'preflight.db'}")
+    if hasattr(app.state, "narrative_analyst_provider"):
+        delattr(app.state, "narrative_analyst_provider")
+    provider = LocalSafeDemoProvider()
+    monkeypatch.setattr(
+        "comic_agent.api.pipeline.build_openai_compatible_provider", lambda _: provider
+    )
+    session = app.state.session_factory()
+    try:
+        _require_real_pipeline_opt_in(
+            True,
+            app_state=app.state,
+            circuit_repository=ProviderCircuitRepository(session),
+        )
+        assert app.state.narrative_analyst_provider is provider
+    finally:
+        session.close()
 
 
 def test_pipeline_persists_an_explicit_six_mode_request(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

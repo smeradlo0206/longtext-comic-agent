@@ -1,6 +1,8 @@
 """One-click, safe local pipeline entrypoints built from existing Gate services."""
 
 import json
+from datetime import UTC, datetime
+from time import sleep
 from typing import Annotated, Any
 
 from fastapi import (
@@ -316,6 +318,10 @@ def _require_real_pipeline_opt_in(
     provider = getattr(app_state, "narrative_analyst_provider", None)
     if provider is None:
         provider = build_openai_compatible_provider(settings)
+        # Reuse the exact instance that was preflighted.  Constructing a second
+        # provider inside the Narrative workflow loses the negotiated capability
+        # profile and silently falls back to legacy prompt-only requests.
+        app_state.narrative_analyst_provider = provider
     result = ProviderHealthService(settings=settings, repository=circuit_repository).preflight(
         provider_key=settings.llm_provider_name,
         provider=provider,
@@ -335,6 +341,20 @@ def _require_real_pipeline_opt_in(
             detail={
                 "safe_issue_codes": capability.safe_issue_codes,
                 "structured_output": "UNAVAILABLE",
+            },
+        )
+    unsupported_schema_modes = [
+        item.output_schema_name
+        for item in capability.schema_capabilities
+        if item.selected_output_mode
+        in {StructuredOutputMode.UNAVAILABLE, StructuredOutputMode.PROMPT_ONLY}
+    ]
+    if unsupported_schema_modes:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "safe_issue_codes": ["NARRATIVE_SCHEMA_CAPABILITY_UNAVAILABLE"],
+                "unsupported_schema_count": len(unsupported_schema_modes),
             },
         )
 
@@ -443,33 +463,81 @@ def _run_pipeline_background(
     finally:
         session.close()
 
-    try:
-        _run_whole_document_analysis(
-            session_factory,
-            app_state,
-            analysis_run_id,
-            real_llm_requested,
-        )
-    except Exception:
-        _save_pipeline_failure(session_factory, analysis_run_id, ["PIPELINE_WORKER_FAILED"])
-        return
+    _run_pipeline_until_terminal(
+        session_factory,
+        app_state,
+        analysis_run_id,
+        real_llm_requested,
+    )
 
-    session = session_factory()
-    try:
-        repository = NarrativeAnalysisRepository(session)
-        run = repository.get_run(analysis_run_id)
-        if run is None:
+
+def _pipeline_retry_wait_seconds(
+    next_retry_at: datetime | None,
+    *,
+    now: datetime | None = None,
+) -> float:
+    """Return a bounded wait; an overdue checkpoint must be runnable immediately."""
+
+    if next_retry_at is None:
+        return 1.0
+    current = now or datetime.now(UTC)
+    return max(0.0, min(5.0, (next_retry_at - current).total_seconds()))
+
+
+def _run_pipeline_until_terminal(
+    session_factory: Any,
+    app_state: State,
+    analysis_run_id: str,
+    real_llm_requested: bool,
+) -> None:
+    """Keep the background task alive across persisted window retry deadlines.
+
+    The worker intentionally returns RUNNING while a failed window is waiting for
+    backoff.  The old one-shot caller then exited permanently, leaving the run in
+    RUNNING forever.  Re-entering the idempotent worker after the deadline resumes
+    only eligible windows; successful windows remain untouched.
+    """
+
+    while True:
+        try:
+            _run_whole_document_analysis(
+                session_factory,
+                app_state,
+                analysis_run_id,
+                real_llm_requested,
+            )
+        except Exception:
+            _save_pipeline_failure(session_factory, analysis_run_id, ["PIPELINE_WORKER_FAILED"])
             return
-        phase = (
-            NarrativePipelinePhase.COMPLETED
-            if run.status == NarrativeAnalysisRunStatus.SUCCEEDED
-            else NarrativePipelinePhase.NEEDS_HUMAN_ACTION
-            if run.status == NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
-            else NarrativePipelinePhase.FAILED
-        )
-        repository.save_run(run.model_copy(update={"pipeline_phase": phase}))
-    finally:
-        session.close()
+
+        session = session_factory()
+        try:
+            repository = NarrativeAnalysisRepository(session)
+            run = repository.get_run(analysis_run_id)
+            if run is None:
+                return
+            if run.status != NarrativeAnalysisRunStatus.RUNNING:
+                phase = (
+                    NarrativePipelinePhase.COMPLETED
+                    if run.status == NarrativeAnalysisRunStatus.SUCCEEDED
+                    else NarrativePipelinePhase.NEEDS_HUMAN_ACTION
+                    if run.status == NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
+                    else NarrativePipelinePhase.FAILED
+                )
+                repository.save_run(run.model_copy(update={"pipeline_phase": phase}))
+                return
+            retry_times = [
+                window.next_eligible_retry_at
+                for window in repository.list_windows(analysis_run_id)
+                if window.next_eligible_retry_at is not None
+            ]
+            next_retry_at = min(retry_times) if retry_times else None
+        finally:
+            session.close()
+
+        delay = _pipeline_retry_wait_seconds(next_retry_at)
+        if delay > 0:
+            sleep(delay)
 
 
 def _gate2_status(run: Any, aggregate: Any, route: Any) -> str:
@@ -539,15 +607,27 @@ def _window_summary(windows: list[Any]) -> dict[str, object]:
     provider_requests_used = 0
     elapsed_seconds_used = 0
     output_tokens_used = 0
+    output_token_budgets: set[int] = set()
+    recovery_phase_counts: dict[str, int] = {}
+    deferred_window_count = 0
+    overdue_retry_count = 0
+    now = datetime.now(UTC)
     for window in windows:
         status = str(window.status)
         counts[status] = counts.get(status, 0) + 1
+        phase = str(window.recovery_phase)
+        recovery_phase_counts[phase] = recovery_phase_counts.get(phase, 0) + 1
         attempts_used += int(window.attempt_count)
         provider_requests_used += int(window.provider_request_count)
         elapsed_seconds_used += int(window.elapsed_seconds_used)
         output_tokens_used += int(window.output_tokens_used)
+        output_token_budgets.add(int(window.output_token_budget))
         if window.next_eligible_retry_at is not None:
             retry_times.append(window.next_eligible_retry_at)
+            if window.next_eligible_retry_at > now:
+                deferred_window_count += 1
+            else:
+                overdue_retry_count += 1
     return {
         "total": len(windows),
         "status_counts": counts,
@@ -555,7 +635,12 @@ def _window_summary(windows: list[Any]) -> dict[str, object]:
         "provider_requests_used": provider_requests_used,
         "elapsed_seconds_used": elapsed_seconds_used,
         "output_tokens_used": output_tokens_used,
+        "output_token_budgets": sorted(output_token_budgets),
         "next_eligible_retry_at": min(retry_times).isoformat() if retry_times else None,
+        "recovery_phase_counts": recovery_phase_counts,
+        "deferred_window_count": deferred_window_count,
+        "overdue_retry_count": overdue_retry_count,
+        "automatic_split_count": counts.get("SPLIT", 0),
     }
 
 

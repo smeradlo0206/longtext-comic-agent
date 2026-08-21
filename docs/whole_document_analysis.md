@@ -83,7 +83,9 @@ persisted as `SPLIT` and its children inherit the persisted retry deadline.
 Resume does not call the Provider before that deadline, never replays a
 successful sibling, and resumes only the narrower approved child scopes. The
 new child Proposal provenance remains subject to the existing fresh Gate 2
-boundary.
+boundary. Timeout and length-recovery children also cap each retry context at
+the configured `NARRATIVE_WINDOW_LENGTH_RETRY_MAX_CHARS_PER_CHUNK` (default
+800), so a split does not silently restore the original large input.
 For `PROVIDER_LENGTH_BEFORE_FINAL_CONTENT` on a multi-SourceChunk window, it
 first records the failed parent and deterministically splits it into one child
 window per parent-owned SourceChunk. Each child may read the parent context but
@@ -113,6 +115,9 @@ unsupported structured output, or exhausted persisted budget, the terminal state
 `NEEDS_HUMAN_ACTION`: automatic recovery has stopped and Gate 2/Timeline remain unavailable.
 Length recovery and one schema-format repair have independent persisted budgets for each
 source-bounded child; an earlier length recovery never consumes that child’s schema repair.
+The real-provider output cap defaults to 8000 (`LLM_MAX_OUTPUT_TOKENS`) and is
+persisted in each new window's budget snapshot; an explicit environment value
+still overrides it.
 Manual real-LLM validation is allowed only after the mock-based checks pass and never records a
 credential in a command, log, screenshot, or Git artifact.
 

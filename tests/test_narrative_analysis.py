@@ -515,6 +515,7 @@ def test_timeout_splits_only_failed_window_after_persisted_backoff(tmp_path: Pat
     assert len(children) == 2
     assert all(child.next_eligible_retry_at is not None for child in children)
     assert all(child.split_depth == 1 and child.max_split_depth == 3 for child in children)
+    assert all(child.effective_max_chars_per_chunk <= 800 for child in children)
 
     still_deferred = worker.run_pending(run.analysis_run_id)
     assert still_deferred.status == NarrativeAnalysisRunStatus.RUNNING
@@ -1566,9 +1567,9 @@ def test_relationship_signal_worker_splits_length_failure_by_owned_chunks(tmp_pa
     ]
     assert provider.output_recovery_markers == [
         None,
-        "length_split",
-        "length_split",
-        "length_split",
+        "length_reduction",
+        "length_reduction",
+        "length_reduction",
     ]
 
 
@@ -1635,19 +1636,19 @@ def test_worker_splits_length_failure_without_truncating_child_source(
     retried_window = next(window for window in windows if window.window_index == 1)
 
     assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
-    assert provider.input_text_lengths == [1200, 1200, 1410, 1410]
+    assert provider.input_text_lengths == [1200, 1200, 800, 800]
     assert provider.output_recovery_markers == [
         None,
         None,
-        "length_split",
-        "length_split",
+        "length_reduction",
+        "length_reduction",
     ]
     assert retried_window.status == NarrativeAnalysisWindowStatus.SPLIT
     assert retried_window.attempt_count == 1
     assert retried_window.effective_max_chars_per_chunk == 1200
     assert retried_window.previous_failure_category is None
     assert all(
-        window.effective_max_chars_per_chunk == 1410
+        window.effective_max_chars_per_chunk <= 800
         for window in windows
         if window.analysis_window_id.startswith(f"{retried_window.analysis_window_id}:split:")
     )
@@ -1682,10 +1683,7 @@ def test_worker_splits_length_failed_window_at_source_chunk_boundaries(
     assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
     assert provider.input_chunk_ids[0] == ["chunk-0", "chunk-1", "chunk-2"]
     assert provider.input_chunk_ids[1:] == [["chunk-0"], ["chunk-1"], ["chunk-2"]]
-    expected_lengths = {chunk.chunk_id: len(chunk.text) for chunk in source_chunks}
-    assert [len(texts[0]) for texts in provider.input_texts[1:]] == [
-        expected_lengths[chunk_ids[0]] for chunk_ids in provider.input_chunk_ids[1:]
-    ]
+    assert [len(texts[0]) for texts in provider.input_texts[1:]] == [800, 800, 800]
     split_windows = [
         window for window in windows if window.status == NarrativeAnalysisWindowStatus.SPLIT
     ]
@@ -1849,7 +1847,7 @@ def test_worker_splits_length_failure_and_preserves_successful_aggregate(
     )
 
     assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
-    assert provider.input_text_lengths == [1200, 1200, 1410, 800, 1410]
+    assert provider.input_text_lengths == [1200, 1200, 800, 800, 800]
     assert split_window.status == NarrativeAnalysisWindowStatus.SPLIT
     assert split_window.attempt_count == 1
     assert split_window.failure_category == "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT"
