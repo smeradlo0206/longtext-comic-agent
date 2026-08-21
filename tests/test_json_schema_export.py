@@ -4,6 +4,8 @@ from comic_agent.schemas import (
     ApprovedProposalBundleV1,
     ApprovedProposalItemV1,
     ApprovedSourceChunkBundleV1,
+    AssetManifestV1,
+    AssetType,
     CampusContentProfileProposalV1,
     ComicBeatProposalV1,
     EvidenceReviewItemV1,
@@ -58,6 +60,8 @@ from comic_agent.schemas import (
     ReviewIssueSeverity,
     ReviewIssueV1,
     ReviewMethod,
+    ReviewStatus,
+    RightsStatus,
     SourceChapterReviewItemV1,
     SourceChunkReviewItemV1,
     SourceChunkUsability,
@@ -68,6 +72,7 @@ from comic_agent.schemas import (
     StateChangeProposalBatchV1,
     StateChangeTargetKind,
     StateChangeTargetRefV1,
+    UseMode,
 )
 from scripts import export_json_schemas
 
@@ -79,6 +84,7 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
 
     output_dir = tmp_path / "schema_exports"
     assert (output_dir / "AgentRunV1.json").exists()
+    assert (output_dir / "AssetManifestV1.json").exists()
     assert (output_dir / "ProviderResultV1.json").exists()
     assert (output_dir / "ProviderCapabilityProfileV1.json").exists()
     assert (output_dir / "ProviderExecutionMetadataV1.json").exists()
@@ -126,17 +132,18 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
         "ReviewGate1IssueV1",
         "ReviewGate1CheckResultV1",
         "SourceChapterReviewItemV1",
-            "SourceChunkReviewItemV1",
-            "ApprovedSourceChunkBundleV1",
-            "ReviewGate1IssueCountV1",
-            "ReviewGate1CategoryCountV1",
-            "ReviewGate1MetricsV1",
-            "ReviewGate1RoutingAdviceV1",
-            "ReviewGate1ResultV1",
+        "SourceChunkReviewItemV1",
+        "ApprovedSourceChunkBundleV1",
+        "ReviewGate1IssueCountV1",
+        "ReviewGate1CategoryCountV1",
+        "ReviewGate1MetricsV1",
+        "ReviewGate1RoutingAdviceV1",
+        "ReviewGate1ResultV1",
     ):
         assert (output_dir / f"{schema_name}.json").exists()
 
     event_schema = json.loads((output_dir / "EventProposalV1.json").read_text(encoding="utf-8"))
+    asset_schema = json.loads((output_dir / "AssetManifestV1.json").read_text(encoding="utf-8"))
     claim_schema = json.loads((output_dir / "ClaimProposalV1.json").read_text(encoding="utf-8"))
     knowledge_schema = json.loads(
         (output_dir / "KnowledgeStateProposalV1.json").read_text(encoding="utf-8")
@@ -182,6 +189,16 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     )
 
     assert "actor_resolution_status" in event_schema["properties"]
+    assert asset_schema["properties"]["schema_version"]["const"] == "1.0"
+    assert asset_schema["additionalProperties"] is False
+    for property_name in (
+        "original_page_url",
+        "license_code",
+        "tags",
+        "local_relative_path",
+        "review_status",
+    ):
+        assert property_name in asset_schema["properties"]
     assert "evidence_refs" in event_schema["properties"]
     assert "confidence" in event_schema["properties"]
     assert "evidence_refs" in event_schema["required"]
@@ -282,6 +299,7 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     assert RelationshipSignalProposalV1.__name__ == "RelationshipSignalProposalV1"
     assert RelationshipSignalProposalBatchV1.__name__ == "RelationshipSignalProposalBatchV1"
     assert StateChangeTargetKind.LOCATION == "LOCATION"
+    assert UseMode.PRODUCTION_CANDIDATE == "PRODUCTION_CANDIDATE"
     assert StateChangeAttributePath.QUANTITY == "quantity"
     assert "char_start" in source_chunk_schema["properties"]
     assert "char_end" in source_chunk_schema["properties"]
@@ -308,6 +326,8 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     assert "allow_llm_reference_resolution" in policy_text
     assert "provider_response" not in policy_text
     assert ApprovedProposalBundleV1.__name__ == "ApprovedProposalBundleV1"
+    assert AssetManifestV1.__name__ == "AssetManifestV1"
+    assert AssetType.POSE_REFERENCE == "POSE_REFERENCE"
     assert CampusContentProfileProposalV1.__name__ == "CampusContentProfileProposalV1"
     assert ComicBeatProposalV1.__name__ == "ComicBeatProposalV1"
     assert ApprovedProposalItemV1.__name__ == "ApprovedProposalItemV1"
@@ -332,6 +352,8 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     assert ReviewIssueV1.__name__ == "ReviewIssueV1"
     assert ReviewMethod.DETERMINISTIC == "DETERMINISTIC"
     assert ReviewableProposalEnvelopeV1.__name__ == "ReviewableProposalEnvelopeV1"
+    assert ReviewStatus.PENDING == "PENDING"
+    assert RightsStatus.NEEDS_HUMAN_REVIEW == "NEEDS_HUMAN_REVIEW"
     assert ReviewableProposalMode.STATE_CHANGE_EXTRACTION == "state_change_extraction"
     gate1_result_text = json.dumps(gate1_result_schema, ensure_ascii=False)
     for forbidden in ('"normalized_text"', '"storage_uri"', '"raw_output"', '"provider_response"'):

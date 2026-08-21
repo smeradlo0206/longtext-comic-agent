@@ -13,3 +13,6 @@ build/
 schema_exports/
 .coverage
 htmlcov/
+# Mutable local reference assets.  Only code, tests, and documentation belong in Git.
+asset_library/*
+!asset_library/.gitkeep

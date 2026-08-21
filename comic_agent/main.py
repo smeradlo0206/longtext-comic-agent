@@ -9,6 +9,7 @@ from pydantic import SecretStr
 from comic_agent.agents.storybible_curator import StoryBibleCurator
 from comic_agent.agents.timeline_agent import TimelineAgent
 from comic_agent.api.agent_runs import router as agent_runs_router
+from comic_agent.api.assets import router as assets_router
 from comic_agent.api.documents import router as documents_router
 from comic_agent.api.health import router as health_router
 from comic_agent.api.pipeline import router as pipeline_router
@@ -61,6 +62,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(health_router)
     app.include_router(projects_router)
     app.include_router(agent_runs_router)
+    app.include_router(assets_router)
     app.include_router(documents_router)
     app.include_router(storybible_router)
     app.include_router(settings_router)
