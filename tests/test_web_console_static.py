@@ -277,6 +277,14 @@ def test_web_console_exposes_whole_document_analysis_as_the_normal_flow() -> Non
     assert advanced_start < manual_chunk_input < advanced_end
 
 
+def test_web_console_stops_polling_when_a_previous_run_no_longer_exists() -> None:
+    html = Path("web_console/index.html").read_text(encoding="utf-8")
+
+    assert "error.status === 404" in html
+    assert "state.safePipelineRunId = null" in html
+    assert "该任务不在当前数据库中" in html
+
+
 def test_web_console_exposes_automatic_gate1_and_chapter_authorization() -> None:
     html = Path("web_console/index.html").read_text(encoding="utf-8")
 

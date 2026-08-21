@@ -189,17 +189,6 @@ class StateChangeExtractionAgent(BaseAgent[StateChangeProposalBatchV1]):
                         "StateChangeExtractionAgent evidence quote_text must be verbatim input "
                         "SourceChunk text"
                     )
-                if (
-                    evidence.quote_start is not None
-                    and evidence.quote_end is not None
-                    and (
-                        source_text[evidence.quote_start : evidence.quote_end]
-                        != evidence.quote_text
-                    )
-                ):
-                    raise ValueError(
-                        "StateChangeExtractionAgent evidence offsets must exactly match quote_text"
-                    )
         return batch
 
 

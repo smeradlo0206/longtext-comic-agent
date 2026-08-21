@@ -1222,6 +1222,18 @@
           state.safePipelinePoll = null;
         }
       } catch (error) {
+        if (error.status === 404) {
+          if (state.safePipelinePoll) clearInterval(state.safePipelinePoll);
+          state.safePipelinePoll = null;
+          state.safePipelineRunId = null;
+          $("safePipelineStatus").textContent = pretty({state: "RUN_NOT_FOUND"});
+          setSafePipelineRunState(
+            "旧任务不可用",
+            "该任务不在当前数据库中；已停止轮询，请重新开始一次分析。",
+            "warn"
+          );
+          return;
+        }
         setSafePipelineRunState("状态读取失败", "无法读取持久化进度；请查看服务端终端日志。", "bad");
         throw error;
       }

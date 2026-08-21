@@ -180,17 +180,6 @@ class RelationshipSignalExtractionAgent(BaseAgent[RelationshipSignalProposalBatc
                         "RelationshipSignalExtractionAgent evidence quote_text must be "
                         "verbatim input SourceChunk text"
                     )
-                if evidence.quote_start is not None and evidence.quote_end is not None:
-                    if evidence.quote_end > len(source):
-                        raise ValueError(
-                            "RelationshipSignalExtractionAgent evidence offsets must be within "
-                            "source chunk bounds"
-                        )
-                    if source[evidence.quote_start : evidence.quote_end] != evidence.quote_text:
-                        raise ValueError(
-                            "RelationshipSignalExtractionAgent evidence offsets must exactly "
-                            "match quote_text"
-                        )
         return batch
 
 

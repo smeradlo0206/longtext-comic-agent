@@ -1053,11 +1053,13 @@ class _StateChangeWindowProvider:
         empty: bool = False,
         failures: dict[int, Exception] | None = None,
         invalid_evidence: bool = False,
+        mismatched_evidence_offsets: bool = False,
     ) -> None:
         self.calls: list[str] = []
         self.empty = empty
         self.failures = failures or {}
         self.invalid_evidence = invalid_evidence
+        self.mismatched_evidence_offsets = mismatched_evidence_offsets
 
     def structured_generate(self, request, output_model):  # type: ignore[no-untyped-def]
         self.calls.append("state_change_extraction")
@@ -1092,7 +1094,14 @@ class _StateChangeWindowProvider:
                     "new_value": "closed",
                     "persistent": False,
                     "reality_layer": "PRIMARY",
-                    "evidence_refs": [{"chunk_id": evidence_chunk_id, "quote_text": quote}],
+                    "evidence_refs": [
+                        {
+                            "chunk_id": evidence_chunk_id,
+                            "quote_start": 1 if self.mismatched_evidence_offsets else None,
+                            "quote_end": 5 if self.mismatched_evidence_offsets else None,
+                            "quote_text": quote,
+                        }
+                    ],
                     "new_value_evidence_indexes": [0],
                     "persistence_evidence_indexes": [],
                     "confidence": 0.8,
@@ -1113,11 +1122,13 @@ class _RelationshipSignalWindowProvider:
         *,
         empty: bool = False,
         failures: dict[int, Exception] | None = None,
+        mismatched_evidence_offsets: bool = False,
     ) -> None:
         self.calls: list[list[str]] = []
         self.output_recovery_markers: list[str | None] = []
         self.empty = empty
         self.failures = failures or {}
+        self.mismatched_evidence_offsets = mismatched_evidence_offsets
 
     def structured_generate(self, request, output_model):  # type: ignore[no-untyped-def]
         input_context = request["input_context"]
@@ -1164,7 +1175,14 @@ class _RelationshipSignalWindowProvider:
                         "proposal_schema": None,
                     },
                     "reality_layer": "PRIMARY",
-                    "evidence_refs": [{"chunk_id": chunk_ids[0], "quote_text": "甲信任乙。"}],
+                    "evidence_refs": [
+                        {
+                            "chunk_id": chunk_ids[0],
+                            "quote_start": 1 if self.mismatched_evidence_offsets else None,
+                            "quote_end": 5 if self.mismatched_evidence_offsets else None,
+                            "quote_text": "甲信任乙。",
+                        }
+                    ],
                     "confidence": 0.8,
                 }
             ]
@@ -1517,6 +1535,38 @@ def test_relationship_signal_worker_reuses_schema_recovery_and_resume(tmp_path: 
     assert window.attempt_count == 2
     assert provider.output_recovery_markers == [None, "schema_validation"]
     assert len(provider.calls) == calls_before_resume
+
+
+def test_relationship_signal_worker_normalizes_verbatim_evidence_offsets(
+    tmp_path: Path,
+) -> None:
+    chunks = [_chunk(0).model_copy(update={"text": "甲信任乙。"})]
+    source_repository = _FakeSourceRepository(chunks)
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["relationship_signal_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _RelationshipSignalWindowProvider(mismatched_evidence_offsets=True)
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+    result = analysis_repository.get_result(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert result is not None
+    evidence = result.relationship_signals[0].proposal.evidence_refs[0]
+    assert evidence.quote_text == "甲信任乙。"
+    assert evidence.quote_start == 0
+    assert evidence.quote_end == 5
 
 
 def test_relationship_signal_worker_splits_length_failure_by_owned_chunks(tmp_path: Path) -> None:
@@ -2363,6 +2413,40 @@ def test_worker_does_not_convert_source_only_state_change_rejection_to_success(
     assert completed.status == NarrativeAnalysisRunStatus.FAILED
     assert provider.calls == ["state_change_extraction"]
     assert result is None
+
+
+def test_worker_normalizes_verbatim_state_change_evidence_before_offset_validation(
+    tmp_path: Path,
+) -> None:
+    source_repository = _FakeSourceRepository([_chunk(0)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["state_change_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _StateChangeWindowProvider(mismatched_evidence_offsets=True)
+    worker = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    )
+
+    completed = worker.run_pending(run.analysis_run_id)
+    result = analysis_repository.get_result(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert provider.calls == ["state_change_extraction"]
+    assert result is not None
+    evidence = result.state_changes[0].proposal.evidence_refs[0]
+    assert evidence.quote_text == "synt"
+    assert evidence.quote_start == 0
+    assert evidence.quote_end == 4
 
 
 def test_rockery_cross_window_event_wording_stays_separate_for_manual_review() -> None:
