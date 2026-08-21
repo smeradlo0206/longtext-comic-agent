@@ -201,6 +201,77 @@ def test_one_click_pipeline_only_uses_real_provider_after_explicit_opt_in(
     assert client.get(f"/pipeline-runs/{run_id}").json()["gate3"] == "APPROVED"
 
 
+def test_one_click_real_pipeline_retries_a_waiting_provider_preflight(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """A transient preflight timeout must not terminally fail untouched windows."""
+
+    class _FailsFirstPreflightProvider(LocalSafeDemoProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.preflight_calls = 0
+
+        def preflight(self) -> None:
+            self.preflight_calls += 1
+            if self.preflight_calls == 1:
+                raise TimeoutError("transient provider timeout")
+
+    monkeypatch.setenv("PROVIDER_CIRCUIT_BACKOFF_SECONDS", "1")
+    monkeypatch.setenv("PROVIDER_CIRCUIT_MAX_BACKOFF_SECONDS", "1")
+    client = _real_llm_client(tmp_path, monkeypatch)
+    provider = _FailsFirstPreflightProvider()
+    client.app.state.narrative_analyst_provider = provider
+
+    started = client.post(
+        "/projects/preflight-retry/pipeline-runs/import-and-analyze",
+        data={"real_llm_requested": "true"},
+        files={"file": ("official.txt", _OFFICIAL_TEXT.encode("utf-8"), "text/plain")},
+    )
+
+    assert started.status_code == 200
+    run = client.get(f"/pipeline-runs/{started.json()['analysis_run_id']}").json()
+    assert provider.preflight_calls == 2
+    assert run["narrative"] == "SUCCEEDED"
+    assert run["pipeline_phase"] == "COMPLETED"
+    assert run["pipeline_safe_issue_codes"] == []
+
+
+def test_one_click_real_pipeline_stops_after_preflight_circuit_pauses(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """A permanently unavailable Provider consumes only the bounded preflight allowance."""
+
+    class _FailingPreflightProvider(LocalSafeDemoProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.preflight_calls = 0
+
+        def preflight(self) -> None:
+            self.preflight_calls += 1
+            raise TimeoutError("persistent provider timeout")
+
+    monkeypatch.setenv("PROVIDER_CIRCUIT_FAILURE_THRESHOLD", "2")
+    monkeypatch.setenv("PROVIDER_CIRCUIT_BACKOFF_SECONDS", "1")
+    monkeypatch.setenv("PROVIDER_CIRCUIT_MAX_BACKOFF_SECONDS", "1")
+    client = _real_llm_client(tmp_path, monkeypatch)
+    provider = _FailingPreflightProvider()
+    client.app.state.narrative_analyst_provider = provider
+
+    started = client.post(
+        "/projects/preflight-paused/pipeline-runs/import-and-analyze",
+        data={"real_llm_requested": "true"},
+        files={"file": ("official.txt", _OFFICIAL_TEXT.encode("utf-8"), "text/plain")},
+    )
+
+    assert started.status_code == 200
+    run = client.get(f"/pipeline-runs/{started.json()['analysis_run_id']}").json()
+    assert provider.preflight_calls == 2
+    assert provider.calls == 0
+    assert run["narrative"] == "NEEDS_HUMAN_ACTION"
+    assert run["pipeline_phase"] == "NEEDS_HUMAN_ACTION"
+    assert run["pipeline_safe_issue_codes"] == ["PROVIDER_CIRCUIT_OPEN", "PROVIDER_TIMEOUT"]
+
+
 def test_one_click_real_llm_opt_in_missing_key_is_reported_by_durable_run(
     tmp_path, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]

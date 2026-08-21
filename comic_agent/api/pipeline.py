@@ -375,6 +375,29 @@ def _safe_preflight_issue_codes(exc: HTTPException) -> list[str]:
     return ["PROVIDER_PREFLIGHT_FAILED"]
 
 
+def _preflight_retry_at(exc: HTTPException) -> datetime | None:
+    """Return the persisted retry deadline for a transient Provider preflight failure."""
+
+    detail = exc.detail
+    if not isinstance(detail, dict) or detail.get("status") != "WAITING_RETRY":
+        return None
+    raw_retry_at = detail.get("next_eligible_retry_at")
+    if not isinstance(raw_retry_at, str):
+        return None
+    try:
+        retry_at = datetime.fromisoformat(raw_retry_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return retry_at if retry_at.tzinfo is not None else retry_at.replace(tzinfo=UTC)
+
+
+def _preflight_requires_human_action(exc: HTTPException) -> bool:
+    """A paused circuit has consumed its bounded preflight retry allowance."""
+
+    detail = exc.detail
+    return isinstance(detail, dict) and detail.get("status") == "PAUSED"
+
+
 def _save_pipeline_failure(
     session_factory: Any,
     analysis_run_id: str,
@@ -417,59 +440,91 @@ def _run_pipeline_background(
 ) -> None:
     """Run preflight and the existing worker after the run id has been returned."""
 
-    session = session_factory()
-    try:
-        analysis_repository = NarrativeAnalysisRepository(session)
-        run = analysis_repository.get_run(analysis_run_id)
-        if run is None:
-            return
-        analysis_repository.save_run(
-            run.model_copy(
-                update={
-                    "pipeline_phase": (
-                        NarrativePipelinePhase.PROVIDER_CHECKING
-                        if real_llm_requested
-                        else NarrativePipelinePhase.NARRATIVE_RUNNING
-                    )
-                }
-            )
-        )
-        if real_llm_requested:
-            try:
-                _require_real_pipeline_opt_in(
-                    True,
-                    app_state=app_state,
-                    circuit_repository=ProviderCircuitRepository(session),
+    while True:
+        retry_at: datetime | None = None
+        start_worker = True
+        session = session_factory()
+        try:
+            analysis_repository = NarrativeAnalysisRepository(session)
+            run = analysis_repository.get_run(analysis_run_id)
+            if run is None:
+                return
+            analysis_repository.save_run(
+                run.model_copy(
+                    update={
+                        "pipeline_phase": (
+                            NarrativePipelinePhase.PROVIDER_CHECKING
+                            if real_llm_requested
+                            else NarrativePipelinePhase.NARRATIVE_RUNNING
+                        )
+                    }
                 )
-            except HTTPException as exc:
-                issue_codes = _safe_preflight_issue_codes(exc)
-                run = analysis_repository.get_run(analysis_run_id)
-                if run is not None:
-                    analysis_repository.save_run(
-                        run.model_copy(
-                            update={
-                                "status": NarrativeAnalysisRunStatus.FAILED,
-                                "pipeline_phase": NarrativePipelinePhase.FAILED,
-                                "pipeline_safe_issue_codes": issue_codes,
-                            }
-                        )
+            )
+            if real_llm_requested:
+                try:
+                    _require_real_pipeline_opt_in(
+                        True,
+                        app_state=app_state,
+                        circuit_repository=ProviderCircuitRepository(session),
                     )
-                return
-            except Exception:
-                run = analysis_repository.get_run(analysis_run_id)
-                if run is not None:
-                    analysis_repository.save_run(
-                        run.model_copy(
-                            update={
-                                "status": NarrativeAnalysisRunStatus.FAILED,
-                                "pipeline_phase": NarrativePipelinePhase.FAILED,
-                                "pipeline_safe_issue_codes": ["PROVIDER_PREFLIGHT_FAILED"],
-                            }
+                except HTTPException as exc:
+                    issue_codes = _safe_preflight_issue_codes(exc)
+                    retry_at = _preflight_retry_at(exc)
+                    run = analysis_repository.get_run(analysis_run_id)
+                    if run is not None and retry_at is not None:
+                        analysis_repository.save_run(
+                            run.model_copy(
+                                update={
+                                    "status": NarrativeAnalysisRunStatus.RUNNING,
+                                    "pipeline_phase": NarrativePipelinePhase.PROVIDER_CHECKING,
+                                    "pipeline_safe_issue_codes": issue_codes,
+                                }
+                            )
                         )
-                    )
-                return
-    finally:
-        session.close()
+                    elif run is not None:
+                        needs_human_action = _preflight_requires_human_action(exc)
+                        analysis_repository.save_run(
+                            run.model_copy(
+                                update={
+                                    "status": (
+                                        NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
+                                        if needs_human_action
+                                        else NarrativeAnalysisRunStatus.FAILED
+                                    ),
+                                    "pipeline_phase": (
+                                        NarrativePipelinePhase.NEEDS_HUMAN_ACTION
+                                        if needs_human_action
+                                        else NarrativePipelinePhase.FAILED
+                                    ),
+                                    "pipeline_safe_issue_codes": issue_codes,
+                                }
+                            )
+                        )
+                    start_worker = False
+                except Exception:
+                    run = analysis_repository.get_run(analysis_run_id)
+                    if run is not None:
+                        analysis_repository.save_run(
+                            run.model_copy(
+                                update={
+                                    "status": NarrativeAnalysisRunStatus.FAILED,
+                                    "pipeline_phase": NarrativePipelinePhase.FAILED,
+                                    "pipeline_safe_issue_codes": ["PROVIDER_PREFLIGHT_FAILED"],
+                                }
+                            )
+                        )
+                    start_worker = False
+        finally:
+            session.close()
+
+        if retry_at is not None:
+            delay = _pipeline_retry_wait_seconds(retry_at)
+            if delay > 0:
+                sleep(delay)
+            continue
+        if not start_worker:
+            return
+        break
 
     _run_pipeline_until_terminal(
         session_factory,
@@ -532,7 +587,12 @@ def _run_pipeline_until_terminal(
                     if run.status == NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
                     else NarrativePipelinePhase.FAILED
                 )
-                repository.save_run(run.model_copy(update={"pipeline_phase": phase}))
+                update: dict[str, object] = {"pipeline_phase": phase}
+                if run.status == NarrativeAnalysisRunStatus.SUCCEEDED:
+                    # The durable circuit audit retains transient Provider failures;
+                    # the completed run should not continue to present them as current.
+                    update["pipeline_safe_issue_codes"] = []
+                repository.save_run(run.model_copy(update=update))
                 return
             retry_times = [
                 window.next_eligible_retry_at
