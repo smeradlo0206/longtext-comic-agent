@@ -12,6 +12,7 @@ from comic_agent.api.pipeline import (
     _parse_narrative_modes,
     _pipeline_retry_wait_seconds,
     _require_real_pipeline_opt_in,
+    _save_pipeline_failure,
 )
 from comic_agent.config import Settings, get_settings
 from comic_agent.main import create_app
@@ -378,3 +379,27 @@ def test_pipeline_status_reports_gate2_pending_for_saved_aggregate_without_route
     assert response.json()["gate2"] == "GATE2_PENDING"
     assert "quote_text" not in response.text
     assert _OFFICIAL_TEXT not in response.text
+
+
+def test_background_failure_does_not_rewrite_a_completed_narrative_run(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """A downstream worker error must retain a completed Narrative checkpoint for resume."""
+
+    client = _client(tmp_path, monkeypatch)
+    started = client.post(
+        "/projects/preserve-narrative/pipeline-runs/import-and-analyze",
+        files={"file": ("official.txt", _OFFICIAL_TEXT.encode("utf-8"), "text/plain")},
+    )
+    run_id = started.json()["analysis_run_id"]
+
+    _save_pipeline_failure(
+        client.app.state.session_factory,
+        run_id,
+        ["PIPELINE_WORKER_FAILED"],
+    )
+
+    status = client.get(f"/pipeline-runs/{run_id}").json()
+    assert status["narrative"] == "SUCCEEDED"
+    assert status["pipeline_phase"] == "FAILED"
+    assert status["pipeline_safe_issue_codes"] == ["PIPELINE_WORKER_FAILED"]

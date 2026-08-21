@@ -322,10 +322,15 @@ Batch, write a canonical fact, or silently remove the case from totals.
 After a whole-document Narrative Analyst run is `SUCCEEDED`, all leaf windows are successful,
 and its aggregate result is persisted, `NarrativeAnalysisReviewCoordinator` builds one
 `ReviewGate2InputV1` from the six aggregate lists: Event, Entity, Claim, Knowledge State, State
-Change, and Relationship Signal. It preserves original Proposal values, mode/schema, AgentRun
-ids, aggregated EvidenceRef values, project/document/analysis-run identity, and only the
-Gate 1-approved SourceChunks actually used by the run. It does not scan a database for context,
-use raw provider responses, text similarity, embedding, or automatic canonical links.
+Change, and Relationship Signal. Provider-generated Proposal ids remain unchanged unless two
+aggregate candidates from separate windows have the same schema/id pair. Only then is that local
+sequence number replaced by a deterministic, document-safe candidate id derived from the
+validated Proposal value excluding the colliding id. This prevents separate windows that each emit
+values such as `evt_001` from colliding; it does not alter Proposal semantics, mode/schema,
+AgentRun provenance, or aggregated EvidenceRef values. Gate 2 receives only the
+project/document/analysis-run identity and Gate 1-approved SourceChunks actually used by the run.
+It does not scan a database for context, use raw provider responses, text similarity, embedding,
+or automatic canonical links.
 
 The typed `ReviewGate2ResultV1` and `NarrativeAnalysisReviewRouteV1` are persisted inside the
 existing analysis-run JSON payload. Empty input produces a valid empty APPROVED bundle. An

@@ -1,6 +1,6 @@
 """Persistence for resumable whole-document narrative analysis tasks."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 from sqlalchemy import select, update
@@ -17,6 +17,8 @@ from comic_agent.schemas.workflow import (
     NarrativeGate2HandoffStatus,
     NarrativeGate2HandoffV1,
 )
+
+_GATE2_HANDOFF_STALE_AFTER = timedelta(minutes=5)
 
 
 class NarrativeAnalysisRepository:
@@ -208,16 +210,20 @@ class NarrativeAnalysisRepository:
         ):
             return None
         handoff = current.gate2_handoff
-        if handoff is not None and handoff.status in {
-            NarrativeGate2HandoffStatus.RUNNING,
-            NarrativeGate2HandoffStatus.COMPLETED,
-        }:
+        now = datetime.now(UTC)
+        if handoff is not None and handoff.status == NarrativeGate2HandoffStatus.COMPLETED:
+            return None
+        if (
+            handoff is not None
+            and handoff.status == NarrativeGate2HandoffStatus.RUNNING
+            and handoff.started_at is not None
+            and handoff.started_at + _GATE2_HANDOFF_STALE_AFTER > now
+        ):
             return None
         attempts = handoff.attempt_count if handoff is not None else 0
         max_attempts = handoff.max_attempts if handoff is not None else 2
         if attempts >= max_attempts:
             return None
-        now = datetime.now(UTC)
         claimed = current.model_copy(
             update={
                 "schema_version": "1.5",

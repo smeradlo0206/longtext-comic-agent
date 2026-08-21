@@ -388,10 +388,18 @@ def _save_pipeline_failure(
         run = repository.get_run(analysis_run_id)
         if run is None:
             return
+        # A downstream orchestration failure cannot invalidate a fully saved
+        # Narrative result.  Retaining SUCCEEDED keeps Gate 2 resumable while
+        # the separate pipeline phase exposes the safe worker diagnostic.
+        status = (
+            NarrativeAnalysisRunStatus.SUCCEEDED
+            if run.status == NarrativeAnalysisRunStatus.SUCCEEDED
+            else NarrativeAnalysisRunStatus.FAILED
+        )
         repository.save_run(
             run.model_copy(
                 update={
-                    "status": NarrativeAnalysisRunStatus.FAILED,
+                    "status": status,
                     "pipeline_phase": NarrativePipelinePhase.FAILED,
                     "pipeline_safe_issue_codes": sorted(set(issue_codes)),
                 }
