@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from comic_agent.agents.timeline_agent import TimelineAgent
 from comic_agent.api.pipeline import (
+    _gate2_safe_issue_codes,
     _parse_narrative_modes,
     _pipeline_retry_wait_seconds,
     _require_real_pipeline_opt_in,
@@ -33,6 +34,30 @@ _ALL_NARRATIVE_MODES = [
     "state_change_extraction",
     "relationship_signal_extraction",
 ]
+
+
+def test_gate2_safe_issue_codes_include_rejected_proposal_diagnostics() -> None:
+    """Pipeline progress must expose Gate 2 codes without source text or raw output."""
+
+    result = type(
+        "Result",
+        (),
+        {
+            "execution_issues": [type("Issue", (), {"code": "GATE2_EXECUTION_ERROR"})()],
+            "decisions": [
+                type(
+                    "Decision",
+                    (),
+                    {"issues": [type("Issue", (), {"code": "REFERENCE_TARGET_NOT_FOUND"})()]},
+                )()
+            ],
+        },
+    )()
+
+    assert _gate2_safe_issue_codes(result) == {
+        "GATE2_EXECUTION_ERROR",
+        "REFERENCE_TARGET_NOT_FOUND",
+    }
 
 
 def test_pipeline_accepts_only_distinct_known_requested_narrative_modes() -> None:

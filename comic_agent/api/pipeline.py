@@ -211,6 +211,7 @@ def get_pipeline_status(
     gate3_result = timeline.gate3_result if timeline is not None else None
     safe_codes = sorted(
         set(run.pipeline_safe_issue_codes)
+        | _gate2_safe_issue_codes(run.review_gate2_result)
         | {str(code) for attempt in attempts for code in attempt.original_gate2_issue_codes}
         | set(str(code) for code in (gate3_route.safe_issue_codes if gate3_route else []))
         | set(run.gate2_handoff.safe_issue_codes if run.gate2_handoff is not None else [])
@@ -263,6 +264,21 @@ def get_pipeline_status(
         "timeline_recovery_budget": (
             timeline.recovery_budget.model_dump(mode="json") if timeline is not None else None
         ),
+    }
+
+
+def _gate2_safe_issue_codes(result: Any) -> set[str]:
+    """Return only typed Gate 2 diagnostics suitable for the progress summary."""
+
+    if result is None:
+        return set()
+    return {
+        str(issue.code)
+        for issue in [
+            *getattr(result, "execution_issues", []),
+            *(issue for decision in getattr(result, "decisions", []) for issue in decision.issues),
+        ]
+        if isinstance(getattr(issue, "code", None), str)
     }
 
 
