@@ -3,6 +3,9 @@
 from pydantic import ValidationError
 
 from comic_agent.agents.base import BaseAgent
+from comic_agent.agents.source_evidence import (
+    is_verifiable_or_uniquely_rebindable_evidence,
+)
 from comic_agent.agents.specs import AgentSpec
 from comic_agent.providers.llm import LLMProvider
 from comic_agent.schemas import (
@@ -170,12 +173,14 @@ class RelationshipSignalExtractionAgent(BaseAgent[RelationshipSignalProposalBatc
                 )
             for evidence in signal.evidence_refs:
                 source = source_text_by_chunk_id.get(evidence.chunk_id)
-                if source is None:
-                    raise ValueError(
-                        "RelationshipSignalExtractionAgent evidence must reference a "
-                        "source_chunk_ids-selected input SourceChunk"
-                    )
-                if evidence.quote_text is None or evidence.quote_text not in source:
+                if not is_verifiable_or_uniquely_rebindable_evidence(
+                    evidence, source_text_by_chunk_id
+                ):
+                    if source is None:
+                        raise ValueError(
+                            "RelationshipSignalExtractionAgent evidence must reference a "
+                            "source_chunk_ids-selected input SourceChunk"
+                        )
                     raise ValueError(
                         "RelationshipSignalExtractionAgent evidence quote_text must be "
                         "verbatim input SourceChunk text"

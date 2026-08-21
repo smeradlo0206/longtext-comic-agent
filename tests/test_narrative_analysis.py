@@ -1122,12 +1122,14 @@ class _RelationshipSignalWindowProvider:
         *,
         empty: bool = False,
         failures: dict[int, Exception] | None = None,
+        invalid_evidence_chunk: bool = False,
         mismatched_evidence_offsets: bool = False,
     ) -> None:
         self.calls: list[list[str]] = []
         self.output_recovery_markers: list[str | None] = []
         self.empty = empty
         self.failures = failures or {}
+        self.invalid_evidence_chunk = invalid_evidence_chunk
         self.mismatched_evidence_offsets = mismatched_evidence_offsets
 
     def structured_generate(self, request, output_model):  # type: ignore[no-untyped-def]
@@ -1177,7 +1179,11 @@ class _RelationshipSignalWindowProvider:
                     "reality_layer": "PRIMARY",
                     "evidence_refs": [
                         {
-                            "chunk_id": chunk_ids[0],
+                            "chunk_id": (
+                                "unselected-chunk"
+                                if self.invalid_evidence_chunk
+                                else chunk_ids[0]
+                            ),
                             "quote_start": 1 if self.mismatched_evidence_offsets else None,
                             "quote_end": 5 if self.mismatched_evidence_offsets else None,
                             "quote_text": "甲信任乙。",
@@ -1567,6 +1573,35 @@ def test_relationship_signal_worker_normalizes_verbatim_evidence_offsets(
     assert evidence.quote_text == "甲信任乙。"
     assert evidence.quote_start == 0
     assert evidence.quote_end == 5
+
+
+def test_relationship_signal_worker_rebinds_unique_verbatim_evidence_chunk(
+    tmp_path: Path,
+) -> None:
+    chunks = [_chunk(0).model_copy(update={"text": "甲信任乙。"})]
+    source_repository = _FakeSourceRepository(chunks)
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["relationship_signal_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _RelationshipSignalWindowProvider(invalid_evidence_chunk=True)
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+    result = analysis_repository.get_result(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert result is not None
+    assert result.relationship_signals[0].proposal.evidence_refs[0].chunk_id == chunks[0].chunk_id
 
 
 def test_relationship_signal_worker_splits_length_failure_by_owned_chunks(tmp_path: Path) -> None:
@@ -2409,10 +2444,45 @@ def test_worker_does_not_convert_source_only_state_change_rejection_to_success(
 
     completed = worker.run_pending(run.analysis_run_id)
     result = analysis_repository.get_result(run.analysis_run_id)
+    failed_window = next(
+        window
+        for window in analysis_repository.list_windows(run.analysis_run_id)
+        if window.status == NarrativeAnalysisWindowStatus.FAILED
+    )
 
     assert completed.status == NarrativeAnalysisRunStatus.FAILED
     assert provider.calls == ["state_change_extraction"]
     assert result is None
+    assert failed_window.failure_category == "EVIDENCE_VALIDATION_FAILED"
+
+
+def test_worker_rebinds_unique_verbatim_state_change_evidence_chunk(
+    tmp_path: Path,
+) -> None:
+    source_repository = _FakeSourceRepository([_chunk(0)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["state_change_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _StateChangeWindowProvider(invalid_evidence=True)
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+    result = analysis_repository.get_result(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert provider.calls == ["state_change_extraction"]
+    assert result is not None
+    assert result.state_changes[0].proposal.evidence_refs[0].chunk_id == _chunk(0).chunk_id
 
 
 def test_worker_normalizes_verbatim_state_change_evidence_before_offset_validation(
