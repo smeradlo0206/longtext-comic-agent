@@ -226,7 +226,7 @@ class NarrativeGate2HandoffCoordinator:
     ) -> ProposalRecoveryDiagnosticV1:
         envelope = envelopes[(decision.proposal_schema, decision.proposal_id)]
         issues = sorted(decision.issues, key=lambda item: item.issue_id)
-        issue_codes = [issue.code for issue in issues]
+        issue_codes = _stable_unique(issue.code for issue in issues)
         source_chunk_ids = _stable_unique(
             evidence.chunk_id for evidence in envelope.aggregated_evidence_refs
         )
