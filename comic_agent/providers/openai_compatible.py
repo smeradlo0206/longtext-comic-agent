@@ -749,6 +749,7 @@ class OpenAICompatibleLLMProvider:
         if input_context.get("output_recovery") not in {
             "schema_validation",
             "state_change_schema_recovery",
+            "evidence_validation",
         }:
             return ""
         batch_contract = {
@@ -836,6 +837,15 @@ class OpenAICompatibleLLMProvider:
                 "or a non-batch object."
                 f"{statement_support_recovery}"
             )
+        evidence_recovery = ""
+        if input_context.get("output_recovery") == "evidence_validation":
+            evidence_recovery = (
+                " For every retained proposal, copy each evidence quote_text verbatim from "
+                "one supplied source_chunk and set evidence.chunk_id to that exact supplied "
+                "chunk_id. Leave quote_start and quote_end null unless both exact local offsets "
+                "are known. If no exact supplied quote supports a proposal, omit that proposal "
+                "rather than paraphrasing or inventing evidence."
+            )
         rule_hint = (
             f" The previous output violated these safe schema rules: {', '.join(safe_rule_codes)}."
             if safe_rule_codes
@@ -846,6 +856,7 @@ class OpenAICompatibleLLMProvider:
             f"{schema_name} JSON object. Return no markdown, explanation, reasoning, or alternate "
             f"schema. {batch_instruction}{rule_hint}{event_shape}{knowledge_state_shape}"
             f"{state_change_shape}{relationship_signal_shape}\n\n"
+            f"{evidence_recovery}\n\n"
         )
 
     def _compact_output_contract(self, output_model: type[BaseModel]) -> dict[str, object]:

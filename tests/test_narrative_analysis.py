@@ -1053,13 +1053,18 @@ class _StateChangeWindowProvider:
         empty: bool = False,
         failures: dict[int, Exception] | None = None,
         invalid_evidence: bool = False,
+        invalid_evidence_quote: bool = False,
+        repair_evidence_on_retry: bool = False,
         mismatched_evidence_offsets: bool = False,
     ) -> None:
         self.calls: list[str] = []
         self.empty = empty
         self.failures = failures or {}
         self.invalid_evidence = invalid_evidence
+        self.invalid_evidence_quote = invalid_evidence_quote
+        self.repair_evidence_on_retry = repair_evidence_on_retry
         self.mismatched_evidence_offsets = mismatched_evidence_offsets
+        self.output_recovery_markers: list[str | None] = []
 
     def structured_generate(self, request, output_model):  # type: ignore[no-untyped-def]
         self.calls.append("state_change_extraction")
@@ -1067,9 +1072,16 @@ class _StateChangeWindowProvider:
         if failure is not None:
             raise failure
         input_context = request["input_context"]
+        self.output_recovery_markers.append(input_context.get("output_recovery"))
         chunk_id = input_context["source_chunk_ids"][0]
         quote = input_context["source_chunks"][0]["text"][:4]
         evidence_chunk_id = "unselected-chunk" if self.invalid_evidence else chunk_id
+        evidence_quote = (
+            "not verbatim source evidence"
+            if self.invalid_evidence_quote
+            and not (self.repair_evidence_on_retry and len(self.calls) > 1)
+            else quote
+        )
         changes = []
         if not self.empty:
             changes = [
@@ -1099,7 +1111,7 @@ class _StateChangeWindowProvider:
                             "chunk_id": evidence_chunk_id,
                             "quote_start": 1 if self.mismatched_evidence_offsets else None,
                             "quote_end": 5 if self.mismatched_evidence_offsets else None,
-                            "quote_text": quote,
+                            "quote_text": evidence_quote,
                         }
                     ],
                     "new_value_evidence_indexes": [0],
@@ -2444,16 +2456,13 @@ def test_worker_does_not_convert_source_only_state_change_rejection_to_success(
 
     completed = worker.run_pending(run.analysis_run_id)
     result = analysis_repository.get_result(run.analysis_run_id)
-    failed_window = next(
-        window
-        for window in analysis_repository.list_windows(run.analysis_run_id)
-        if window.status == NarrativeAnalysisWindowStatus.FAILED
-    )
+    failed_window = analysis_repository.list_windows(run.analysis_run_id)[0]
 
-    assert completed.status == NarrativeAnalysisRunStatus.FAILED
-    assert provider.calls == ["state_change_extraction"]
+    assert completed.status == NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
+    assert provider.calls == ["state_change_extraction"] * 2
     assert result is None
-    assert failed_window.failure_category == "EVIDENCE_VALIDATION_FAILED"
+    assert failed_window.status == NarrativeAnalysisWindowStatus.NEEDS_HUMAN_ACTION
+    assert failed_window.failure_category == "EVIDENCE_REPAIR_EXHAUSTED"
 
 
 def test_worker_rebinds_unique_verbatim_state_change_evidence_chunk(
@@ -2483,6 +2492,65 @@ def test_worker_rebinds_unique_verbatim_state_change_evidence_chunk(
     assert provider.calls == ["state_change_extraction"]
     assert result is not None
     assert result.state_changes[0].proposal.evidence_refs[0].chunk_id == _chunk(0).chunk_id
+
+
+def test_worker_repairs_non_verbatim_state_change_evidence_once(
+    tmp_path: Path,
+) -> None:
+    source_repository = _FakeSourceRepository([_chunk(0)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["state_change_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _StateChangeWindowProvider(
+        invalid_evidence_quote=True,
+        repair_evidence_on_retry=True,
+    )
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert provider.calls == ["state_change_extraction"] * 2
+    assert provider.output_recovery_markers == [None, "evidence_validation"]
+
+
+def test_worker_stops_after_one_non_verbatim_evidence_repair(
+    tmp_path: Path,
+) -> None:
+    source_repository = _FakeSourceRepository([_chunk(0)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["state_change_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _StateChangeWindowProvider(invalid_evidence_quote=True)
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+    window = analysis_repository.list_windows(run.analysis_run_id)[0]
+
+    assert completed.status == NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
+    assert provider.calls == ["state_change_extraction"] * 2
+    assert window.status == NarrativeAnalysisWindowStatus.NEEDS_HUMAN_ACTION
+    assert window.failure_category == "EVIDENCE_REPAIR_EXHAUSTED"
 
 
 def test_worker_normalizes_verbatim_state_change_evidence_before_offset_validation(

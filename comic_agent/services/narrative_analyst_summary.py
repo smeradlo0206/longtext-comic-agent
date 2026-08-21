@@ -51,6 +51,9 @@ FAILURE_RECOMMENDED_ACTIONS = {
     "PROVIDER_RESPONSE_FORMAT_INVALID": "retry once and inspect sanitized provider diagnostics",
     "SCHEMA_VALIDATION_FAILED": "inspect provider JSON shape and mode boundary",
     "EVIDENCE_VALIDATION_FAILED": "manual review evidence fields against selected context",
+    "EVIDENCE_REPAIR_EXHAUSTED": (
+        "automatic evidence recovery stopped; inspect selected-source diagnostics"
+    ),
     "QUOTE_NOT_MATCHED": "tighten exact quote prompt and use shorter verbatim quote",
     "CHAR_RANGE_NOT_MATCHED": "tighten exact quote prompt or omit uncertain char ranges",
     "MODE_NOT_IMPLEMENTED": "select an implemented NarrativeAnalyst mode",
