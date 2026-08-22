@@ -1196,6 +1196,7 @@
     }
 
     function describeSafePipelineStartError(error) {
+      if (error.message?.startsWith("真实 LLM 尚未就绪：")) return error.message;
       if (error.status === 409) return "真实 LLM 启动前检查未通过：确认服务器已启用真实 LLM、关闭 Fake Mode，并配置本地 Key。";
       if (error.status === 422 && error.payload?.gate1) return "Gate 1 拒绝了导入文本；请查看 Gate 1 审核结果。";
       if (error.status === 413) return "TXT 超过当前导入上限，尚未创建分析任务。";

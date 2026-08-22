@@ -242,6 +242,7 @@ def test_web_console_exposes_whole_document_analysis_as_the_normal_flow() -> Non
     assert "timeline_safe_issue_codes" in html
     assert "ensureSafePipelineRealLlmEnabled" in html
     assert "describeSafePipelineStartError" in html
+    assert 'error.message?.startsWith("真实 LLM 尚未就绪：")' in html
     assert "START_FAILED" in html
     assert 'body.append("real_llm_requested", String(realLlmRequested))' in html
     assert "const stoppedAtGate2" in html
