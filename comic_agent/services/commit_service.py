@@ -1,6 +1,6 @@
 """Canonical commit boundary for evidence-backed story data."""
 
-from comic_agent.repositories.storybible_repository import StoryBibleRepository
+from comic_agent.ports.storybible import StoryBibleCanonicalRepositoryPort
 from comic_agent.schemas.base import EvidenceRefV1
 from comic_agent.schemas.narrative import (
     EventProposalV1,
@@ -40,7 +40,7 @@ class CommitService:
     def commit_storybible_plan(
         self,
         plan: CommitPlanV1,
-        repository: StoryBibleRepository,
+        repository: StoryBibleCanonicalRepositoryPort,
     ) -> CommitPlanV1:
         """Validate a complete plan, then promote its updates idempotently."""
 

@@ -14,6 +14,7 @@ from comic_agent.database.models import (
     StoryRelationshipModel,
     WorldRuleModel,
 )
+from comic_agent.ports.storybible import StoryBibleCanonicalRepositoryPort
 from comic_agent.schemas.base import RecordStatus
 from comic_agent.schemas.storybible import (
     CommitPlanV1,
@@ -45,7 +46,7 @@ UPDATE_TYPES = (
 )
 
 
-class StoryBibleRepository:
+class StoryBibleRepository(StoryBibleCanonicalRepositoryPort):
     """Data access layer that keeps all StoryBible queries project-scoped."""
 
     def __init__(self, session: Session) -> None:
