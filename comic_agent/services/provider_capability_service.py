@@ -23,6 +23,7 @@ from comic_agent.schemas.reliability import (
     StructuredOutputMode,
     StructuredOutputPolicy,
 )
+from comic_agent.schemas.timeline import TimelinePairInferenceV1
 from comic_agent.services.narrative_analyst_summary import classify_exception
 
 
@@ -37,13 +38,14 @@ class CapabilityStore(Protocol):
 class ProviderCapabilityService:
     """Resolve source-free base and per-output-Schema capabilities until TTL expiry."""
 
-    _NARRATIVE_OUTPUT_MODELS: tuple[type[BaseModel], ...] = (
+    _OUTPUT_MODELS: tuple[type[BaseModel], ...] = (
         EntityProposalBatchV1,
         EventProposalBatchV1,
         ClaimProposalBatchV1,
         KnowledgeStateProposalBatchV1,
         StateChangeProposalBatchV1,
         RelationshipSignalProposalBatchV1,
+        TimelinePairInferenceV1,
     )
 
     def __init__(self, *, settings: Settings, repository: CapabilityStore) -> None:
@@ -95,10 +97,10 @@ class ProviderCapabilityService:
         profile: ProviderCapabilityProfileV1,
         policy: StructuredOutputPolicy,
     ) -> ProviderCapabilityProfileV1:
-        """Probe each actual Narrative batch contract without source text.
+        """Probe each actual Narrative/Timeline Provider contract without source text.
 
         A provider accepting a tiny readiness object is not evidence that it can
-        satisfy our six constrained Proposal batches.  Providers that do not
+        satisfy our constrained Proposal batches and pair inference. Providers that do not
         offer this optional capability remain compatible, but cannot claim a
         per-Schema strict guarantee.
         """
@@ -108,7 +110,7 @@ class ProviderCapabilityService:
             return profile
 
         capabilities = []
-        for output_model in self._NARRATIVE_OUTPUT_MODELS:
+        for output_model in self._OUTPUT_MODELS:
             try:
                 capabilities.append(probe_schema(policy, output_model))
             except Exception as exc:

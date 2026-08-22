@@ -193,6 +193,8 @@ from comic_agent.schemas.timeline import (
     TimelineGate3IssueV1,
     TimelineGate3RunStatus,
     TimelineGate3RunV1,
+    TimelinePairInferenceV1,
+    TimelineProviderDiagnosticsV1,
     TimelineRecoveryBudgetV1,
 )
 from comic_agent.schemas.visual import PanelSpecV1
@@ -443,5 +445,7 @@ __all__ = [
     "TimelineGate3IssueV1",
     "TimelineGate3RunStatus",
     "TimelineGate3RunV1",
+    "TimelinePairInferenceV1",
+    "TimelineProviderDiagnosticsV1",
     "TimelineRecoveryBudgetV1",
 ]

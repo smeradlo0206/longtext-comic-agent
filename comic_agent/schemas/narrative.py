@@ -698,6 +698,40 @@ class EventProposalBatchV1(StrictBaseModel):
         ),
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_provider_versioned_mentions(cls, value: Any) -> Any:
+        """Lift only impossible v1.0 mention payloads to their v1.1 contract.
+
+        Some JSON-object Providers select the legacy default even while emitting
+        v1.1-only mention fields. The fields themselves prove the intended
+        version, so this is a compatibility normalization rather than a fact or
+        evidence repair.
+        """
+
+        if not isinstance(value, dict):
+            return value
+        events = value.get("events")
+        if not isinstance(events, list):
+            return value
+
+        def needs_v11(item: object) -> bool:
+            return isinstance(item, dict) and (
+                bool(item.get("participant_mentions"))
+                or item.get("location_mention") is not None
+            )
+
+        if not any(needs_v11(item) for item in events):
+            return value
+        return {
+            **value,
+            "schema_version": "1.1",
+            "events": [
+                {**item, "schema_version": "1.1"} if isinstance(item, dict) else item
+                for item in events
+            ],
+        }
+
     @model_validator(mode="after")
     def validate_unique_event_ids(self) -> "EventProposalBatchV1":
         """Keep batch outputs addressable by unique proposal id."""

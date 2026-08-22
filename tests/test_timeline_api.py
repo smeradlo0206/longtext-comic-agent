@@ -148,16 +148,11 @@ class CountingMockLLMProvider(MockLLMProvider):
 
 
 def llm_payload(
-    *, relation: str = "BEFORE", quote: str | None = "Chen leaves before Lin arrives."
+    *, relation: str = "BEFORE", _quote: str | None = "Chen leaves before Lin arrives."
 ) -> dict[str, object]:
     return {
-        "proposal_id": "provider-proposal",
-        "source_event_id": "event-1",
-        "target_event_id": "event-2",
         "relation": relation,
-        "evidence_refs": []
-        if relation == "UNKNOWN"
-        else [{"chunk_id": "chunk-a", "quote_text": quote}],
+        "evidence_indexes": [] if relation == "UNKNOWN" else [0],
         "confidence": 0.9,
         "reasoning_summary": "The source explicitly gives the ordering.",
     }
@@ -195,12 +190,13 @@ def test_timeline_api_llm_validates_evidence_and_reuses_cache(tmp_path) -> None:
     assert provider.calls == 1
 
 
-def test_timeline_api_rejects_invalid_llm_evidence_and_records_failure(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_timeline_api_rejects_invalid_llm_evidence_index_and_records_failure(tmp_path) -> None:  # type: ignore[no-untyped-def]
     app = create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'timeline.db'}")
     seed_chunk(
         app, chunk_id="chunk-a", project_id="project-a", text="Chen leaves before Lin arrives."
     )
-    bad = llm_payload(quote="not present")
+    bad = llm_payload()
+    bad["evidence_indexes"] = [99]
     app.state.timeline_agent = TimelineAgent(MockLLMProvider(bad), provider_model="mock-v2")
 
     with TestClient(app) as client:
@@ -208,7 +204,7 @@ def test_timeline_api_rejects_invalid_llm_evidence_and_records_failure(tmp_path)
         runs = client.get("/projects/project-a/agent-runs")
 
     assert response.status_code == 422
-    assert "quote_text does not match" in response.json()["detail"]
+    assert "evidence selection failed" in response.json()["detail"]
     assert runs.json()[-1]["status"] == "FAILED"
 
 
@@ -237,20 +233,18 @@ def test_timeline_api_records_timeout_and_rejects_malformed_provider_output(tmp_
     assert [run["status"] for run in runs.json()] == ["FAILED", "FAILED"]
 
 
-def test_timeline_api_rejects_out_of_bounds_llm_quote(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_timeline_api_rejects_out_of_bounds_llm_evidence_index(tmp_path) -> None:  # type: ignore[no-untyped-def]
     app = create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'timeline.db'}")
     seed_chunk(app, chunk_id="chunk-a", project_id="project-a", text="short source")
     response = llm_payload()
-    response["evidence_refs"] = [
-        {"chunk_id": "chunk-a", "quote_start": 0, "quote_end": 100, "quote_text": "short source"}
-    ]
+    response["evidence_indexes"] = [1]
     app.state.timeline_agent = TimelineAgent(MockLLMProvider(response), provider_model="mock-v2")
 
     with TestClient(app) as client:
         result = client.post("/projects/project-a/timeline/analyze", json=llm_request_payload())
 
     assert result.status_code == 422
-    assert "quote range exceeds" in result.json()["detail"]
+    assert "evidence selection failed" in result.json()["detail"]
 
 
 @pytest.mark.parametrize(

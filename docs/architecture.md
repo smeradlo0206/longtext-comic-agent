@@ -60,6 +60,13 @@ into bounded `TimelineAnalysisInputV1` records. It validates bundle/profile/run 
 SourceChunk evidence without Provider calls, repository scans, or writes. This is not a complete
 manuscript-to-comic pipeline and requires no database migration.
 
+Timeline LLM inference uses `TimelinePairInferenceV1`, a deliberately small external
+contract. The model selects a relation and indexes into an approved EvidenceRef allowlist;
+`TimelineAgent` supplies event ids, proposal ids, and exact evidence deterministically.
+Timeline uses the same hardened OpenAI-compatible Provider adapter as Narrative, including
+structured-output negotiation, output budgets, safe schema diagnostics, and at most one
+schema-only repair for a pair. A failed pair cannot enter Gate 3 or any downstream module.
+
 ## Startup Phase Boundary
 
 This phase implements the source evidence chain, schema contracts, mock providers, API shell, database shell, docs, and tests. Full story compilation, image generation, QA repair loops, and frontend workflows are planned but not implemented.
@@ -77,9 +84,11 @@ without mutating the run, Proposal, AgentRun, or Timeline artifacts. Only a fres
 route exposes its typed approved Proposal bundle through the read-only API.
 Stage B recovery is bounded and append-only. A recovery attempt is reserved by a persistent
 idempotency key, consumes root/proposal/window budgets, and may rerun only the original mode,
-leaf window, and Gate 1-approved source scope. Reservation, resume, and process restart are
-safe to re-enter: one key yields at most one Provider call and one fresh AgentRun/Proposal
-batch. Recovery writes only the non-canonical recovery-attempt audit table (Alembic migration
+leaf window, and Gate 1-approved source scope. Its first call is an explicit verbatim-evidence
+repair; only if that call is structurally invalid and the persisted root budget reserves a
+second call may it issue one same-scope JSON-format repair. Reservation, resume, and process
+restart are safe to re-enter: one key yields at most one such bounded recovery execution and
+fresh AgentRun/Proposal batch. Recovery writes only the non-canonical recovery-attempt audit table (Alembic migration
 `0006_narrative_analysis_recovery_attempts`, after Timeline migration `0005`) and never writes
 StoryBible or invokes CommitService.
 

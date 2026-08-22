@@ -214,6 +214,11 @@ def get_pipeline_status(
         | {str(code) for attempt in attempts for code in attempt.original_gate2_issue_codes}
         | set(str(code) for code in (gate3_route.safe_issue_codes if gate3_route else []))
         | set(str(code) for code in (timeline.safe_issue_codes if timeline else []))
+        | set(
+            timeline.provider_diagnostics.schema_error_rule_codes
+            if timeline is not None and timeline.provider_diagnostics is not None
+            else []
+        )
         | set(run.gate2_handoff.safe_issue_codes if run.gate2_handoff is not None else [])
         | {
             window.failure_category
@@ -256,7 +261,21 @@ def get_pipeline_status(
             else None
         ),
         "timeline_safe_issue_codes": (
-            list(timeline.safe_issue_codes) if timeline is not None else []
+            sorted(
+                set(timeline.safe_issue_codes)
+                | set(
+                    timeline.provider_diagnostics.schema_error_rule_codes
+                    if timeline.provider_diagnostics is not None
+                    else []
+                )
+            )
+            if timeline is not None
+            else []
+        ),
+        "timeline_provider_diagnostics": (
+            timeline.provider_diagnostics.model_dump(mode="json")
+            if timeline is not None and timeline.provider_diagnostics is not None
+            else None
         ),
         "timeline_recovery": _timeline_recovery_status(timeline),
         "gate3": str(gate3_route.route) if gate3_route is not None else "NOT_READY",
@@ -394,6 +413,38 @@ def _require_real_pipeline_opt_in(
                 "safe_issue_codes": ["NARRATIVE_SCHEMA_CAPABILITY_UNAVAILABLE"],
                 "unsupported_schema_count": len(unsupported_schema_modes),
             },
+        )
+    timeline_provider = getattr(getattr(app_state, "timeline_agent", None), "_provider", None)
+    if timeline_provider is None:
+        raise HTTPException(
+            status_code=409,
+            detail={"safe_issue_codes": ["TIMELINE_PROVIDER_NOT_CONFIGURED"]},
+        )
+    timeline_model = settings.timeline_model or settings.storybible_model
+    timeline_capability = capability_service.resolve(
+        provider_key=f"{settings.llm_provider_name}:{timeline_model}",
+        provider=timeline_provider,
+    )
+    if timeline_capability.selected_output_mode == StructuredOutputMode.UNAVAILABLE:
+        raise HTTPException(
+            status_code=409,
+            detail={"safe_issue_codes": ["TIMELINE_STRUCTURED_OUTPUT_UNAVAILABLE"]},
+        )
+    pair_capability = next(
+        (
+            item
+            for item in timeline_capability.schema_capabilities
+            if item.output_schema_name == "TimelinePairInferenceV1"
+        ),
+        None,
+    )
+    if pair_capability is not None and pair_capability.selected_output_mode in {
+        StructuredOutputMode.UNAVAILABLE,
+        StructuredOutputMode.PROMPT_ONLY,
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail={"safe_issue_codes": ["TIMELINE_SCHEMA_CAPABILITY_UNAVAILABLE"]},
         )
 
 

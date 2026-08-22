@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier, Event
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -2524,7 +2525,7 @@ def test_worker_repairs_non_verbatim_state_change_evidence_once(
     assert provider.output_recovery_markers == [None, "evidence_validation"]
 
 
-def test_worker_stops_after_one_non_verbatim_evidence_repair(
+def test_worker_falls_back_to_a_verbatim_source_anchor_after_one_non_verbatim_repair(
     tmp_path: Path,
 ) -> None:
     source_repository = _FakeSourceRepository([_chunk(0)])
@@ -2547,10 +2548,15 @@ def test_worker_stops_after_one_non_verbatim_evidence_repair(
     ).run_pending(run.analysis_run_id)
     window = analysis_repository.list_windows(run.analysis_run_id)[0]
 
-    assert completed.status == NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
     assert provider.calls == ["state_change_extraction"] * 2
-    assert window.status == NarrativeAnalysisWindowStatus.NEEDS_HUMAN_ACTION
-    assert window.failure_category == "EVIDENCE_REPAIR_EXHAUSTED"
+    assert window.status == NarrativeAnalysisWindowStatus.SUCCEEDED
+    assert window.failure_category is None
+    result = analysis_repository.get_result(run.analysis_run_id)
+    assert result is not None
+    evidence = result.state_changes[0].proposal.evidence_refs[0]
+    assert evidence.quote_text is not None
+    assert evidence.quote_text in _chunk(0).text
 
 
 def test_worker_normalizes_verbatim_state_change_evidence_before_offset_validation(
@@ -2585,6 +2591,81 @@ def test_worker_normalizes_verbatim_state_change_evidence_before_offset_validati
     assert evidence.quote_text == "synt"
     assert evidence.quote_start == 0
     assert evidence.quote_end == 4
+
+
+def test_stage_b_recovery_reissues_evidence_then_one_schema_repair_on_same_scope() -> None:
+    """Stage B must not bypass the bounded correction instructions used by windows."""
+
+    failed = SimpleNamespace(
+        status=AgentRunStatus.FAILED,
+        provider_result=SimpleNamespace(
+            execution_metadata=SimpleNamespace(total_tokens=101),
+        ),
+        payload={
+            "provider_error_diagnostics": {
+                "schema_error_kind": "value_error",
+                "schema_error_rule_codes": ["EVENT_MENTION_FIELDS_REQUIRE_V11"],
+            }
+        },
+    )
+    succeeded = SimpleNamespace(
+        status=AgentRunStatus.SUCCEEDED,
+        provider_result=SimpleNamespace(
+            execution_metadata=SimpleNamespace(total_tokens=103),
+        ),
+        payload={},
+    )
+
+    class _RecoveryWorkflow:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def run(self, **kwargs: object) -> object:
+            self.calls.append(kwargs)
+            return SimpleNamespace(agent_run=[failed, succeeded][len(self.calls) - 1])
+
+    workflow = _RecoveryWorkflow()
+    directive = SimpleNamespace(
+        project_id="project-1",
+        mode="event_extraction",
+        ordered_source_chunk_ids=["chunk-0"],
+        max_chars_per_chunk=1200,
+        max_provider_calls=2,
+    )
+
+    result = NarrativeAnalysisWorker._rerun_stage_b_directive(
+        workflow, directive, "attempt-1", real_llm_requested=True, allow_fake_provider=False
+    )
+
+    assert result.agent_run is succeeded
+    assert result.provider_requests == 2
+    assert result.total_tokens == 204
+    assert workflow.calls == [
+        {
+            "project_id": "project-1",
+            "mode": "event_extraction",
+            "chunk_ids": ["chunk-0"],
+            "chunk_limit": 1,
+            "max_chars_per_chunk": 1200,
+            "output_recovery": "evidence_validation",
+            "output_recovery_rule_codes": ["EVIDENCE_QUOTE_NOT_VERBATIM"],
+            "execution_nonce": "attempt-1:evidence",
+            "real_llm_requested": True,
+            "allow_fake_provider": False,
+        },
+        {
+            "project_id": "project-1",
+            "mode": "event_extraction",
+            "chunk_ids": ["chunk-0"],
+            "chunk_limit": 1,
+            "max_chars_per_chunk": 1200,
+            "output_recovery": "schema_validation",
+            "output_recovery_rule_codes": ["EVENT_MENTION_FIELDS_REQUIRE_V11"],
+            "execution_nonce": "attempt-1:schema",
+            "real_llm_requested": True,
+            "allow_fake_provider": False,
+        },
+    ]
 
 
 def test_rockery_cross_window_event_wording_stays_separate_for_manual_review() -> None:

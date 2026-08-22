@@ -729,6 +729,23 @@ class ReviewGate2Service:
                 resolution_basis=ReferenceResolutionBasis.EXACT_UNIQUE_MENTION,
             ), issues
         if len(candidates) > 1:
+            if path == "location_mention" and not required:
+                # Parallel extractors are allowed to emit a source mention without
+                # knowing which same-named candidate is the intended proposal.
+                # Do not guess and do not turn an optional link into a pipeline-wide
+                # human hold. The approved bundle retains this as an explicit,
+                # nonblocking unresolved reference for downstream consumers.
+                return (
+                    ReferenceResolutionDecisionV1(
+                        reference_path=path,
+                        mention_text=mention,
+                        expected_target_schemas=expected,
+                        required_for_downstream=False,
+                        status=ReferenceResolutionStatus.UNRESOLVED,
+                        resolution_basis=ReferenceResolutionBasis.NONE,
+                    ),
+                    issues,
+                )
             code = (
                 ReviewIssueCode.AMBIGUOUS_EVENT_REFERENCE
                 if set(expected) == {"EventProposalV1"}

@@ -204,8 +204,11 @@ def test_capability_service_caches_source_free_probe_until_ttl() -> None:
     assert first.selected_output_mode == StructuredOutputMode.STRICT_JSON_SCHEMA
     assert second == first
     assert provider.calls == 1
-    assert len(first.schema_capabilities) == 6
-    assert len(provider.schema_calls) == 6
+    assert len(first.schema_capabilities) == 7
+    assert "TimelinePairInferenceV1" in {
+        item.output_schema_name for item in first.schema_capabilities
+    }
+    assert len(provider.schema_calls) == 7
 
 
 def test_schema_probe_uses_each_concrete_schema_and_json_object_fallback() -> None:

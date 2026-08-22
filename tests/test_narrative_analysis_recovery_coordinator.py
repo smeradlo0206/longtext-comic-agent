@@ -128,6 +128,7 @@ def test_directive_locks_original_mode_leaf_window_and_gate1_scope() -> None:
     assert directive.original_window_id == "window-1"
     assert directive.ordered_source_chunk_ids == ["chunk-1", "chunk-2"]
     assert directive.approved_source_chunk_ids == ["chunk-1", "chunk-2"]
+    assert directive.max_provider_calls == 1
 
 
 def test_terminal_or_unknown_issue_never_creates_rerun_directive() -> None:

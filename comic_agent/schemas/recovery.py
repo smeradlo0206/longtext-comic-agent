@@ -112,7 +112,7 @@ class RecoveryPolicyV1(StrictBaseModel):
 class RecoveryDirectiveV1(StrictBaseModel):
     """Deterministic original-window rerun instruction without source text or prompts."""
 
-    schema_version: Literal["1.0", "1.1"] = "1.1"
+    schema_version: Literal["1.0", "1.1", "1.2"] = "1.2"
     directive_id: str
     idempotency_key: str
     target_kind: RecoveryTargetKind = RecoveryTargetKind.NARRATIVE_PROPOSAL
@@ -137,6 +137,15 @@ class RecoveryDirectiveV1(StrictBaseModel):
     policy: RecoveryPolicyV1
     budget_usage: RecoveryBudgetUsageV1
     max_chars_per_chunk: int = Field(default=1200, ge=1)
+    max_provider_calls: int = Field(
+        default=1,
+        ge=1,
+        le=2,
+        description=(
+            "Reserved calls for this locked recovery scope: one evidence repair and, "
+            "only when budget permits, one schema-format repair."
+        ),
+    )
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @model_validator(mode="after")

@@ -467,6 +467,75 @@ def test_event_participant_mention_is_exactly_linked_without_requiring_provider_
     assert event.participant_ids == []
 
 
+def test_ambiguous_optional_event_location_remains_unresolved_without_holding_bundle() -> None:
+    """Parallel extraction must not guess between same-named location candidates."""
+
+    event = EventProposalV1(
+        schema_version="1.1",
+        proposal_id="event-location-1",
+        event_type="OBSERVATION",
+        summary="Lin observes the gate.",
+        actor_resolution_status="NOT_APPLICABLE",
+        location_mention={
+            "mention_text": "Hall",
+            "resolution_status": "UNRESOLVED",
+            "proposal_id": None,
+            "proposal_schema": None,
+        },
+        evidence_refs=[_evidence()],
+        confidence=0.9,
+        reality_layer="PRIMARY",
+    )
+    result = NarrativeAnalysisResultV1(
+        analysis_run_id="analysis-1",
+        entities=[
+            AggregatedEntityProposalV1(
+                proposal=_entity("location-1").model_copy(
+                    update={"canonical_name": "Hall", "entity_type": "LOCATION"}
+                ),
+                agent_run_ids=["agent-location-1"],
+                evidence_refs=[_evidence()],
+            ),
+            AggregatedEntityProposalV1(
+                proposal=_entity("location-2").model_copy(
+                    update={"canonical_name": "Hall", "entity_type": "LOCATION"}
+                ),
+                agent_run_ids=["agent-location-2"],
+                evidence_refs=[_evidence()],
+            ),
+        ],
+        events=[
+            AggregatedEventProposalV1(
+                proposal=event,
+                agent_run_ids=["agent-event"],
+                evidence_refs=[_evidence()],
+            )
+        ],
+    )
+    review_input = build_review_gate2_input(
+        result=result,
+        project_id="project-1",
+        document_id="document-1",
+        allowed_chunk_ids=["chunk-1"],
+        policy=ReviewGate2PolicyV1(policy_id="policy-1"),
+    )
+
+    reviewed = ReviewGate2Service().review(
+        review_input,
+        _context(known_runs={"agent-location-1", "agent-location-2", "agent-event"}),
+    )
+
+    assert reviewed.status == "COMPLETED"
+    decision = next(item for item in reviewed.decisions if item.proposal_id == "event-location-1")
+    assert decision.decision == "APPROVED"
+    assert decision.reference_decisions[0].status == "UNRESOLVED"
+    assert decision.reference_decisions[0].required_for_downstream is False
+    assert reviewed.approved_bundle is not None
+    assert reviewed.approved_bundle.unresolved_nonblocking_references == [
+        decision.reference_decisions[0]
+    ]
+
+
 def test_claim_source_mention_is_linked_without_rejecting_a_parallel_character_name() -> None:
     claim = ClaimProposalV1(
         schema_version="1.3",

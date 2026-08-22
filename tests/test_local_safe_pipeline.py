@@ -20,6 +20,7 @@ from comic_agent.api.pipeline import (
 from comic_agent.config import Settings, get_settings
 from comic_agent.main import create_app
 from comic_agent.providers.mocks import LocalSafeDemoProvider, MockLLMProvider
+from comic_agent.providers.openai_compatible import OpenAICompatibleLLMProvider
 from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
 from comic_agent.repositories.provider_circuit_repository import ProviderCircuitRepository
 
@@ -137,6 +138,25 @@ def test_real_preflight_reuses_the_provider_instance_for_narrative_execution(
         assert app.state.narrative_analyst_provider is provider
     finally:
         session.close()
+
+
+def test_real_app_wires_timeline_to_hardened_provider_with_timeline_model(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("COMIC_AGENT_ENV", "development")
+    monkeypatch.setenv("COMIC_AGENT_FAKE_PIPELINE_DEMO", "false")
+    monkeypatch.setenv("ENABLE_REAL_LLM", "true")
+    monkeypatch.setenv("LLM_API_KEY", "test-local-key")
+    monkeypatch.setenv("TIMELINE_MODEL", "timeline-test-model")
+    monkeypatch.setenv("LLM_MAX_OUTPUT_TOKENS", "8000")
+    get_settings.cache_clear()
+
+    app = create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'timeline-provider.db'}")
+    provider = app.state.timeline_agent._provider
+
+    assert isinstance(provider, OpenAICompatibleLLMProvider)
+    assert provider._model == "timeline-test-model"
+    assert provider._max_output_tokens == 8000
 
 
 def test_pipeline_persists_an_explicit_six_mode_request(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

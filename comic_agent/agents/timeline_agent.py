@@ -1,11 +1,13 @@
 """Rules-first Timeline Agent with bounded pairwise LLM inference."""
 
 import json
+import re
 from collections.abc import Iterable
 from itertools import combinations
 
 from comic_agent.agents.specs import AgentSpec
 from comic_agent.providers.llm import LLMProvider
+from comic_agent.providers.openai_compatible import ProviderResponseError
 from comic_agent.schemas.base import EvidenceRefV1, RecordStatus
 from comic_agent.schemas.narrative import (
     ClaimProposalV1,
@@ -22,6 +24,7 @@ from comic_agent.schemas.timeline import (
     TimelineAnalysisProposalV1,
     TimelineConflictCategory,
     TimelineConflictV1,
+    TimelinePairInferenceV1,
 )
 from comic_agent.services.id_service import stable_id
 
@@ -71,10 +74,10 @@ class EventPairSelector:
 class TimelineAgent:
     """Keep deterministic checks separate from pairwise LLM time judgments."""
 
-    PROMPT_VERSION = "timeline-pair-v2.0"
+    PROMPT_VERSION = "timeline-pair-v2.1"
     spec = AgentSpec(
         agent_id="timeline-agent",
-        version="2.0",
+        version="2.1",
         reads=["EventProposalV1", "ClaimProposalV1", "StateChangeProposalV1"],
         output_schema="TimelineAnalysisProposalV1",
         tools=[],
@@ -94,6 +97,13 @@ class TimelineAgent:
         self._provider = provider
         self._provider_model = provider_model
         self._pair_selector = pair_selector or EventPairSelector()
+        self._provider_request_count = 0
+
+    @property
+    def provider_request_count(self) -> int:
+        """Return the exact number of Provider requests in the latest run."""
+
+        return self._provider_request_count
 
     @property
     def cache_identity(self) -> dict[str, str]:
@@ -114,6 +124,7 @@ class TimelineAgent:
     ) -> TimelineAnalysisProposalV1:
         """Analyze supplied candidates without database access or canonical writes."""
 
+        self._provider_request_count = 0
         chunks_by_id = {chunk.chunk_id: chunk for chunk in source_chunks}
         temporal_relations = (
             self._unknown_relations(input_context.event_proposals)
@@ -152,15 +163,23 @@ class TimelineAgent:
         chunks_by_id: dict[str, SourceChunkV1],
     ) -> TemporalRelationProposalV1:
         assert self._provider is not None
-        response = self._provider.structured_generate(
-            self._request_for_pair(first, second, chunks_by_id),
-            TemporalRelationProposalV1,
-        )
-        if (
-            response.source_event_id != first.proposal_id
-            or response.target_event_id != second.proposal_id
-        ):
-            raise ValueError("LLM temporal relation must preserve the requested event order")
+        evidence_refs = self._pair_evidence(first, second, chunks_by_id)
+        request = self._request_for_pair(first, second, chunks_by_id, evidence_refs)
+        try:
+            response = self._generate_pair(request)
+            self._validate_evidence_indexes(response, evidence_refs)
+        except ProviderResponseError as exc:
+            if not self._is_schema_failure(exc):
+                raise
+            repair_request = self._request_for_pair(
+                first,
+                second,
+                chunks_by_id,
+                evidence_refs,
+                repair_diagnostics=self._safe_repair_diagnostics(exc),
+            )
+            response = self._generate_pair(repair_request)
+            self._validate_evidence_indexes(response, evidence_refs)
         if response.relation not in {
             TemporalRelation.BEFORE,
             TemporalRelation.AFTER,
@@ -169,19 +188,91 @@ class TimelineAgent:
             TemporalRelation.UNKNOWN,
         }:
             raise ValueError("TimelineAgent V2 returned an unsupported temporal relation")
-        return response.model_copy(
-            update={
-                "proposal_id": stable_id(
-                    "temporal-v2", first.proposal_id, second.proposal_id, response.relation
-                )
-            }
+        selected_evidence = [evidence_refs[index] for index in response.evidence_indexes]
+        return TemporalRelationProposalV1(
+            proposal_id=stable_id(
+                "temporal-v2", first.proposal_id, second.proposal_id, response.relation
+            ),
+            source_event_id=first.proposal_id,
+            target_event_id=second.proposal_id,
+            relation=response.relation,
+            evidence_refs=selected_evidence,
+            confidence=response.confidence,
+            reasoning_summary=response.reasoning_summary,
         )
+
+    def _generate_pair(self, request: dict[str, object]) -> TimelinePairInferenceV1:
+        assert self._provider is not None
+        self._provider_request_count += 1
+        return self._provider.structured_generate(request, TimelinePairInferenceV1)
+
+    @staticmethod
+    def _validate_evidence_indexes(
+        response: TimelinePairInferenceV1,
+        evidence_refs: list[EvidenceRefV1],
+    ) -> None:
+        if any(index >= len(evidence_refs) for index in response.evidence_indexes):
+            raise ProviderResponseError(
+                "Timeline evidence selection failed validation",
+                diagnostics={
+                    "schema_error_field_paths": ["evidence_indexes"],
+                    "schema_error_rule_codes": ["TIMELINE_EVIDENCE_INDEX_OUT_OF_RANGE"],
+                    "expected_output_schema": "TimelinePairInferenceV1",
+                },
+            )
+
+    @staticmethod
+    def _safe_repair_diagnostics(exc: ProviderResponseError) -> dict[str, list[str]]:
+        diagnostics: dict[str, list[str]] = {}
+        patterns = {
+            "schema_error_field_paths": r"[A-Za-z0-9_.\[\]-]{1,256}",
+            "schema_error_rule_codes": r"[A-Z][A-Z0-9_]{0,255}",
+        }
+        for key, pattern in patterns.items():
+            value = exc.diagnostics.get(key)
+            if isinstance(value, list):
+                diagnostics[key] = [
+                    item
+                    for item in value
+                    if isinstance(item, str) and re.fullmatch(pattern, item)
+                ][:32]
+        return diagnostics
+
+    @staticmethod
+    def _is_schema_failure(exc: ProviderResponseError) -> bool:
+        return any(
+            key in exc.diagnostics
+            for key in (
+                "schema_error_field_paths",
+                "schema_error_rule_codes",
+                "schema_error_kind",
+            )
+        )
+
+    @staticmethod
+    def _pair_evidence(
+        first: EventProposalV1,
+        second: EventProposalV1,
+        chunks_by_id: dict[str, SourceChunkV1],
+    ) -> list[EvidenceRefV1]:
+        evidence_refs: list[EvidenceRefV1] = []
+        for event in (first, second):
+            for evidence_ref in event.evidence_refs:
+                if (
+                    evidence_ref.chunk_id in chunks_by_id
+                    and evidence_ref not in evidence_refs
+                ):
+                    evidence_refs.append(evidence_ref)
+        return evidence_refs
 
     def _request_for_pair(
         self,
         first: EventProposalV1,
         second: EventProposalV1,
         chunks_by_id: dict[str, SourceChunkV1],
+        evidence_refs: list[EvidenceRefV1],
+        *,
+        repair_diagnostics: dict[str, list[str]] | None = None,
     ) -> dict[str, object]:
         evidence_chunks: list[dict[str, str]] = []
         seen_chunk_ids: set[str] = set()
@@ -198,21 +289,21 @@ class TimelineAgent:
                 {
                     "role": "system",
                     "content": (
-                        "You are TimelineAgent V2. Judge ONLY Event A relative to Event B from "
-                        "the supplied records and exact evidence chunks. Narrative or chapter "
+                        "You are TimelineAgent V2.1. Judge ONLY Event A relative to Event B "
+                        "from the supplied records and exact evidence allowlist. Narrative "
+                        "or chapter "
                         "order is not story-time evidence. Never invent facts, dates, or "
                         "causal order. Claims are not established events. If evidence is "
                         "insufficient, ambiguous, "
                         "or an unanchored flashback, return UNKNOWN. Allowed relation values are "
                         "BEFORE, AFTER, SIMULTANEOUS, OVERLAPS, UNKNOWN. A non-UNKNOWN relation "
-                        "must cite exact EvidenceRef values from supplied chunks; quote_text "
-                        "must copy "
-                        "source text exactly. Preserve Event A as source_event_id and Event B as "
-                        "target_event_id. reasoning_summary must be a short evidence-grounded "
+                        "must select one or more integer indexes from evidence_allowlist. "
+                        "Do not return proposal ids, event ids, quotes, offsets, or source text. "
+                        "reasoning_summary must be a short evidence-grounded "
                         "summary, "
                         "not hidden reasoning. Return only one JSON object matching: "
                         + json.dumps(
-                            TemporalRelationProposalV1.model_json_schema(),
+                            TimelinePairInferenceV1.model_json_schema(),
                             ensure_ascii=False,
                             separators=(",", ":"),
                         )
@@ -222,9 +313,14 @@ class TimelineAgent:
                     "role": "user",
                     "content": json.dumps(
                         {
-                            "event_a": first.model_dump(mode="json"),
-                            "event_b": second.model_dump(mode="json"),
+                            "event_a": first.model_dump(mode="json", exclude={"evidence_refs"}),
+                            "event_b": second.model_dump(mode="json", exclude={"evidence_refs"}),
+                            "evidence_allowlist": [
+                                {"index": index, "evidence_ref": item.model_dump(mode="json")}
+                                for index, item in enumerate(evidence_refs)
+                            ],
                             "evidence_chunks": evidence_chunks,
+                            "repair_diagnostics": repair_diagnostics,
                         },
                         ensure_ascii=False,
                         separators=(",", ":"),

@@ -532,6 +532,8 @@ class OpenAICompatibleLLMProvider:
         )
         if output_schema_name == "RelationshipSignalProposalBatchV1" and field_paths:
             rule_codes.append("RELATIONSHIP_SIGNAL_SCHEMA_INVALID")
+        if output_schema_name == "TimelinePairInferenceV1" and field_paths:
+            rule_codes.append("TIMELINE_PAIR_SCHEMA_INVALID")
         diagnostics: ProviderDiagnostics = {
             "schema_error_kind": unique_kinds[0] if len(unique_kinds) == 1 else "multiple",
             "schema_error_field_paths": sorted(set(field_paths)),
@@ -559,6 +561,21 @@ class OpenAICompatibleLLMProvider:
             ),
             "contains an out-of-range index": "STATE_CHANGE_EVIDENCE_INDEX_OUT_OF_RANGE",
             "new_value_evidence_indexes is required": "STATE_CHANGE_NEW_VALUE_EVIDENCE_REQUIRED",
+            "EventProposalV1 v1.0 cannot include mention references": (
+                "EVENT_MENTION_FIELDS_REQUIRE_V11"
+            ),
+            "event location_id and location_mention are mutually exclusive": (
+                "EVENT_LOCATION_REFERENCE_CONFLICT"
+            ),
+            "KNOWN actor resolution requires participants or participant_mentions": (
+                "EVENT_KNOWN_ACTOR_REQUIRES_REFERENCE"
+            ),
+            "evidence_indexes must be unique": "TIMELINE_EVIDENCE_INDEX_DUPLICATE",
+            "evidence_indexes cannot be negative": "TIMELINE_EVIDENCE_INDEX_NEGATIVE",
+            "UNKNOWN relation cannot select evidence": "TIMELINE_UNKNOWN_MUST_NOT_SELECT_EVIDENCE",
+            "known relation requires at least one evidence index": (
+                "TIMELINE_KNOWN_RELATION_REQUIRES_EVIDENCE"
+            ),
             "new_value_evidence_indexes must not be empty": (
                 "STATE_CHANGE_NEW_VALUE_EVIDENCE_REQUIRED"
             ),
@@ -1052,14 +1069,18 @@ class OpenAICompatibleLLMProvider:
         return causes
 
 
-def build_openai_compatible_provider(settings: Settings) -> OpenAICompatibleLLMProvider:
+def build_openai_compatible_provider(
+    settings: Settings,
+    *,
+    model: str | None = None,
+) -> OpenAICompatibleLLMProvider:
     """Build the configured production provider from one authoritative settings object."""
 
     api_key = settings.llm_api_key.get_secret_value() if settings.llm_api_key is not None else None
     return OpenAICompatibleLLMProvider(
         api_key=api_key,
         base_url=settings.llm_base_url,
-        model=settings.llm_model,
+        model=model or settings.llm_model,
         provider_name=settings.llm_provider_name,
         response_format=settings.llm_response_format,
         structured_output_policy=settings.llm_structured_output_policy,

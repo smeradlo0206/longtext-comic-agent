@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol, cast
 
@@ -42,6 +43,17 @@ from comic_agent.services.review_gate2_service import (
     ReviewGate2ServiceContext,
     build_review_gate2_input,
 )
+
+
+@dataclass(frozen=True)
+class RecoveryRerunResult:
+    """Source-free execution accounting returned by a locked Stage B rerun."""
+
+    agent_run: AgentRunV1 | None
+    provider_requests: int = 1
+    total_tokens: int | None = None
+    elapsed_seconds: int | None = None
+    sanitized_diagnostic: str | None = None
 
 
 def default_recovery_policy() -> RecoveryPolicyV1:
@@ -102,7 +114,10 @@ class NarrativeAnalysisRecoveryCoordinator:
         analysis_repository: _AnalysisRepository,
         recovery_repository: _RecoveryRepository,
         policy: RecoveryPolicyV1,
-        rerun_window: Callable[[RecoveryDirectiveV1, str], AgentRunV1 | None] | None = None,
+        rerun_window: Callable[
+            [RecoveryDirectiveV1, str], AgentRunV1 | RecoveryRerunResult | None
+        ]
+        | None = None,
         get_agent_run: Callable[[str], AgentRunV1 | None] | None = None,
         review_service: ReviewGate2Service | None = None,
     ) -> None:
@@ -226,6 +241,11 @@ class NarrativeAnalysisRecoveryCoordinator:
             str(usage.proposal_attempts + 1),
         )
         key = stable_id("recovery-attempt", checksum_text("|".join(parts)))
+        remaining_provider_calls = (
+            None
+            if self._policy.max_provider_requests is None
+            else self._policy.max_provider_requests - usage.provider_requests
+        )
         return RecoveryDirectiveV1(
             directive_id=stable_id("recovery-directive", key),
             idempotency_key=key,
@@ -244,6 +264,9 @@ class NarrativeAnalysisRecoveryCoordinator:
             policy=self._policy,
             budget_usage=usage,
             max_chars_per_chunk=window.effective_max_chars_per_chunk,
+            max_provider_calls=(
+                2 if remaining_provider_calls is None else min(2, remaining_provider_calls)
+            ),
         )
 
     def recover_if_eligible(
@@ -345,12 +368,14 @@ class NarrativeAnalysisRecoveryCoordinator:
                 }
             )
             stored = self._recovery_repository.save_attempt_transition(running)
-            agent_run = self._rerun_window(directive, stored.attempt_id)
+            rerun = self._coerce_rerun_result(self._rerun_window(directive, stored.attempt_id))
+            agent_run = rerun.agent_run
             if agent_run is None or agent_run.status != AgentRunStatus.SUCCEEDED:
                 reviewing = stored.model_copy(
                     update={
                         "status": RecoveryAttemptStatus.REVIEWING,
-                        "budget_usage": self._usage_after_provider(stored, agent_run),
+                        "budget_usage": self._usage_after_provider(stored, rerun),
+                        "sanitized_diagnostic": rerun.sanitized_diagnostic,
                     }
                 )
                 stored = self._recovery_repository.save_attempt_transition(reviewing)
@@ -360,7 +385,7 @@ class NarrativeAnalysisRecoveryCoordinator:
                     "status": RecoveryAttemptStatus.PROVIDER_SUCCEEDED,
                     "new_agent_run_id": agent_run.agent_run_id,
                     "new_proposal_ids": list(agent_run.output_proposal_ids),
-                    "budget_usage": self._usage_after_provider(stored, agent_run),
+                    "budget_usage": self._usage_after_provider(stored, rerun),
                 }
             )
             stored = self._recovery_repository.save_attempt_transition(provider_succeeded)
@@ -371,11 +396,20 @@ class NarrativeAnalysisRecoveryCoordinator:
         return self._review_existing(stored)
 
     @staticmethod
+    def _coerce_rerun_result(
+        value: AgentRunV1 | RecoveryRerunResult | None,
+    ) -> RecoveryRerunResult:
+        if isinstance(value, RecoveryRerunResult):
+            return value
+        return RecoveryRerunResult(agent_run=value)
+
+    @staticmethod
     def _usage_after_provider(
-        attempt: RecoveryAttemptV1, agent_run: AgentRunV1 | None
+        attempt: RecoveryAttemptV1, rerun: RecoveryRerunResult
     ) -> RecoveryBudgetUsageV1:
         """Persist provider-visible usage without storing provider output or prompts."""
 
+        agent_run = rerun.agent_run
         elapsed = 1
         if attempt.started_at is not None:
             elapsed = max(1, int((datetime.now(UTC) - attempt.started_at).total_seconds()))
@@ -384,14 +418,20 @@ class NarrativeAnalysisRecoveryCoordinator:
             if agent_run is not None and agent_run.provider_result is not None
             else None
         )
-        if latency_ms is not None:
+        if rerun.elapsed_seconds is not None:
+            elapsed = max(elapsed, rerun.elapsed_seconds)
+        elif latency_ms is not None:
             elapsed = max(elapsed, (latency_ms + 999) // 1000)
-        total_tokens = 0
+        total_tokens = rerun.total_tokens if rerun.total_tokens is not None else 0
         if agent_run is not None:
             usage = agent_run.payload.get("provider_usage")
-            if isinstance(usage, dict) and isinstance(usage.get("total_tokens"), int):
+            if (
+                total_tokens == 0
+                and isinstance(usage, dict)
+                and isinstance(usage.get("total_tokens"), int)
+            ):
                 total_tokens = max(0, usage["total_tokens"])
-            elif agent_run.provider_result is not None:
+            elif total_tokens == 0 and agent_run.provider_result is not None:
                 # Mock and legacy providers do not expose token telemetry.  Retain a
                 # deterministic, conservative accounting unit instead of resetting
                 # the budget during resume; real adapters may supply provider_usage.
@@ -402,6 +442,8 @@ class NarrativeAnalysisRecoveryCoordinator:
             update={
                 "total_tokens": total_tokens,
                 "elapsed_seconds": elapsed,
+                "provider_requests": attempt.budget_usage.provider_requests
+                + max(0, rerun.provider_requests - 1),
             }
         )
 
@@ -499,6 +541,7 @@ class NarrativeAnalysisRecoveryCoordinator:
             attempt_id=attempt.attempt_id,
             route_decision=str(route.decision) if route is not None else None,
             budget_usage=attempt.budget_usage,
+            sanitized_diagnostic=attempt.sanitized_diagnostic,
         )
         completed = attempt.model_copy(
             update={
@@ -521,6 +564,7 @@ class NarrativeAnalysisRecoveryCoordinator:
         budget_usage: RecoveryBudgetUsageV1 | None = None,
         attempt_id: str | None = None,
         route_decision: str | None = None,
+        sanitized_diagnostic: str | None = None,
     ) -> RecoveryOutcomeV1:
         return RecoveryOutcomeV1(
             outcome_id=stable_id(
@@ -533,5 +577,6 @@ class NarrativeAnalysisRecoveryCoordinator:
             safe_issue_codes=issue_codes or [],
             route_decision=route_decision,
             budget_usage=budget_usage or RecoveryBudgetUsageV1(),
+            sanitized_diagnostic=sanitized_diagnostic,
             created_at=datetime.now(UTC),
         )

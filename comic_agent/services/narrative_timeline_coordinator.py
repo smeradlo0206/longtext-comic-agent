@@ -1,5 +1,6 @@
 """Idempotent Gate 2 APPROVED -> Timeline -> fresh Gate 3 orchestration."""
 
+import re
 from datetime import UTC, datetime
 from typing import Protocol, cast
 
@@ -20,6 +21,7 @@ from comic_agent.schemas.timeline import (
     TimelineAnalysisProposalV1,
     TimelineGate3RunStatus,
     TimelineGate3RunV1,
+    TimelineProviderDiagnosticsV1,
 )
 from comic_agent.schemas.workflow import AgentRunStatus, AgentRunV1
 from comic_agent.services.id_service import stable_id
@@ -120,6 +122,11 @@ class NarrativeTimelineCoordinator:
                     "status": TimelineGate3RunStatus.FAILED,
                     "failure_category": failure_category,
                     "safe_issue_codes": safe_issue_codes,
+                    "provider_request_count": (
+                        running.provider_request_count
+                        + _provider_request_count(self._timeline_runner)
+                    ),
+                    "provider_diagnostics": _safe_provider_diagnostics(exc),
                     "updated_at": datetime.now(UTC),
                 }
             )
@@ -144,7 +151,10 @@ class NarrativeTimelineCoordinator:
                     "status": TimelineGate3RunStatus.PROVIDER_SUCCEEDED,
                     "timeline_proposal": proposal,
                     "timeline_agent_run_id": agent_run_id,
-                    "provider_request_count": running.provider_request_count + 1,
+                    "provider_request_count": (
+                        running.provider_request_count
+                        + _provider_request_count(self._timeline_runner)
+                    ),
                     "updated_at": datetime.now(UTC),
                 }
             )
@@ -328,3 +338,52 @@ def _safe_failure_diagnostics(exc: Exception) -> tuple[ProviderFailureCategory, 
     if isinstance(exc, (ProviderResponseError, ValueError)):
         return ProviderFailureCategory.SCHEMA, ["TIMELINE_SCHEMA_VALIDATION_FAILED"]
     return ProviderFailureCategory.UNKNOWN, ["TIMELINE_EXECUTION_FAILED"]
+
+
+def _provider_request_count(runner: TimelineRunner) -> int:
+    value = getattr(runner, "provider_request_count", 1)
+    return value if isinstance(value, int) and value >= 0 else 1
+
+
+def _safe_provider_diagnostics(exc: Exception) -> TimelineProviderDiagnosticsV1 | None:
+    """Copy only typed, source-free Provider diagnostics into the Timeline run."""
+
+    if not isinstance(exc, ProviderResponseError):
+        return None
+    diagnostics = exc.diagnostics
+
+    def safe_strings(key: str, limit: int, pattern: str) -> list[str]:
+        value = diagnostics.get(key)
+        if not isinstance(value, list):
+            return []
+        return [
+            item[:256]
+            for item in value
+            if isinstance(item, str) and re.fullmatch(pattern, item[:256])
+        ][:limit]
+
+    expected = diagnostics.get("expected_output_schema")
+    finish_reason = diagnostics.get("finish_reason")
+    safe_expected = (
+        expected[:128]
+        if isinstance(expected, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,127}", expected)
+        else None
+    )
+    safe_finish = (
+        finish_reason[:64]
+        if isinstance(finish_reason, str)
+        and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", finish_reason)
+        else None
+    )
+    return TimelineProviderDiagnosticsV1(
+        expected_output_schema=safe_expected,
+        schema_error_field_paths=safe_strings(
+            "schema_error_field_paths", 32, r"[A-Za-z0-9_.\[\]-]{1,256}"
+        ),
+        schema_error_rule_codes=safe_strings(
+            "schema_error_rule_codes", 32, r"[A-Z][A-Z0-9_]{0,255}"
+        ),
+        finish_reason=(
+            safe_finish
+        ),
+    )
