@@ -298,6 +298,35 @@ def test_analysis_repository_persists_auditable_run_and_windows(tmp_path: Path) 
     ]
 
 
+def test_analysis_repository_reuses_existing_split_window_on_unique_scope_retry(
+    tmp_path: Path,
+) -> None:
+    """A retried split must not crash when its scope already exists under another ID."""
+
+    repository = _repository(tmp_path)
+    window = NarrativeAnalysisWindowV1(
+        analysis_window_id="split-child-original",
+        analysis_run_id="analysis-retry",
+        mode="entity_extraction",
+        window_index=100000,
+        chunk_ids=["chunk-0"],
+        owned_chunk_ids=["chunk-0"],
+        status=NarrativeAnalysisWindowStatus.PENDING,
+        parent_window_id="split-parent",
+        split_reason="SCHEMA_VALIDATION_FAILED",
+        idempotency_key="split-parent:split:0",
+    )
+
+    repository.create_windows([window])
+
+    retried = window.model_copy(update={"analysis_window_id": "split-child-retry"})
+    repository.create_windows([retried])
+
+    persisted = repository.list_windows("analysis-retry")
+    assert len(persisted) == 1
+    assert persisted[0].analysis_window_id == window.analysis_window_id
+
+
 def test_window_claim_is_atomic_across_independent_sessions(tmp_path: Path) -> None:
     """Only one persisted owner may reserve a window before Provider work starts."""
 

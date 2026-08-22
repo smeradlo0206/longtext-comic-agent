@@ -5,6 +5,7 @@ from typing import Any, cast
 
 from sqlalchemy import select, update
 from sqlalchemy.engine import CursorResult
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from comic_agent.database.models import NarrativeAnalysisRunModel, NarrativeAnalysisWindowModel
@@ -310,22 +311,56 @@ class NarrativeAnalysisRepository:
     def _create_window(self, window: NarrativeAnalysisWindowV1) -> None:
         existing = self._session.get(NarrativeAnalysisWindowModel, window.analysis_window_id)
         payload = window.model_dump(mode="json")
-        if existing is None:
-            now = datetime.now(UTC)
-            self._session.add(
-                NarrativeAnalysisWindowModel(
-                    analysis_window_id=window.analysis_window_id,
-                    analysis_run_id=window.analysis_run_id,
-                    mode=window.mode,
-                    window_index=window.window_index,
-                    status=str(window.status),
-                    agent_run_id=window.agent_run_id,
-                    payload=payload,
-                    created_at=now,
-                    updated_at=now,
+        if existing is not None:
+            if existing.payload != payload:
+                raise ValueError(
+                    f"NarrativeAnalysisWindow conflict for id: {window.analysis_window_id}"
+                )
+            return
+
+        # The recovery worker derives child IDs deterministically, but a resumed
+        # worker can reach the same logical scope with a different legacy ID.
+        # The database identity is (run, mode, window_index), so the first
+        # durable row wins and a retry becomes a no-op instead of a raw
+        # IntegrityError from the unique constraint.
+        existing_scope = self._session.scalar(
+            select(NarrativeAnalysisWindowModel).where(
+                NarrativeAnalysisWindowModel.analysis_run_id == window.analysis_run_id,
+                NarrativeAnalysisWindowModel.mode == window.mode,
+                NarrativeAnalysisWindowModel.window_index == window.window_index,
+            )
+        )
+        if existing_scope is not None:
+            return
+
+        now = datetime.now(UTC)
+        try:
+            # Flush inside a savepoint so a concurrent retry can be recovered
+            # without poisoning the surrounding SQLAlchemy session.
+            with self._session.begin_nested():
+                self._session.add(
+                    NarrativeAnalysisWindowModel(
+                        analysis_window_id=window.analysis_window_id,
+                        analysis_run_id=window.analysis_run_id,
+                        mode=window.mode,
+                        window_index=window.window_index,
+                        status=str(window.status),
+                        agent_run_id=window.agent_run_id,
+                        payload=payload,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+                self._session.flush()
+        except IntegrityError:
+            # Another session may have won the unique scope between the read
+            # above and the flush. Re-read after the savepoint rollback.
+            existing_scope = self._session.scalar(
+                select(NarrativeAnalysisWindowModel).where(
+                    NarrativeAnalysisWindowModel.analysis_run_id == window.analysis_run_id,
+                    NarrativeAnalysisWindowModel.mode == window.mode,
+                    NarrativeAnalysisWindowModel.window_index == window.window_index,
                 )
             )
-        elif existing.payload != payload:
-            raise ValueError(
-                f"NarrativeAnalysisWindow conflict for id: {window.analysis_window_id}"
-            )
+            if existing_scope is None:
+                raise
