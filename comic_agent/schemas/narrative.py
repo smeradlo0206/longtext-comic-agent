@@ -739,10 +739,10 @@ class EventProposalBatchV1(StrictBaseModel):
         proposal_ids = [event.proposal_id for event in self.events]
         if len(set(proposal_ids)) != len(proposal_ids):
             raise ValueError("events must have unique proposal_id values")
-        if self.events and {event.schema_version for event in self.events} != {
-            self.schema_version
-        }:
-            raise ValueError("event batches require all events to match the batch schema_version")
+        if self.schema_version == "1.0" and any(
+            event.schema_version != "1.0" for event in self.events
+        ):
+            raise ValueError("v1.0 event batches cannot contain v1.1 event records")
         return self
 
 

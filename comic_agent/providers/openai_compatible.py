@@ -568,7 +568,7 @@ class OpenAICompatibleLLMProvider:
                 "EVENT_LOCATION_REFERENCE_CONFLICT"
             ),
             "KNOWN actor resolution requires participants or participant_mentions": (
-                "EVENT_KNOWN_ACTOR_REQUIRES_REFERENCE"
+                "EVENT_KNOWN_ACTOR_REQUIRES_PARTICIPANT_IDS"
             ),
             "evidence_indexes must be unique": "TIMELINE_EVIDENCE_INDEX_DUPLICATE",
             "evidence_indexes cannot be negative": "TIMELINE_EVIDENCE_INDEX_NEGATIVE",
