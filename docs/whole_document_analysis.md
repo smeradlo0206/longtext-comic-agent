@@ -332,6 +332,16 @@ project/document/analysis-run identity and Gate 1-approved SourceChunks actually
 It does not scan a database for context, use raw provider responses, text similarity, embedding,
 or automatic canonical links.
 
+Parallel modes cannot know each other's provider-local Proposal ids. Event v1.1 and Claim
+v1.3 therefore distinguish a hard Proposal id from a source mention. When a legacy
+parallel result places a name or summary in an id field and no aggregate Proposal has that
+id, aggregation converts it into an unresolved `ProposalMentionRefV1` in the aggregate
+copy only. Gate 2 may bind that mention only by exact unique match within the typed,
+reality-compatible aggregate catalog. It records the result in the approved item's
+reference decisions; it never changes an AgentRun, guesses with semantic similarity, or
+writes a canonical entity. `NarrativeTimelineInputAdapter` uses only those recorded
+`RESOLVED` decisions to build a downstream input copy.
+
 The typed `ReviewGate2ResultV1` and `NarrativeAnalysisReviewRouteV1` are persisted inside the
 existing analysis-run JSON payload. Empty input produces a valid empty APPROVED bundle. An
 APPROVED route alone exposes the readonly `ApprovedProposalBundleV1` endpoint; rejected routes

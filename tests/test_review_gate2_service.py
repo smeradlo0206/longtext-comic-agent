@@ -5,6 +5,7 @@ from inspect import signature
 import pytest
 
 from comic_agent.schemas import (
+    AggregatedClaimProposalV1,
     AggregatedEntityProposalV1,
     AggregatedEventProposalV1,
     AggregatedKnowledgeStateProposalV1,
@@ -409,6 +410,111 @@ def test_unique_exact_reference_is_recorded_without_mutating_proposal() -> None:
     assert state_decision.reference_decisions[1].resolution_basis == "EXACT_UNIQUE_MENTION"
     assert proposal.target is not None
     assert proposal.target.resolution_status == "UNRESOLVED"
+
+
+def test_event_participant_mention_is_exactly_linked_without_requiring_provider_local_id() -> None:
+    """Parallel Event extraction may name a person but cannot know an EntityProposal id."""
+
+    event = EventProposalV1(
+        schema_version="1.1",
+        proposal_id="event-1",
+        event_type="OBSERVATION",
+        summary="Lin observes the gate.",
+        participant_ids=[],
+        participant_mentions=[
+            {
+                "mention_text": "Lin",
+                "resolution_status": "UNRESOLVED",
+                "proposal_id": None,
+                "proposal_schema": None,
+            }
+        ],
+        actor_resolution_status="KNOWN",
+        evidence_refs=[_evidence()],
+        confidence=0.9,
+        reality_layer="PRIMARY",
+    )
+    result = NarrativeAnalysisResultV1(
+        analysis_run_id="analysis-1",
+        entities=[
+            AggregatedEntityProposalV1(
+                proposal=_entity(), agent_run_ids=["agent-entity"], evidence_refs=[_evidence()]
+            )
+        ],
+        events=[
+            AggregatedEventProposalV1(
+                proposal=event, agent_run_ids=["agent-event"], evidence_refs=[_evidence()]
+            )
+        ],
+    )
+    review_input = build_review_gate2_input(
+        result=result,
+        project_id="project-1",
+        document_id="document-1",
+        allowed_chunk_ids=["chunk-1"],
+        policy=ReviewGate2PolicyV1(policy_id="policy-1"),
+    )
+
+    reviewed = ReviewGate2Service().review(
+        review_input, _context(known_runs={"agent-entity", "agent-event"})
+    )
+
+    event_decision = next(item for item in reviewed.decisions if item.proposal_id == "event-1")
+    assert event_decision.decision == "APPROVED"
+    assert event_decision.reference_decisions[0].reference_path == "participant_mentions[0]"
+    assert event_decision.reference_decisions[0].status == "RESOLVED"
+    assert event_decision.reference_decisions[0].selected_target_proposal_id == "entity-1"
+    assert event.participant_ids == []
+
+
+def test_claim_source_mention_is_linked_without_rejecting_a_parallel_character_name() -> None:
+    claim = ClaimProposalV1(
+        schema_version="1.3",
+        proposal_id="claim-1",
+        claim_type="FACTUAL_ASSERTION",
+        claim_text="Lin says the gate is closed.",
+        temporal_scope="PRESENT",
+        source_type="CHARACTER",
+        source_reference={
+            "mention_text": "Lin",
+            "resolution_status": "UNRESOLVED",
+            "proposal_id": None,
+            "proposal_schema": None,
+        },
+        verification_status="UNVERIFIED",
+        evidence_refs=[_evidence()],
+        confidence=0.9,
+        reality_layer="PRIMARY",
+    )
+    result = NarrativeAnalysisResultV1(
+        analysis_run_id="analysis-1",
+        entities=[
+            AggregatedEntityProposalV1(
+                proposal=_entity(), agent_run_ids=["agent-entity"], evidence_refs=[_evidence()]
+            )
+        ],
+        claims=[
+            AggregatedClaimProposalV1(
+                proposal=claim, agent_run_ids=["agent-claim"], evidence_refs=[_evidence()]
+            )
+        ],
+    )
+    review_input = build_review_gate2_input(
+        result=result,
+        project_id="project-1",
+        document_id="document-1",
+        allowed_chunk_ids=["chunk-1"],
+        policy=ReviewGate2PolicyV1(policy_id="policy-1"),
+    )
+
+    reviewed = ReviewGate2Service().review(
+        review_input, _context(known_runs={"agent-entity", "agent-claim"})
+    )
+
+    claim_decision = next(item for item in reviewed.decisions if item.proposal_id == "claim-1")
+    assert claim_decision.decision == "APPROVED"
+    assert claim_decision.reference_decisions[0].reference_path == "source_reference"
+    assert claim_decision.reference_decisions[0].selected_target_proposal_id == "entity-1"
 
 
 def test_multiple_exact_reference_candidates_require_human_review() -> None:

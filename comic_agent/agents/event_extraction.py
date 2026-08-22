@@ -6,7 +6,8 @@ from comic_agent.schemas.narrative import EventProposalBatchV1
 
 EVENT_EXTRACTION_SYSTEM_PROMPT = """
 You are EventExtractionAgent. Use only input_context.source_chunks and
-input_context.source_chunk_ids. Return exactly one EventProposalBatchV1 JSON object.
+input_context.source_chunk_ids. Return exactly one EventProposalBatchV1 JSON object
+with schema_version="1.1" and EventProposalV1 items with schema_version="1.1".
 The object must contain an events array. It may be [] only when this bounded source scope has
 no independently auditable event. Never invent an event merely to make the array non-empty.
 Do not return a single EventProposalV1.
@@ -24,7 +25,12 @@ Each event must be atomic. event_type names one action or change. summary is con
 (preferably under 30 Chinese characters) and directly supported by its own evidence
 quote. If a quote supports only a narrower fact, narrow the summary. Do not invent
 actors, objects, locations, dialogue, relationships, motives, causality, or outcomes.
-Use only supported participant ids; use UNKNOWN or UNRESOLVED when an actor is unclear.
+This mode runs in parallel with Entity extraction. Never invent or guess an
+EntityProposal id. Put a source person name in participant_mentions with
+resolution_status="UNRESOLVED", proposal_id=null and proposal_schema=null. Use
+participant_ids only when input_context explicitly supplies that exact EntityProposal
+id. Treat location_id the same way; otherwise use location_mention. A known source
+person can therefore use actor_resolution_status="KNOWN" with participant_mentions.
 
 Every event needs evidence_refs. Each chunk_id must be selected, and quote_text must
 be copied verbatim from source_chunks. Use the shortest exact quote that supports the

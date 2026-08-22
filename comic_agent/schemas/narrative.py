@@ -263,6 +263,42 @@ class KnowledgeReferenceResolutionStatus(StrEnum):
 RelationshipResolutionStatus = KnowledgeReferenceResolutionStatus
 
 
+class ProposalMentionRefV1(StrictBaseModel):
+    """A source mention that may be deterministically linked after parallel extraction.
+
+    It deliberately separates a copied source label from an internal Proposal id.
+    Parallel agents cannot know another mode's provider-local ids, so unresolved
+    mentions are valid candidate data rather than malformed hard references.
+    """
+
+    schema_version: Literal["1.0"] = Field(default="1.0", description="Schema version.")
+    mention_text: str = Field(min_length=1, description="Non-blank source mention.")
+    resolution_status: KnowledgeReferenceResolutionStatus = Field(
+        description="Whether proposal_id is an explicit candidate Proposal link."
+    )
+    proposal_id: str | None = Field(
+        default=None, description="Candidate Proposal id; never canonical data."
+    )
+    proposal_schema: Literal["EntityProposalV1", "EventProposalV1", "ClaimProposalV1"] | None = (
+        Field(default=None, description="Candidate Proposal schema when resolved.")
+    )
+
+    @model_validator(mode="after")
+    def validate_reference(self) -> "ProposalMentionRefV1":
+        if not self.mention_text.strip():
+            raise ValueError("proposal mention_text cannot be blank")
+        if self.resolution_status == KnowledgeReferenceResolutionStatus.RESOLVED:
+            if not self.proposal_id or not self.proposal_schema:
+                raise ValueError(
+                    "RESOLVED proposal mention requires proposal_id and proposal_schema"
+                )
+        elif self.proposal_id is not None or self.proposal_schema is not None:
+            raise ValueError(
+                "UNRESOLVED proposal mention requires proposal_id and proposal_schema null"
+            )
+        return self
+
+
 class KnowledgeTargetKind(StrEnum):
     """The kind of proposition or fact toward which a state is directed."""
 
@@ -574,11 +610,15 @@ class EntityProposalBatchV1(StrictBaseModel):
 class EventProposalV1(StrictBaseModel):
     """Candidate story event discovered from source text."""
 
-    schema_version: Literal["1.0"] = Field(default="1.0", description="Schema version.")
+    schema_version: Literal["1.0", "1.1"] = Field(default="1.0", description="Schema version.")
     proposal_id: str = Field(description="Proposal id.")
     event_type: str = Field(description="Event type label.")
     summary: str = Field(min_length=1, description="Faithful event summary.")
     participant_ids: list[str] = Field(default_factory=list, description="Participant entity ids.")
+    participant_mentions: list[ProposalMentionRefV1] = Field(
+        default_factory=list,
+        description="Source participant mentions; unresolved values are not Proposal ids.",
+    )
     actor_resolution_status: ActorResolutionStatus = Field(
         default=ActorResolutionStatus.UNSPECIFIED,
         description="How participant_ids should be interpreted for actor resolution.",
@@ -588,6 +628,10 @@ class EventProposalV1(StrictBaseModel):
         description="Optional future UnresolvedReference id for an unresolved actor mention.",
     )
     location_id: str | None = Field(default=None, description="Location entity id if known.")
+    location_mention: ProposalMentionRefV1 | None = Field(
+        default=None,
+        description="Source location mention when an EntityProposal id is not available.",
+    )
     evidence_refs: list[EvidenceRefV1] = Field(
         min_length=1,
         description="At least one source evidence reference is required.",
@@ -599,25 +643,33 @@ class EventProposalV1(StrictBaseModel):
     def validate_actor_resolution(self) -> "EventProposalV1":
         """Keep actor resolution explicit without inventing character ids."""
 
+        if self.schema_version == "1.0" and (
+            self.participant_mentions or self.location_mention is not None
+        ):
+            raise ValueError("EventProposalV1 v1.0 cannot include mention references")
+        if self.location_id is not None and self.location_mention is not None:
+            raise ValueError("event location_id and location_mention are mutually exclusive")
         status = self.actor_resolution_status
         if status == ActorResolutionStatus.KNOWN:
-            if not self.participant_ids:
-                raise ValueError("KNOWN actor resolution requires participant_ids")
+            if not self.participant_ids and not self.participant_mentions:
+                raise ValueError(
+                    "KNOWN actor resolution requires participants or participant_mentions"
+                )
             if self.unresolved_actor_ref_id is not None:
                 raise ValueError("KNOWN actor resolution cannot include unresolved_actor_ref_id")
         elif status == ActorResolutionStatus.UNKNOWN:
-            if self.participant_ids:
-                raise ValueError("UNKNOWN actor resolution requires empty participant_ids")
+            if self.participant_ids or self.participant_mentions:
+                raise ValueError("UNKNOWN actor resolution requires empty participants")
             if self.unresolved_actor_ref_id is not None:
                 raise ValueError("UNKNOWN actor resolution cannot include unresolved_actor_ref_id")
         elif status == ActorResolutionStatus.UNRESOLVED:
-            if self.participant_ids:
-                raise ValueError("UNRESOLVED actor resolution requires empty participant_ids")
+            if self.participant_ids or self.participant_mentions:
+                raise ValueError("UNRESOLVED actor resolution requires empty participants")
             if self.unresolved_actor_ref_id is None:
                 raise ValueError("UNRESOLVED actor resolution requires unresolved_actor_ref_id")
         elif status == ActorResolutionStatus.NOT_APPLICABLE:
-            if self.participant_ids:
-                raise ValueError("NOT_APPLICABLE actor resolution requires empty participant_ids")
+            if self.participant_ids or self.participant_mentions:
+                raise ValueError("NOT_APPLICABLE actor resolution requires empty participants")
             if self.unresolved_actor_ref_id is not None:
                 raise ValueError(
                     "NOT_APPLICABLE actor resolution cannot include unresolved_actor_ref_id"
@@ -653,13 +705,17 @@ class EventProposalBatchV1(StrictBaseModel):
         proposal_ids = [event.proposal_id for event in self.events]
         if len(set(proposal_ids)) != len(proposal_ids):
             raise ValueError("events must have unique proposal_id values")
+        if self.events and {event.schema_version for event in self.events} != {
+            self.schema_version
+        }:
+            raise ValueError("event batches require all events to match the batch schema_version")
         return self
 
 
 class ClaimProposalV1(StrictBaseModel):
     """Candidate claim, statement, evaluation, denial, memory, or interpretation."""
 
-    schema_version: Literal["1.0", "1.1", "1.2"] = Field(
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3"] = Field(
         default="1.2",
         description="Schema version.",
     )
@@ -681,6 +737,14 @@ class ClaimProposalV1(StrictBaseModel):
     source_type: ClaimSourceType = Field(description="Claim source family.")
     source_id: str | None = Field(default=None, description="Optional source object id.")
     target_event_id: str | None = Field(default=None, description="Optional target event id.")
+    source_reference: ProposalMentionRefV1 | None = Field(
+        default=None,
+        description="Source mention when a linked Proposal id is not available.",
+    )
+    target_event_reference: ProposalMentionRefV1 | None = Field(
+        default=None,
+        description="Event mention when a linked EventProposal id is not available.",
+    )
     verification_status: VerificationStatus = Field(
         description="Proposal-layer verification status."
     )
@@ -731,22 +795,34 @@ class ClaimProposalV1(StrictBaseModel):
     def validate_source_identity(self) -> "ClaimProposalV1":
         """Validate versioned claim semantics and source identity."""
 
-        if self.schema_version in {"1.1", "1.2"}:
+        if self.schema_version in {"1.1", "1.2", "1.3"}:
             if self.claim_type == ClaimType.ASSERTION:
                 raise ValueError("ASSERTION is only supported for schema_version=1.0")
             if self.temporal_scope is None:
                 raise ValueError("schema_version=1.1 and newer require temporal_scope")
-        if self.schema_version != "1.2" and self.claim_type == ClaimType.EVALUATION:
-            raise ValueError("EVALUATION is only supported for schema_version=1.2")
-        if self.source_type == ClaimSourceType.UNKNOWN and self.source_id is not None:
-            raise ValueError("UNKNOWN claim source cannot include source_id")
+        if self.schema_version not in {"1.2", "1.3"} and self.claim_type == ClaimType.EVALUATION:
+            raise ValueError("EVALUATION is only supported for schema_version=1.2 and newer")
+        if self.schema_version != "1.3" and (
+            self.source_reference is not None or self.target_event_reference is not None
+        ):
+            raise ValueError("ClaimProposalV1 v1.0-v1.2 cannot include mention references")
+        if self.source_id is not None and self.source_reference is not None:
+            raise ValueError("claim source_id and source_reference are mutually exclusive")
+        if self.target_event_id is not None and self.target_event_reference is not None:
+            raise ValueError(
+                "claim target_event_id and target_event_reference are mutually exclusive"
+            )
+        if self.source_type == ClaimSourceType.UNKNOWN and (
+            self.source_id is not None or self.source_reference is not None
+        ):
+            raise ValueError("UNKNOWN claim source cannot include a source reference")
         return self
 
 
 class ClaimProposalBatchV1(StrictBaseModel):
     """Candidate story claims discovered from one bounded source context."""
 
-    schema_version: Literal["1.0", "1.1", "1.2"] = Field(
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3"] = Field(
         default="1.2",
         description="Schema version.",
     )
@@ -790,7 +866,7 @@ class ClaimProposalBatchV1(StrictBaseModel):
         if len(set(proposal_ids)) != len(proposal_ids):
             raise ValueError("claims must have unique proposal_id values")
         claim_versions = {claim.schema_version for claim in self.claims}
-        if self.schema_version in {"1.1", "1.2"} and claim_versions != {self.schema_version}:
+        if self.schema_version in {"1.1", "1.2", "1.3"} and claim_versions != {self.schema_version}:
             raise ValueError(
                 f"schema_version={self.schema_version} batch requires all claims to be "
                 f"v{self.schema_version}"

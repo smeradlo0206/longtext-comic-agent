@@ -136,3 +136,21 @@ Stage B recovery uses Alembic migration `0006_narrative_analysis_recovery_attemp
 downstream of Timeline migration `0005_timeline_analysis_proposals`. Its persistent
 idempotency key is strengthened in application code to include evidence text, prompt,
 agent version, and provider model before any LLM call.
+
+### 2026-08-22 Parallel Narrative reference compatibility and migration note
+
+`ProposalMentionRefV1` is a new exported, source-first reference contract. Event v1.1
+adds `participant_mentions` and `location_mention`; Claim v1.3 adds `source_reference`
+and `target_event_reference`. The original `participant_ids`, `location_id`, `source_id`,
+and `target_event_id` remain hard internal Proposal links only. Historical Event v1.0 and
+Claim v1.0–v1.2 payloads remain readable.
+
+Because the six Narrative modes execute independently, a provider-local name such as
+`Lin` cannot be assumed to equal an EntityProposal id selected by another mode. During
+aggregation, legacy values that do not name an aggregate Proposal become unresolved
+mention references; source AgentRun payloads are not overwritten. Gate 2 performs only
+exact unique, reality-compatible linking and records its decision. Ambiguous or unmatched
+mentions stay nonblocking and unresolved; no fuzzy matching, LLM linking, or canonical
+write occurs. The Timeline adapter materializes only Gate 2 `RESOLVED` entity links in
+its separate input copy. This is an additive JSON-payload change and needs no database
+migration.

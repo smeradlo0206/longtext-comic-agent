@@ -807,6 +807,18 @@ class ReviewGate2Service:
                         False,
                     )
                 )
+            for index, participant_mention in enumerate(proposal.participant_mentions):
+                specs.append(
+                    (
+                        f"participant_mentions[{index}]",
+                        participant_mention.mention_text,
+                        ["EntityProposalV1"],
+                        participant_mention.proposal_id,
+                        participant_mention.proposal_schema,
+                        str(participant_mention.resolution_status),
+                        False,
+                    )
+                )
             if proposal.location_id is not None:
                 specs.append(
                     (
@@ -816,6 +828,19 @@ class ReviewGate2Service:
                         proposal.location_id,
                         "EntityProposalV1",
                         "RESOLVED",
+                        False,
+                    )
+                )
+            if proposal.location_mention is not None:
+                location = proposal.location_mention
+                specs.append(
+                    (
+                        "location_mention",
+                        location.mention_text,
+                        ["EntityProposalV1"],
+                        location.proposal_id,
+                        location.proposal_schema,
+                        str(location.resolution_status),
                         False,
                     )
                 )
@@ -832,8 +857,28 @@ class ReviewGate2Service:
                         proposal.source_id,
                         expected,
                         proposal.source_id,
-                        None,
+                        "EntityProposalV1"
+                        if str(proposal.source_type) == "CHARACTER"
+                        else None,
                         "RESOLVED",
+                        False,
+                    )
+                )
+            if proposal.source_reference is not None:
+                source_reference = proposal.source_reference
+                expected = (
+                    ["EntityProposalV1"]
+                    if str(proposal.source_type) == "CHARACTER"
+                    else ["EntityProposalV1", "EventProposalV1", "ClaimProposalV1"]
+                )
+                specs.append(
+                    (
+                        "source_reference",
+                        source_reference.mention_text,
+                        expected,
+                        source_reference.proposal_id,
+                        source_reference.proposal_schema,
+                        str(source_reference.resolution_status),
                         False,
                     )
                 )
@@ -846,6 +891,19 @@ class ReviewGate2Service:
                         proposal.target_event_id,
                         "EventProposalV1",
                         "RESOLVED",
+                        False,
+                    )
+                )
+            if proposal.target_event_reference is not None:
+                target_reference = proposal.target_event_reference
+                specs.append(
+                    (
+                        "target_event_reference",
+                        target_reference.mention_text,
+                        ["EventProposalV1"],
+                        target_reference.proposal_id,
+                        target_reference.proposal_schema,
+                        str(target_reference.resolution_status),
                         False,
                     )
                 )
@@ -941,20 +999,20 @@ class ReviewGate2Service:
                     )
                 )
         elif isinstance(proposal, RelationshipSignalProposalV1):
-            for path, participant in (
+            for path, relationship_participant in (
                 ("subject", proposal.subject),
                 ("counterpart", proposal.counterpart),
                 ("source_speaker", proposal.source_speaker),
             ):
-                if participant is not None:
+                if relationship_participant is not None:
                     specs.append(
                         (
                             path,
-                            participant.mention_text,
+                            relationship_participant.mention_text,
                             ["EntityProposalV1"],
-                            participant.entity_proposal_id,
-                            participant.proposal_schema,
-                            str(participant.resolution_status),
+                            relationship_participant.entity_proposal_id,
+                            relationship_participant.proposal_schema,
+                            str(relationship_participant.resolution_status),
                             False,
                         )
                     )

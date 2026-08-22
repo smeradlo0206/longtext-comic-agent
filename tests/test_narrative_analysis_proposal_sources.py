@@ -1,10 +1,16 @@
 """Regression coverage for bounded AgentRun proposal-source conversion."""
 
 from comic_agent.schemas.base import EvidenceRefV1
-from comic_agent.schemas.narrative import EventProposalBatchV1, EventProposalV1
+from comic_agent.schemas.narrative import (
+    ClaimProposalV1,
+    EntityProposalV1,
+    EventProposalBatchV1,
+    EventProposalV1,
+)
 from comic_agent.schemas.workflow import (
     AgentRunStatus,
     AgentRunV1,
+    NarrativeAnalysisProposalSourceV1,
     NarrativeAnalysisWindowStatus,
     NarrativeAnalysisWindowV1,
     ProviderResultV1,
@@ -131,3 +137,61 @@ def test_cross_window_local_proposal_ids_become_unique_before_gate2_input() -> N
 
     assert len(review_input.proposals) == 2
     assert len({item.proposal.proposal_id for item in review_input.proposals}) == 2
+
+
+def test_aggregate_converts_legacy_parallel_names_to_unresolved_mentions() -> None:
+    """A name from a parallel mode is not silently treated as an internal proposal id."""
+
+    evidence = [EvidenceRefV1(chunk_id="chunk-1", quote_text="Lin closes the gate.")]
+    entity = EntityProposalV1(
+        proposal_id="entity-lin",
+        entity_type="CHARACTER",
+        canonical_name="Lin",
+        evidence_refs=evidence,
+        confidence=0.9,
+    )
+    event = EventProposalV1(
+        proposal_id="event-1",
+        event_type="ACTION",
+        summary="Lin closes the gate.",
+        participant_ids=["Lin"],
+        actor_resolution_status="KNOWN",
+        evidence_refs=evidence,
+        confidence=0.9,
+        reality_layer="PRIMARY",
+    )
+    claim = ClaimProposalV1(
+        proposal_id="claim-1",
+        claim_type="FACTUAL_ASSERTION",
+        claim_text="Lin closed the gate.",
+        temporal_scope="PAST",
+        source_type="CHARACTER",
+        source_id="Lin",
+        verification_status="UNVERIFIED",
+        evidence_refs=evidence,
+        confidence=0.9,
+        reality_layer="PRIMARY",
+    )
+    aggregate = aggregate_narrative_analysis(
+        [
+            NarrativeAnalysisProposalSourceV1(
+                mode="entity_extraction", agent_run_id="entity-run", proposal=entity
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="event_extraction", agent_run_id="event-run", proposal=event
+            ),
+            NarrativeAnalysisProposalSourceV1(
+                mode="claim_extraction", agent_run_id="claim-run", proposal=claim
+            ),
+        ],
+        analysis_run_id="root-run",
+    )
+
+    normalized_event = aggregate.events[0].proposal
+    normalized_claim = aggregate.claims[0].proposal
+    assert normalized_event.participant_ids == []
+    assert normalized_event.participant_mentions[0].mention_text == "Lin"
+    assert normalized_event.participant_mentions[0].resolution_status == "UNRESOLVED"
+    assert normalized_claim.source_id is None
+    assert normalized_claim.source_reference is not None
+    assert normalized_claim.source_reference.mention_text == "Lin"
