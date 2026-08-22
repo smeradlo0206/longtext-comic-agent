@@ -216,6 +216,35 @@ def test_event_proposal_batch_rejects_duplicate_event_ids() -> None:
         )
 
 
+def test_event_batch_lifts_legacy_outer_version_when_it_contains_v11_mentions() -> None:
+    """Provider defaults must not reject otherwise-valid v1.1 mention records."""
+
+    batch = EventProposalBatchV1.model_validate(
+        {
+            "schema_version": "1.0",
+            "batch_id": "event-batch-provider-default",
+            "events": [
+                event_payload()
+                | {
+                    "participant_ids": [],
+                    "participant_mentions": [
+                        {
+                            "mention_text": "陈野",
+                            "resolution_status": "UNRESOLVED",
+                            "proposal_id": None,
+                            "proposal_schema": None,
+                        }
+                    ],
+                    "actor_resolution_status": "KNOWN",
+                }
+            ],
+        }
+    )
+
+    assert batch.schema_version == "1.1"
+    assert batch.events[0].schema_version == "1.1"
+
+
 def test_event_proposal_requires_evidence_refs() -> None:
     payload = event_payload()
     payload.pop("evidence_refs")

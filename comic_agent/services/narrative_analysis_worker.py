@@ -28,6 +28,7 @@ from comic_agent.services.narrative_analysis_aggregation import aggregate_narrat
 from comic_agent.services.narrative_analysis_proposal_sources import proposal_sources_for_window
 from comic_agent.services.narrative_analysis_recovery_coordinator import (
     NarrativeAnalysisRecoveryCoordinator,
+    RecoveryRerunResult,
     default_recovery_policy,
 )
 from comic_agent.services.narrative_analysis_review_coordinator import (
@@ -46,10 +47,10 @@ from comic_agent.services.narrative_timeline_coordinator import NarrativeTimelin
 from comic_agent.workflows.narrative_analyst_workflow import NarrativeAnalystWorkflow
 
 MAX_AUTOMATIC_WINDOW_ATTEMPTS = 2
-LENGTH_RETRY_MAX_CHARS_PER_CHUNK = 800
 RETRYABLE_FAILURE_CATEGORIES = {
     "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT",
     "SCHEMA_VALIDATION_FAILED",
+    "EVIDENCE_VALIDATION_FAILED",
     "PROVIDER_TIMEOUT",
     "PROVIDER_CONNECTION_ERROR",
     "PROVIDER_HTTP_ERROR",
@@ -197,7 +198,8 @@ class NarrativeAnalysisWorker:
                     "effective_max_chars_per_chunk": self._retry_max_chars_per_chunk(completed),
                     "recovery_phase": (
                         NarrativeRecoveryPhase.SCHEMA_REPAIR
-                        if completed.failure_category == "SCHEMA_VALIDATION_FAILED"
+                        if completed.failure_category
+                        in {"SCHEMA_VALIDATION_FAILED", "EVIDENCE_VALIDATION_FAILED"}
                         else NarrativeRecoveryPhase.LENGTH_RECOVERY
                     ),
                     "length_recovery_attempts_used": (
@@ -207,17 +209,20 @@ class NarrativeAnalysisWorker:
                     ),
                     "schema_repair_attempts_used": (
                         completed.schema_repair_attempts_used + 1
-                        if completed.failure_category == "SCHEMA_VALIDATION_FAILED"
+                        if completed.failure_category
+                        in {"SCHEMA_VALIDATION_FAILED", "EVIDENCE_VALIDATION_FAILED"}
                         else completed.schema_repair_attempts_used
                     ),
                     "schema_recovery_attempt_count": (
                         completed.schema_recovery_attempt_count + 1
-                        if completed.failure_category == "SCHEMA_VALIDATION_FAILED"
+                        if completed.failure_category
+                        in {"SCHEMA_VALIDATION_FAILED", "EVIDENCE_VALIDATION_FAILED"}
                         else completed.schema_recovery_attempt_count
                     ),
                     "schema_recovery_rule_codes": (
                         self._output_recovery_rule_codes(completed) or []
-                        if completed.failure_category == "SCHEMA_VALIDATION_FAILED"
+                        if completed.failure_category
+                        in {"SCHEMA_VALIDATION_FAILED", "EVIDENCE_VALIDATION_FAILED"}
                         else completed.schema_recovery_rule_codes
                     ),
                 }
@@ -359,7 +364,9 @@ class NarrativeAnalysisWorker:
             update={
                 "status": (
                     NarrativeAnalysisWindowStatus.NEEDS_HUMAN_ACTION
-                    if root_budget or window.failure_category == "SCHEMA_VALIDATION_FAILED"
+                    if root_budget
+                    or window.failure_category
+                    in {"SCHEMA_VALIDATION_FAILED", "EVIDENCE_VALIDATION_FAILED"}
                     else NarrativeAnalysisWindowStatus.EXHAUSTED
                 ),
                 "completed_at": datetime.now(UTC),
@@ -370,11 +377,15 @@ class NarrativeAnalysisWorker:
                 "failure_category": (
                     "SCHEMA_REPAIR_EXHAUSTED"
                     if window.failure_category == "SCHEMA_VALIDATION_FAILED"
+                    else "EVIDENCE_REPAIR_EXHAUSTED"
+                    if window.failure_category == "EVIDENCE_VALIDATION_FAILED"
                     else window.failure_category or "RECOVERY_BUDGET_EXHAUSTED"
                 ),
                 "recommended_action": (
                     "automatic schema recovery stopped; inspect safe rule codes"
                     if window.failure_category == "SCHEMA_VALIDATION_FAILED"
+                    else "automatic evidence recovery stopped; inspect selected-source diagnostics"
+                    if window.failure_category == "EVIDENCE_VALIDATION_FAILED"
                     else window.recommended_action or action
                 ),
                 "recovery_phase": NarrativeRecoveryPhase.TERMINAL,
@@ -388,7 +399,11 @@ class NarrativeAnalysisWorker:
         return (
             window.status == NarrativeAnalysisWindowStatus.FAILED
             and window.failure_category
-            in {"PROVIDER_LENGTH_BEFORE_FINAL_CONTENT", "SCHEMA_VALIDATION_FAILED"}
+            in {
+                "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT",
+                "SCHEMA_VALIDATION_FAILED",
+                "EVIDENCE_VALIDATION_FAILED",
+            }
             and (
                 (
                     window.length_recovery_attempts_used < window.max_length_recovery_attempts
@@ -418,6 +433,7 @@ class NarrativeAnalysisWorker:
                 window.failure_category != "SCHEMA_VALIDATION_FAILED"
                 or window.schema_repair_attempts_used >= window.max_schema_repair_attempts
             )
+            and window.failure_category != "EVIDENCE_VALIDATION_FAILED"
             and (
                 len(window.chunk_ids) > 1
                 or window.failure_category == "SCHEMA_VALIDATION_FAILED"
@@ -432,26 +448,39 @@ class NarrativeAnalysisWorker:
 
         if (
             window.status == NarrativeAnalysisWindowStatus.FAILED
-            and window.failure_category == "SCHEMA_VALIDATION_FAILED"
+            and window.failure_category
+            in {"SCHEMA_VALIDATION_FAILED", "EVIDENCE_VALIDATION_FAILED"}
             and window.schema_repair_attempts_used >= window.max_schema_repair_attempts
             and (
-                window.split_depth >= window.max_split_depth
+                window.failure_category == "EVIDENCE_VALIDATION_FAILED"
+                or window.split_depth >= window.max_split_depth
                 or (len(window.chunk_ids) == 1 and not self._can_slice(window))
             )
         ):
             return window.model_copy(
                 update={
                     "status": NarrativeAnalysisWindowStatus.NEEDS_HUMAN_ACTION,
-                    "failure_category": "SCHEMA_REPAIR_EXHAUSTED",
+                    "failure_category": (
+                        "SCHEMA_REPAIR_EXHAUSTED"
+                        if window.failure_category == "SCHEMA_VALIDATION_FAILED"
+                        else "EVIDENCE_REPAIR_EXHAUSTED"
+                    ),
                     "recommended_action": (
                         "automatic schema recovery stopped; inspect safe rule codes"
+                        if window.failure_category == "SCHEMA_VALIDATION_FAILED"
+                        else (
+                            "automatic evidence recovery stopped; "
+                            "inspect selected-source diagnostics"
+                        )
                     ),
                     "completed_at": datetime.now(UTC),
                     "next_eligible_retry_at": None,
                     "recovery_phase": NarrativeRecoveryPhase.TERMINAL,
                     "terminal_reason": (
                         NarrativeRecoveryTerminalReason.MINIMUM_SCOPE_REACHED
-                        if len(window.chunk_ids) == 1 and not self._can_slice(window)
+                        if window.failure_category == "SCHEMA_VALIDATION_FAILED"
+                        and len(window.chunk_ids) == 1
+                        and not self._can_slice(window)
                         else NarrativeRecoveryTerminalReason.SCHEMA_REPAIR_EXHAUSTED
                     ),
                 }
@@ -477,7 +506,8 @@ class NarrativeAnalysisWorker:
 
         if (
             window.status == NarrativeAnalysisWindowStatus.FAILED
-            and window.failure_category == "SCHEMA_VALIDATION_FAILED"
+            and window.failure_category
+            in {"SCHEMA_VALIDATION_FAILED", "EVIDENCE_VALIDATION_FAILED"}
             and window.schema_repair_attempts_used < window.max_schema_repair_attempts
         ):
             # The independently budgeted repair is scheduled before applying a
@@ -563,8 +593,12 @@ class NarrativeAnalysisWorker:
                 owned_chunk_ids=[chunk.chunk_id],
                 status=NarrativeAnalysisWindowStatus.PENDING,
                 effective_max_chars_per_chunk=max(
-                    failed_window.effective_max_chars_per_chunk,
-                    len(chunk.text),
+                    self._settings.narrative_window_min_slice_chars,
+                    min(
+                        self._settings.narrative_window_length_retry_max_chars_per_chunk,
+                        failed_window.effective_max_chars_per_chunk,
+                        len(chunk.text),
+                    ),
                 ),
                 previous_failure_category=failed_window.failure_category,
                 parent_window_id=failed_window.analysis_window_id,
@@ -738,7 +772,10 @@ class NarrativeAnalysisWorker:
         """Reduce only a length-truncated window; schema retries retain the same context."""
 
         if window.failure_category == "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT":
-            return min(LENGTH_RETRY_MAX_CHARS_PER_CHUNK, window.effective_max_chars_per_chunk)
+            return min(
+                self._settings.narrative_window_length_retry_max_chars_per_chunk,
+                window.effective_max_chars_per_chunk,
+            )
         return window.effective_max_chars_per_chunk
 
     def _output_recovery(self, window: NarrativeAnalysisWindowV1) -> str | None:
@@ -748,14 +785,24 @@ class NarrativeAnalysisWorker:
             if window.mode == "state_change_extraction":
                 return "state_change_schema_recovery"
             return "schema_validation"
+        if window.previous_failure_category == "EVIDENCE_VALIDATION_FAILED":
+            return "evidence_validation"
         if window.previous_failure_category == "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT":
-            if window.effective_max_chars_per_chunk > LENGTH_RETRY_MAX_CHARS_PER_CHUNK:
+            if (
+                window.effective_max_chars_per_chunk
+                > self._settings.narrative_window_length_retry_max_chars_per_chunk
+            ):
                 return "length_split"
             return "length_reduction"
         return None
 
     @staticmethod
     def _output_recovery_rule_codes(window: NarrativeAnalysisWindowV1) -> list[str] | None:
+        if window.previous_failure_category == "EVIDENCE_VALIDATION_FAILED":
+            message = (window.error_message or "").lower()
+            if "must reference" in message:
+                return ["EVIDENCE_CHUNK_OUT_OF_SCOPE"]
+            return ["EVIDENCE_QUOTE_NOT_VERBATIM"]
         diagnostics = window.provider_error_diagnostics
         if not isinstance(diagnostics, dict):
             return None
@@ -854,17 +901,13 @@ class NarrativeAnalysisWorker:
             if self._recovery_repository is not None:
 
                 def rerun(directive, attempt_id):  # type: ignore[no-untyped-def]
-                    result = workflow.run(
-                        project_id=directive.project_id,
-                        mode=directive.mode,
-                        chunk_ids=directive.ordered_source_chunk_ids,
-                        chunk_limit=len(directive.ordered_source_chunk_ids),
-                        max_chars_per_chunk=directive.max_chars_per_chunk,
-                        execution_nonce=attempt_id,
+                    return self._rerun_stage_b_directive(
+                        workflow,
+                        directive,
+                        attempt_id,
                         real_llm_requested=real_llm_requested,
                         allow_fake_provider=self._allow_fake_provider,
                     )
-                    return result.agent_run
 
                 get_agent_run = getattr(self._agent_run_repository, "get_agent_run", None)
                 if callable(get_agent_run):
@@ -881,6 +924,103 @@ class NarrativeAnalysisWorker:
                     self._run_recovery_timelines(reviewed.analysis_run_id)
             return reviewed
         return saved
+
+    @staticmethod
+    def _rerun_stage_b_directive(
+        workflow: Any,
+        directive: Any,
+        attempt_id: str,
+        *,
+        real_llm_requested: bool,
+        allow_fake_provider: bool,
+    ) -> RecoveryRerunResult:
+        """Run one evidence repair and at most one format repair on the locked scope."""
+
+        calls: list[object] = []
+        total_tokens = 0
+        started = monotonic()
+
+        def invoke(
+            *, output_recovery: str, rule_codes: list[str], execution_suffix: str
+        ) -> Any:
+            nonlocal total_tokens
+            result = workflow.run(
+                project_id=directive.project_id,
+                mode=directive.mode,
+                chunk_ids=directive.ordered_source_chunk_ids,
+                chunk_limit=len(directive.ordered_source_chunk_ids),
+                max_chars_per_chunk=directive.max_chars_per_chunk,
+                output_recovery=output_recovery,
+                output_recovery_rule_codes=rule_codes,
+                execution_nonce=f"{attempt_id}:{execution_suffix}",
+                real_llm_requested=real_llm_requested,
+                allow_fake_provider=allow_fake_provider,
+            )
+            agent_run: Any = getattr(result, "agent_run", None)
+            if agent_run is not None:
+                calls.append(agent_run)
+                metadata = getattr(
+                    getattr(agent_run, "provider_result", None), "execution_metadata", None
+                )
+                tokens = getattr(metadata, "total_tokens", None)
+                if isinstance(tokens, int):
+                    total_tokens += max(0, tokens)
+            return agent_run
+
+        agent_run: Any = invoke(
+            output_recovery="evidence_validation",
+            rule_codes=["EVIDENCE_QUOTE_NOT_VERBATIM"],
+            execution_suffix="evidence",
+        )
+        diagnostic: str | None = None
+        if NarrativeAnalysisWorker._is_schema_validation_failure(agent_run):
+            diagnostic = "SCHEMA_VALIDATION_FAILED"
+            if directive.max_provider_calls >= 2:
+                agent_run = invoke(
+                    output_recovery="schema_validation",
+                    rule_codes=NarrativeAnalysisWorker._schema_recovery_rule_codes(agent_run),
+                    execution_suffix="schema",
+                )
+                if NarrativeAnalysisWorker._is_schema_validation_failure(agent_run):
+                    diagnostic = "SCHEMA_VALIDATION_FAILED"
+
+        return RecoveryRerunResult(
+            agent_run=agent_run,
+            provider_requests=max(1, len(calls)),
+            total_tokens=total_tokens,
+            elapsed_seconds=max(1, ceil(monotonic() - started)),
+            sanitized_diagnostic=diagnostic,
+        )
+
+    @staticmethod
+    def _is_schema_validation_failure(agent_run: object | None) -> bool:
+        if agent_run is None or getattr(agent_run, "status", None) != AgentRunStatus.FAILED:
+            return False
+        payload = getattr(agent_run, "payload", None)
+        diagnostics = (
+            payload.get("provider_error_diagnostics") if isinstance(payload, dict) else None
+        )
+        return isinstance(diagnostics, dict) and isinstance(
+            diagnostics.get("schema_error_kind"), str
+        )
+
+    @staticmethod
+    def _schema_recovery_rule_codes(agent_run: object | None) -> list[str]:
+        payload = getattr(agent_run, "payload", None)
+        diagnostics = (
+            payload.get("provider_error_diagnostics") if isinstance(payload, dict) else None
+        )
+        values = (
+            diagnostics.get("schema_error_rule_codes")
+            if isinstance(diagnostics, dict)
+            else None
+        )
+        codes = (
+            sorted({value for value in values if isinstance(value, str)})
+            if isinstance(values, list)
+            else []
+        )
+        return codes or ["SCHEMA_VALIDATION_FAILED"]
 
     def _run_timeline_if_approved(
         self,

@@ -1,5 +1,8 @@
+import pytest
+
 from comic_agent.agents.timeline_agent import TimelineAgent
 from comic_agent.providers.mocks import MockLLMProvider
+from comic_agent.providers.openai_compatible import ProviderResponseError
 from comic_agent.schemas.base import EvidenceRefV1, RealityLayer
 from comic_agent.schemas.narrative import ClaimProposalV1, EventProposalV1, StateChangeProposalV1
 from comic_agent.schemas.source import SourceChunkV1
@@ -7,6 +10,7 @@ from comic_agent.schemas.timeline import (
     DuplicateCandidateType,
     TimelineAnalysisInputV1,
     TimelineConflictCategory,
+    TimelinePairInferenceV1,
 )
 
 EVIDENCE = [EvidenceRefV1(chunk_id="chunk-1", quote_text="A source sentence.")]
@@ -105,23 +109,19 @@ def source_chunk() -> SourceChunkV1:
 
 
 def llm_response(
-    relation: str, quote: str | None = "Chen leaves before Lin arrives."
+    relation: str, _quote: str | None = "Chen leaves before Lin arrives."
 ) -> dict[str, object]:
     return {
-        "proposal_id": "provider-proposal",
-        "source_event_id": "event-1",
-        "target_event_id": "event-2",
         "relation": relation,
-        "evidence_refs": []
-        if relation == "UNKNOWN"
-        else [{"chunk_id": "chunk-1", "quote_text": quote}],
+        "evidence_indexes": [] if relation == "UNKNOWN" else [0],
         "confidence": 0.9,
         "reasoning_summary": "The supplied sentence explicitly states the ordering.",
     }
 
 
 def test_timeline_agent_llm_infers_explicit_before() -> None:
-    analysis = TimelineAgent(MockLLMProvider(llm_response("BEFORE"))).run(
+    provider = MockLLMProvider(llm_response("BEFORE"))
+    analysis = TimelineAgent(provider).run(
         TimelineAnalysisInputV1(
             project_id="project-1",
             mode="LLM",
@@ -131,13 +131,14 @@ def test_timeline_agent_llm_infers_explicit_before() -> None:
     )
 
     assert analysis.temporal_relations[0].relation == "BEFORE"
+    assert analysis.temporal_relations[0].source_event_id == "event-1"
+    assert analysis.temporal_relations[0].target_event_id == "event-2"
+    assert analysis.temporal_relations[0].evidence_refs == EVIDENCE
     assert analysis.temporal_relations[0].reasoning_summary is not None
 
 
 def test_timeline_agent_preserves_requested_reverse_order_for_after() -> None:
     response = llm_response("AFTER")
-    response["source_event_id"] = "event-2"
-    response["target_event_id"] = "event-1"
     analysis = TimelineAgent(MockLLMProvider(response)).run(
         TimelineAnalysisInputV1(
             project_id="project-1",
@@ -148,6 +149,8 @@ def test_timeline_agent_preserves_requested_reverse_order_for_after() -> None:
     )
 
     assert analysis.temporal_relations[0].relation == "AFTER"
+    assert analysis.temporal_relations[0].source_event_id == "event-2"
+    assert analysis.temporal_relations[0].target_event_id == "event-1"
 
 
 def test_timeline_agent_llm_allows_explicit_simultaneous_and_unknown() -> None:
@@ -172,3 +175,63 @@ def test_timeline_agent_llm_allows_explicit_simultaneous_and_unknown() -> None:
 
     assert simultaneous.temporal_relations[0].relation == "SIMULTANEOUS"
     assert unknown.temporal_relations[0].relation == "UNKNOWN"
+
+
+class _SchemaRepairProvider:
+    def __init__(self, *, fail_twice: bool = False) -> None:
+        self.calls = 0
+        self.requests: list[dict[str, object]] = []
+        self.output_models: list[type[object]] = []
+        self.fail_twice = fail_twice
+
+    def structured_generate(self, request, output_model):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        self.requests.append(request)
+        self.output_models.append(output_model)
+        if self.calls == 1 or self.fail_twice:
+            raise ProviderResponseError(
+                "sanitized schema failure",
+                diagnostics={
+                    "schema_error_field_paths": ["evidence_indexes.0"],
+                    "schema_error_rule_codes": ["TIMELINE_EVIDENCE_INDEX_INVALID"],
+                    "expected_output_schema": "TimelinePairInferenceV1",
+                },
+            )
+        return output_model.model_validate(llm_response("BEFORE"))
+
+
+def test_timeline_agent_uses_small_pair_contract_and_one_safe_schema_repair() -> None:
+    provider = _SchemaRepairProvider()
+
+    analysis = TimelineAgent(provider).run(
+        TimelineAnalysisInputV1(
+            project_id="project-1",
+            mode="LLM",
+            event_proposals=[event("event-1", "Chen leaves."), event("event-2", "Lin arrives.")],
+        ),
+        source_chunks=[source_chunk()],
+    )
+
+    assert provider.calls == 2
+    assert provider.output_models == [TimelinePairInferenceV1, TimelinePairInferenceV1]
+    repair_messages = provider.requests[1]["messages"]
+    assert isinstance(repair_messages, list)
+    assert "TIMELINE_EVIDENCE_INDEX_INVALID" in str(repair_messages)
+    assert "sanitized schema failure" not in str(repair_messages)
+    assert analysis.temporal_relations[0].evidence_refs == EVIDENCE
+
+
+def test_timeline_agent_stops_after_one_schema_repair() -> None:
+    provider = _SchemaRepairProvider(fail_twice=True)
+
+    with pytest.raises(ProviderResponseError):
+        TimelineAgent(provider).run(
+            TimelineAnalysisInputV1(
+                project_id="project-1",
+                mode="LLM",
+                event_proposals=[event("event-1"), event("event-2")],
+            ),
+            source_chunks=[source_chunk()],
+        )
+
+    assert provider.calls == 2

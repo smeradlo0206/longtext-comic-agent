@@ -11,8 +11,10 @@ from comic_agent.schemas.narrative import (
     ClaimProposalV1,
     EventProposalV1,
     StateChangeProposalV1,
+    TemporalRelation,
     TemporalRelationProposalV1,
 )
+from comic_agent.schemas.reliability import ProviderFailureCategory
 
 
 class TimelineConflictCategory(StrEnum):
@@ -34,6 +36,32 @@ class TimelineAnalysisMode(StrEnum):
 
     RULES_ONLY = "RULES_ONLY"
     LLM = "LLM"
+
+
+class TimelinePairInferenceV1(StrictBaseModel):
+    """Small Provider-facing contract for one ordered event pair.
+
+    Internal proposal ids and EvidenceRef values are deliberately absent.  The
+    Timeline Agent supplies those deterministically from the approved input.
+    """
+
+    schema_version: Literal["1.0"] = Field(default="1.0")
+    relation: TemporalRelation
+    evidence_indexes: list[int] = Field(default_factory=list, max_length=8)
+    confidence: float = Field(ge=0, le=1)
+    reasoning_summary: str | None = Field(default=None, min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_evidence_selection(self) -> "TimelinePairInferenceV1":
+        if len(self.evidence_indexes) != len(set(self.evidence_indexes)):
+            raise ValueError("evidence_indexes must be unique")
+        if any(index < 0 for index in self.evidence_indexes):
+            raise ValueError("evidence_indexes cannot be negative")
+        if self.relation == TemporalRelation.UNKNOWN and self.evidence_indexes:
+            raise ValueError("UNKNOWN relation cannot select evidence")
+        if self.relation != TemporalRelation.UNKNOWN and not self.evidence_indexes:
+            raise ValueError("known relation requires at least one evidence index")
+        return self
 
 
 class ReviewGate3Decision(StrEnum):
@@ -328,10 +356,20 @@ class TimelineRecoveryBudgetV1(StrictBaseModel):
         return self
 
 
+class TimelineProviderDiagnosticsV1(StrictBaseModel):
+    """Allowlisted, source-free diagnostics for a failed Timeline Provider call."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0")
+    expected_output_schema: str | None = Field(default=None, min_length=1, max_length=128)
+    schema_error_field_paths: list[str] = Field(default_factory=list, max_length=32)
+    schema_error_rule_codes: list[str] = Field(default_factory=list, max_length=32)
+    finish_reason: str | None = Field(default=None, min_length=1, max_length=64)
+
+
 class TimelineGate3RunV1(StrictBaseModel):
     """Durable non-canonical work state for exactly one Gate 2 approved bundle."""
 
-    schema_version: Literal["1.0"] = Field(default="1.0")
+    schema_version: Literal["1.0", "1.1", "1.2"] = Field(default="1.2")
     timeline_run_id: str = Field(min_length=1)
     project_id: str = Field(min_length=1)
     source_approved_proposal_bundle_id: str = Field(min_length=1)
@@ -346,6 +384,9 @@ class TimelineGate3RunV1(StrictBaseModel):
     gate3_route: NarrativeTimelineReviewRouteV1 | None = None
     approved_timeline_bundle: ApprovedTimelineBundleV1 | None = None
     provider_request_count: int = Field(default=0, ge=0)
+    failure_category: ProviderFailureCategory | None = None
+    safe_issue_codes: list[str] = Field(default_factory=list)
+    provider_diagnostics: TimelineProviderDiagnosticsV1 | None = None
     recovery_budget: TimelineRecoveryBudgetV1 = Field(default_factory=TimelineRecoveryBudgetV1)
     initial_timeline_proposal: TimelineAnalysisProposalV1 | None = None
     initial_gate3_result: ReviewGate3ResultV1 | None = None

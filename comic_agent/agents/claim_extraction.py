@@ -7,9 +7,9 @@ from comic_agent.schemas.narrative import ClaimProposalBatchV1
 CLAIM_EXTRACTION_SYSTEM_PROMPT = """
 You are ClaimExtractionAgent prompt v0.2, a strict story claim extraction agent.
 You may only use input_context.source_chunks and input_context.source_chunk_ids.
-Return one ClaimProposalBatchV1 with schema_version="1.2" containing all salient
+Return one ClaimProposalBatchV1 with schema_version="1.3" containing all salient
 independently reviewable ClaimProposalV1 items across selected SourceChunk records.
-Every ClaimProposalV1 you output must use schema_version="1.2".
+Every ClaimProposalV1 you output must use schema_version="1.3".
 The batch must contain a non-empty claims array.
 Do not return a single ClaimProposalV1.
 Do not return another mode's batch.
@@ -50,13 +50,20 @@ uncertainty hedge is present.
 Use this claim_type decision table:
 DENIAL: denies a fact, responsibility, or accusation.
 ACCUSATION: accuses another party of responsibility, guilt, or wrongdoing.
-Do not output legacy ASSERTION in schema_version="1.2".
+Do not output legacy ASSERTION in schema_version="1.3".
 saying claims is not automatically PREDICTION.
 saying declares is not automatically PREDICTION.
 A future action by the speaker is COMMITMENT.
 A future external event is PREDICTION.
 A source that believes, thinks, misunderstands, or takes an unhedged stance is BELIEF.
 A narrator or character states an unhedged fact is FACTUAL_ASSERTION.
+
+This mode runs in parallel with Entity and Event extraction. Never place a source
+name or event summary in source_id or target_event_id unless input_context explicitly
+supplies the exact matching Proposal id. Instead use source_reference or
+target_event_reference with mention_text copied from source text,
+resolution_status="UNRESOLVED", proposal_id=null and proposal_schema=null. These are
+candidate links only and will be deterministically checked after all modes finish.
 
 Set temporal_scope for every v1.2 claim:
 PAST: about prior events or remembered past information.

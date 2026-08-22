@@ -7,6 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from comic_agent.database.base import Base
+from comic_agent.providers.openai_compatible import ProviderResponseError
 from comic_agent.repositories.agent_run_repository import AgentRunRepository
 from comic_agent.repositories.timeline_gate3_repository import TimelineGate3Repository
 from comic_agent.schemas.base import EvidenceRefV1, RealityLayer
@@ -148,6 +149,34 @@ class _RecoveryRunner:
         )
 
 
+class _TimeoutRunner:
+    def run(
+        self,
+        input_context: TimelineAnalysisInputV1,
+        *,
+        source_chunks: list[SourceChunkV1],
+    ) -> TimelineAnalysisProposalV1:
+        raise TimeoutError("synthetic provider timeout")
+
+
+class _SchemaFailureRunner:
+    def run(
+        self,
+        input_context: TimelineAnalysisInputV1,
+        *,
+        source_chunks: list[SourceChunkV1],
+    ) -> TimelineAnalysisProposalV1:
+        raise ProviderResponseError(
+            "sanitized timeline schema failure",
+            diagnostics={
+                "schema_error_field_paths": ["evidence_indexes.0"],
+                "schema_error_rule_codes": ["TIMELINE_EVIDENCE_INDEX_INVALID"],
+                "expected_output_schema": "TimelinePairInferenceV1",
+                "unsafe_response": "must not persist",
+            },
+        )
+
+
 def _coordinator(session: Session, runner: _BlockingRunner) -> NarrativeTimelineCoordinator:
     return NarrativeTimelineCoordinator(
         repository=TimelineGate3Repository(session),
@@ -216,6 +245,44 @@ def test_nonapproved_gate2_route_has_zero_timeline_provider_calls(tmp_path, deci
 
     assert coordinator.run_if_approved(route=blocked, source_chunks=[_chunk()]) is None
     assert runner.calls == 0
+
+
+def test_timeline_timeout_persists_only_safe_failure_diagnostics(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'timeline-gate3.db'}")
+    Base.metadata.create_all(engine)
+    coordinator = NarrativeTimelineCoordinator(
+        repository=TimelineGate3Repository(Session(engine)),
+        timeline_runner=_TimeoutRunner(),
+        agent_run_repository=AgentRunRepository(Session(engine)),
+    )
+
+    failed = coordinator.run_if_approved(route=_route(), source_chunks=[_chunk()])
+
+    assert failed is not None
+    assert failed.status == TimelineGate3RunStatus.FAILED
+    assert str(failed.failure_category) == "PROVIDER_TIMEOUT"
+    assert failed.safe_issue_codes == ["TIMELINE_PROVIDER_TIMEOUT"]
+
+
+def test_timeline_schema_failure_persists_only_typed_safe_diagnostics(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'timeline-gate3.db'}")
+    Base.metadata.create_all(engine)
+    coordinator = NarrativeTimelineCoordinator(
+        repository=TimelineGate3Repository(Session(engine)),
+        timeline_runner=_SchemaFailureRunner(),
+        agent_run_repository=AgentRunRepository(Session(engine)),
+    )
+
+    failed = coordinator.run_if_approved(route=_route(), source_chunks=[_chunk()])
+
+    assert failed is not None
+    assert failed.status == TimelineGate3RunStatus.FAILED
+    assert failed.provider_diagnostics is not None
+    assert failed.provider_diagnostics.schema_error_field_paths == ["evidence_indexes.0"]
+    assert failed.provider_diagnostics.schema_error_rule_codes == [
+        "TIMELINE_EVIDENCE_INDEX_INVALID"
+    ]
+    assert "unsafe_response" not in failed.model_dump_json()
 
 
 def test_recovery_uses_same_approved_scope_and_preserves_rejected_artifacts(tmp_path) -> None:

@@ -3,9 +3,12 @@
 from pydantic import ValidationError
 
 from comic_agent.agents.base import BaseAgent
+from comic_agent.agents.source_evidence import (
+    is_verifiable_or_uniquely_rebindable_evidence,
+)
 from comic_agent.agents.specs import AgentSpec
 from comic_agent.providers.llm import LLMProvider
-from comic_agent.schemas import SourceChunkV1, StateChangeProposalBatchV1
+from comic_agent.schemas import EvidenceRefV1, SourceChunkV1, StateChangeProposalBatchV1
 
 STATE_CHANGE_EXTRACTION_SYSTEM_PROMPT = """
 You are StateChangeExtractionAgent. Use only input_context.source_chunks and
@@ -150,6 +153,9 @@ class StateChangeExtractionAgent(BaseAgent[StateChangeProposalBatchV1]):
         """Extract one bounded State Change batch from supplied SourceChunk context."""
 
         source_text_by_chunk_id = _source_text_by_chunk_id(input_context)
+        allow_deterministic_evidence_fallback = (
+            input_context.get("output_recovery") == "evidence_validation"
+        )
         batch = self._provider.structured_generate(
             {
                 "system_prompt": STATE_CHANGE_EXTRACTION_SYSTEM_PROMPT,
@@ -161,6 +167,7 @@ class StateChangeExtractionAgent(BaseAgent[StateChangeProposalBatchV1]):
             },
             StateChangeProposalBatchV1,
         )
+        normalized_changes = []
         for change in batch.changes:
             if (
                 change.event is None
@@ -177,30 +184,71 @@ class StateChangeExtractionAgent(BaseAgent[StateChangeProposalBatchV1]):
                     "StateChangeExtractionAgent unresolved target mention_text must appear "
                     "in a source_chunk_ids-selected input SourceChunk"
                 )
+            normalized_evidence = []
             for evidence in change.evidence_refs:
                 source_text = source_text_by_chunk_id.get(evidence.chunk_id)
+                if is_verifiable_or_uniquely_rebindable_evidence(
+                    evidence, source_text_by_chunk_id
+                ):
+                    normalized_evidence.append(evidence)
+                    continue
                 if source_text is None:
                     raise ValueError(
                         "StateChangeExtractionAgent evidence must reference a "
                         "source_chunk_ids-selected input SourceChunk"
                     )
-                if evidence.quote_text is None or evidence.quote_text not in source_text:
+                if not allow_deterministic_evidence_fallback:
                     raise ValueError(
                         "StateChangeExtractionAgent evidence quote_text must be verbatim input "
                         "SourceChunk text"
                     )
-                if (
-                    evidence.quote_start is not None
-                    and evidence.quote_end is not None
-                    and (
-                        source_text[evidence.quote_start : evidence.quote_end]
-                        != evidence.quote_text
-                    )
-                ):
+                if change.target.mention_text not in source_text:
                     raise ValueError(
-                        "StateChangeExtractionAgent evidence offsets must exactly match quote_text"
+                        "StateChangeExtractionAgent cannot replace evidence outside its "
+                        "target's selected SourceChunk"
                     )
-        return batch
+                normalized_evidence.append(
+                    _verbatim_target_anchor(
+                        chunk_id=evidence.chunk_id,
+                        source_text=source_text,
+                        target_mention=change.target.mention_text,
+                    )
+                )
+            normalized_changes.append(
+                change.model_copy(update={"evidence_refs": normalized_evidence})
+            )
+        return batch.model_copy(update={"changes": normalized_changes})
+
+
+def _verbatim_target_anchor(
+    *, chunk_id: str, source_text: str, target_mention: str
+) -> EvidenceRefV1:
+    """Return the exact selected-source sentence containing a State Change target.
+
+    A provider sometimes paraphrases its quote despite selecting the right source
+    chunk.  We never accept that paraphrase.  Instead, this bounded repair stores
+    an exact sentence from the already selected chunk, anchored on the target that
+    the source-only contract has already verified.  The repair never changes the
+    source scope, adds a fact, or turns an unknown reference into a resolved id.
+    Gate 2 still reviews the resulting candidate.
+    """
+
+    target_start = source_text.index(target_mention)
+    boundaries = "\n。！？!?；;"
+    start = max(source_text.rfind(boundary, 0, target_start) + 1 for boundary in boundaries)
+    end_candidates = [
+        position + 1
+        for boundary in boundaries
+        if (position := source_text.find(boundary, target_start + len(target_mention))) != -1
+    ]
+    end = min(end_candidates, default=len(source_text))
+    quote_text = source_text[start:end]
+    return EvidenceRefV1(
+        chunk_id=chunk_id,
+        quote_start=start,
+        quote_end=end,
+        quote_text=quote_text,
+    )
 
 
 def _source_text_by_chunk_id(input_context: dict[str, object]) -> dict[str, str]:

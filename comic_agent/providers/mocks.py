@@ -125,7 +125,7 @@ class LocalSafeDemoProvider:
             return output_model.model_validate(
                 {"batch_id": "local-safe-demo-relationship-signals", "signals": []}
             )
-        if output_model.__name__ == "TemporalRelationProposalV1":
+        if output_model.__name__ == "TimelinePairInferenceV1":
             return output_model.model_validate(self._temporal_relation(request))
         return output_model.model_validate({"batch_id": "local-demo-empty", "items": []})
 
@@ -227,20 +227,15 @@ class LocalSafeDemoProvider:
         user = messages[-1]
         if not isinstance(user, dict) or not isinstance(user.get("content"), str):
             raise ValueError("local demo Timeline request is invalid")
-        payload = json.loads(user["content"])
-        first = payload["event_a"]
-        second = payload["event_b"]
+        json.loads(user["content"])
         self._timeline_calls += 1
         return {
-            "proposal_id": "local-demo-temporal-relation",
-            "source_event_id": first["proposal_id"],
-            "target_event_id": second["proposal_id"],
             "relation": (
                 "AFTER"
                 if self._scenario == "recover_gate3" and self._timeline_calls == 2
                 else "BEFORE"
             ),
-            "evidence_refs": first["evidence_refs"],
+            "evidence_indexes": [0],
             "confidence": 1.0,
         }
 

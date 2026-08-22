@@ -83,7 +83,9 @@ persisted as `SPLIT` and its children inherit the persisted retry deadline.
 Resume does not call the Provider before that deadline, never replays a
 successful sibling, and resumes only the narrower approved child scopes. The
 new child Proposal provenance remains subject to the existing fresh Gate 2
-boundary.
+boundary. Timeout and length-recovery children also cap each retry context at
+the configured `NARRATIVE_WINDOW_LENGTH_RETRY_MAX_CHARS_PER_CHUNK` (default
+800), so a split does not silently restore the original large input.
 For `PROVIDER_LENGTH_BEFORE_FINAL_CONTENT` on a multi-SourceChunk window, it
 first records the failed parent and deterministically splits it into one child
 window per parent-owned SourceChunk. Each child may read the parent context but
@@ -113,6 +115,9 @@ unsupported structured output, or exhausted persisted budget, the terminal state
 `NEEDS_HUMAN_ACTION`: automatic recovery has stopped and Gate 2/Timeline remain unavailable.
 Length recovery and one schema-format repair have independent persisted budgets for each
 source-bounded child; an earlier length recovery never consumes that child’s schema repair.
+The real-provider output cap defaults to 8000 (`LLM_MAX_OUTPUT_TOKENS`) and is
+persisted in each new window's budget snapshot; an explicit environment value
+still overrides it.
 Manual real-LLM validation is allowed only after the mock-based checks pass and never records a
 credential in a command, log, screenshot, or Git artifact.
 
@@ -317,10 +322,25 @@ Batch, write a canonical fact, or silently remove the case from totals.
 After a whole-document Narrative Analyst run is `SUCCEEDED`, all leaf windows are successful,
 and its aggregate result is persisted, `NarrativeAnalysisReviewCoordinator` builds one
 `ReviewGate2InputV1` from the six aggregate lists: Event, Entity, Claim, Knowledge State, State
-Change, and Relationship Signal. It preserves original Proposal values, mode/schema, AgentRun
-ids, aggregated EvidenceRef values, project/document/analysis-run identity, and only the
-Gate 1-approved SourceChunks actually used by the run. It does not scan a database for context,
-use raw provider responses, text similarity, embedding, or automatic canonical links.
+Change, and Relationship Signal. Provider-generated Proposal ids remain unchanged unless two
+aggregate candidates from separate windows have the same schema/id pair. Only then is that local
+sequence number replaced by a deterministic, document-safe candidate id derived from the
+validated Proposal value excluding the colliding id. This prevents separate windows that each emit
+values such as `evt_001` from colliding; it does not alter Proposal semantics, mode/schema,
+AgentRun provenance, or aggregated EvidenceRef values. Gate 2 receives only the
+project/document/analysis-run identity and Gate 1-approved SourceChunks actually used by the run.
+It does not scan a database for context, use raw provider responses, text similarity, embedding,
+or automatic canonical links.
+
+Parallel modes cannot know each other's provider-local Proposal ids. Event v1.1 and Claim
+v1.3 therefore distinguish a hard Proposal id from a source mention. When a legacy
+parallel result places a name or summary in an id field and no aggregate Proposal has that
+id, aggregation converts it into an unresolved `ProposalMentionRefV1` in the aggregate
+copy only. Gate 2 may bind that mention only by exact unique match within the typed,
+reality-compatible aggregate catalog. It records the result in the approved item's
+reference decisions; it never changes an AgentRun, guesses with semantic similarity, or
+writes a canonical entity. `NarrativeTimelineInputAdapter` uses only those recorded
+`RESOLVED` decisions to build a downstream input copy.
 
 The typed `ReviewGate2ResultV1` and `NarrativeAnalysisReviewRouteV1` are persisted inside the
 existing analysis-run JSON payload. Empty input produces a valid empty APPROVED bundle. An
@@ -384,8 +404,10 @@ uv run uvicorn comic_agent.main:app --host 127.0.0.1 --port 8080
 
 Open `http://127.0.0.1:8080/console/`, select a short authorized TXT, check
 **使用真实 LLM**, then click **开始安全分析**. The browser never sends or displays
-the API key. The server rejects a real request before import if real LLM is
-disabled, Fake mode remains enabled, or no local key is configured. The same
+the API key. The server creates a persistent run id and queues real-provider
+preflight after import. If real LLM is disabled, Fake mode remains enabled, or no
+local key is configured, the background task records a sanitized terminal phase and
+issue code without calling a proposal Provider. The same
 Gate 1 → Narrative → Gate 2 → Timeline → Gate 3 and recovery boundaries apply;
 this entry never writes StoryBible or calls image providers. Start with a short
 text and inspect only the source-free status/result APIs.

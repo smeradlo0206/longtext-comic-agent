@@ -45,6 +45,20 @@ class NarrativeAnalysisRunStatus(StrEnum):
     NEEDS_HUMAN_ACTION = "NEEDS_HUMAN_ACTION"
 
 
+class NarrativePipelinePhase(StrEnum):
+    """Source-free phase shown while the one-click pipeline runs in the background."""
+
+    QUEUED = "QUEUED"
+    PROVIDER_CHECKING = "PROVIDER_CHECKING"
+    NARRATIVE_RUNNING = "NARRATIVE_RUNNING"
+    GATE2_REVIEWING = "GATE2_REVIEWING"
+    TIMELINE_RUNNING = "TIMELINE_RUNNING"
+    GATE3_REVIEWING = "GATE3_REVIEWING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    NEEDS_HUMAN_ACTION = "NEEDS_HUMAN_ACTION"
+
+
 class NarrativeAnalysisWindowStatus(StrEnum):
     """Lifecycle states for one bounded analysis window."""
 
@@ -351,13 +365,13 @@ class NarrativeGate2HandoffV1(StrictBaseModel):
 class NarrativeAnalysisRunV1(StrictBaseModel):
     """Persistent, resumable whole-document NarrativeAnalyst task."""
 
-    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6"] = Field(
-        default="1.6",
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7"] = Field(
+        default="1.7",
         description=(
             "Schema version; v1.0/v1.1 records remain readable and v1.2 adds "
             "source-free recovery outcomes; v1.3 adds deterministic batch manifests; "
             "v1.4 adds root execution-budget reservations; v1.5 adds a durable Gate 2 handoff; "
-            "v1.6 records structured-execution terminal states."
+            "v1.6 records structured-execution terminal states; v1.7 adds the async pipeline phase."
         ),
     )
     analysis_run_id: str = Field(description="Persistent analysis task id.")
@@ -365,6 +379,14 @@ class NarrativeAnalysisRunV1(StrictBaseModel):
     document_id: str = Field(description="Selected source document id.")
     modes: list[str] = Field(min_length=1, description="Independent modes selected for the task.")
     status: NarrativeAnalysisRunStatus = Field(description="Whole-document task status.")
+    pipeline_phase: NarrativePipelinePhase = Field(
+        default=NarrativePipelinePhase.QUEUED,
+        description="Source-free phase for the one-click background pipeline.",
+    )
+    pipeline_safe_issue_codes: list[str] = Field(
+        default_factory=list,
+        description="Allowlisted, source-free pipeline startup or terminal issue codes.",
+    )
     window_size: int = Field(default=3, ge=1, description="Maximum chunks per window.")
     stride: int = Field(default=2, ge=1, description="Chunk offset between windows.")
     concurrency: Literal[1] = Field(default=1, description="Initial worker concurrency.")

@@ -226,6 +226,10 @@ def test_web_console_exposes_whole_document_analysis_as_the_normal_flow() -> Non
     assert 'id="safePipelineRunBadge"' in html
     assert 'id="safePipelineRunMessage"' in html
     assert "narrative_failure_summary" in html
+    assert "pipeline_phase" in html
+    assert "pipeline_safe_issue_codes" in html
+    assert "PROVIDER_CHECKING" in html
+    assert "pipelineTerminal" in html
     assert "provider_health" in html
     assert 'id="advancedDevelopmentDiagnostics"' in html
     assert 'id="advancedDevelopmentDiagnostics" open' not in html
@@ -233,8 +237,12 @@ def test_web_console_exposes_whole_document_analysis_as_the_normal_flow() -> Non
     assert "batch_summary" in html
     assert "GATE2_PENDING" in html
     assert "叙事已完成，正在补齐 Gate 2 审核" in html
+    assert "Timeline 执行失败" in html
+    assert "timeline_failure_category" in html
+    assert "timeline_safe_issue_codes" in html
     assert "ensureSafePipelineRealLlmEnabled" in html
     assert "describeSafePipelineStartError" in html
+    assert 'error.message?.startsWith("真实 LLM 尚未就绪：")' in html
     assert "START_FAILED" in html
     assert 'body.append("real_llm_requested", String(realLlmRequested))' in html
     assert "const stoppedAtGate2" in html
@@ -271,6 +279,14 @@ def test_web_console_exposes_whole_document_analysis_as_the_normal_flow() -> Non
     manual_chunk_input = html.index('id="narrativeChunkIds"')
     advanced_end = html.index("</details>", advanced_start)
     assert advanced_start < manual_chunk_input < advanced_end
+
+
+def test_web_console_stops_polling_when_a_previous_run_no_longer_exists() -> None:
+    html = Path("web_console/index.html").read_text(encoding="utf-8")
+
+    assert "error.status === 404" in html
+    assert "state.safePipelineRunId = null" in html
+    assert "该任务不在当前数据库中" in html
 
 
 def test_web_console_exposes_automatic_gate1_and_chapter_authorization() -> None:

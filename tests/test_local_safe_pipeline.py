@@ -2,17 +2,27 @@
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from comic_agent.agents.timeline_agent import TimelineAgent
-from comic_agent.api.pipeline import _parse_narrative_modes
+from comic_agent.api.pipeline import (
+    _batch_summary,
+    _gate2_safe_issue_codes,
+    _parse_narrative_modes,
+    _pipeline_retry_wait_seconds,
+    _require_real_pipeline_opt_in,
+    _save_pipeline_failure,
+)
 from comic_agent.config import Settings, get_settings
 from comic_agent.main import create_app
 from comic_agent.providers.mocks import LocalSafeDemoProvider, MockLLMProvider
+from comic_agent.providers.openai_compatible import OpenAICompatibleLLMProvider
 from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
+from comic_agent.repositories.provider_circuit_repository import ProviderCircuitRepository
 
 _OFFICIAL_TEXT = """下午四点，小林先到学校礼堂，在公告栏张贴志愿者招募海报。
 十分钟后，天下起雨；小周撑着一把蓝色雨伞赶到礼堂。
@@ -29,6 +39,30 @@ _ALL_NARRATIVE_MODES = [
 ]
 
 
+def test_gate2_safe_issue_codes_include_rejected_proposal_diagnostics() -> None:
+    """Pipeline progress must expose Gate 2 codes without source text or raw output."""
+
+    result = type(
+        "Result",
+        (),
+        {
+            "execution_issues": [type("Issue", (), {"code": "GATE2_EXECUTION_ERROR"})()],
+            "decisions": [
+                type(
+                    "Decision",
+                    (),
+                    {"issues": [type("Issue", (), {"code": "REFERENCE_TARGET_NOT_FOUND"})()]},
+                )()
+            ],
+        },
+    )()
+
+    assert _gate2_safe_issue_codes(result) == {
+        "GATE2_EXECUTION_ERROR",
+        "REFERENCE_TARGET_NOT_FOUND",
+    }
+
+
 def test_pipeline_accepts_only_distinct_known_requested_narrative_modes() -> None:
     assert _parse_narrative_modes(
         '["entity_extraction", "event_extraction"]'
@@ -41,6 +75,88 @@ def test_pipeline_accepts_only_distinct_known_requested_narrative_modes() -> Non
 
 def test_pipeline_defaults_to_all_six_narrative_modes() -> None:
     assert _parse_narrative_modes(None) == _ALL_NARRATIVE_MODES
+
+
+def test_batch_summary_marks_a_split_parent_with_successful_children_as_succeeded() -> None:
+    """A completed split tree must not look like a planned batch in the Console."""
+
+    run = SimpleNamespace(batches=[SimpleNamespace(batch_id="batch-1")])
+    windows = [
+        SimpleNamespace(batch_id="batch-1", status="SPLIT"),
+        SimpleNamespace(batch_id="batch-1", status="SUCCEEDED"),
+        SimpleNamespace(batch_id="batch-1", status="SUCCEEDED"),
+    ]
+
+    assert _batch_summary(run, windows) == {"total": 1, "status_counts": {"SUCCEEDED": 1}}
+
+
+def test_pipeline_selects_latest_fresh_approved_route_despite_later_failed_recovery() -> None:
+    """A later rejected recovery cannot hide an earlier approved Timeline input."""
+
+    approved = SimpleNamespace(decision="APPROVED", approved_proposal_bundle=object())
+    attempts = [
+        SimpleNamespace(fresh_route=approved),
+        SimpleNamespace(fresh_route=SimpleNamespace(decision="REJECTED")),
+        SimpleNamespace(fresh_route=None),
+    ]
+
+    from comic_agent.api import pipeline
+
+    assert pipeline._latest_approved_recovery_route(attempts) is approved
+
+
+def test_overdue_pipeline_retry_checkpoint_is_immediately_eligible() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    assert _pipeline_retry_wait_seconds(now - timedelta(seconds=1), now=now) == 0
+    assert _pipeline_retry_wait_seconds(now + timedelta(seconds=30), now=now) == 5
+
+
+def test_real_preflight_reuses_the_provider_instance_for_narrative_execution(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("COMIC_AGENT_ENV", "development")
+    monkeypatch.setenv("COMIC_AGENT_FAKE_PIPELINE_DEMO", "false")
+    monkeypatch.setenv("ENABLE_REAL_LLM", "true")
+    monkeypatch.setenv("LLM_API_KEY", "test-local-key")
+    get_settings.cache_clear()
+    app = create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'preflight.db'}")
+    if hasattr(app.state, "narrative_analyst_provider"):
+        delattr(app.state, "narrative_analyst_provider")
+    provider = LocalSafeDemoProvider()
+    monkeypatch.setattr(
+        "comic_agent.api.pipeline.build_openai_compatible_provider", lambda _: provider
+    )
+    session = app.state.session_factory()
+    try:
+        _require_real_pipeline_opt_in(
+            True,
+            app_state=app.state,
+            circuit_repository=ProviderCircuitRepository(session),
+        )
+        assert app.state.narrative_analyst_provider is provider
+    finally:
+        session.close()
+
+
+def test_real_app_wires_timeline_to_hardened_provider_with_timeline_model(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("COMIC_AGENT_ENV", "development")
+    monkeypatch.setenv("COMIC_AGENT_FAKE_PIPELINE_DEMO", "false")
+    monkeypatch.setenv("ENABLE_REAL_LLM", "true")
+    monkeypatch.setenv("LLM_API_KEY", "test-local-key")
+    monkeypatch.setenv("TIMELINE_MODEL", "timeline-test-model")
+    monkeypatch.setenv("LLM_MAX_OUTPUT_TOKENS", "8000")
+    get_settings.cache_clear()
+
+    app = create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'timeline-provider.db'}")
+    provider = app.state.timeline_agent._provider
+
+    assert isinstance(provider, OpenAICompatibleLLMProvider)
+    assert provider._model == "timeline-test-model"
+    assert provider._max_output_tokens == 8000
 
 
 def test_pipeline_persists_an_explicit_six_mode_request(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -160,7 +276,78 @@ def test_one_click_pipeline_only_uses_real_provider_after_explicit_opt_in(
     assert client.get(f"/pipeline-runs/{run_id}").json()["gate3"] == "APPROVED"
 
 
-def test_one_click_real_llm_opt_in_requires_a_local_key_before_import(
+def test_one_click_real_pipeline_retries_a_waiting_provider_preflight(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """A transient preflight timeout must not terminally fail untouched windows."""
+
+    class _FailsFirstPreflightProvider(LocalSafeDemoProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.preflight_calls = 0
+
+        def preflight(self) -> None:
+            self.preflight_calls += 1
+            if self.preflight_calls == 1:
+                raise TimeoutError("transient provider timeout")
+
+    monkeypatch.setenv("PROVIDER_CIRCUIT_BACKOFF_SECONDS", "1")
+    monkeypatch.setenv("PROVIDER_CIRCUIT_MAX_BACKOFF_SECONDS", "1")
+    client = _real_llm_client(tmp_path, monkeypatch)
+    provider = _FailsFirstPreflightProvider()
+    client.app.state.narrative_analyst_provider = provider
+
+    started = client.post(
+        "/projects/preflight-retry/pipeline-runs/import-and-analyze",
+        data={"real_llm_requested": "true"},
+        files={"file": ("official.txt", _OFFICIAL_TEXT.encode("utf-8"), "text/plain")},
+    )
+
+    assert started.status_code == 200
+    run = client.get(f"/pipeline-runs/{started.json()['analysis_run_id']}").json()
+    assert provider.preflight_calls == 2
+    assert run["narrative"] == "SUCCEEDED"
+    assert run["pipeline_phase"] == "COMPLETED"
+    assert run["pipeline_safe_issue_codes"] == []
+
+
+def test_one_click_real_pipeline_stops_after_preflight_circuit_pauses(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """A permanently unavailable Provider consumes only the bounded preflight allowance."""
+
+    class _FailingPreflightProvider(LocalSafeDemoProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.preflight_calls = 0
+
+        def preflight(self) -> None:
+            self.preflight_calls += 1
+            raise TimeoutError("persistent provider timeout")
+
+    monkeypatch.setenv("PROVIDER_CIRCUIT_FAILURE_THRESHOLD", "2")
+    monkeypatch.setenv("PROVIDER_CIRCUIT_BACKOFF_SECONDS", "1")
+    monkeypatch.setenv("PROVIDER_CIRCUIT_MAX_BACKOFF_SECONDS", "1")
+    client = _real_llm_client(tmp_path, monkeypatch)
+    provider = _FailingPreflightProvider()
+    client.app.state.narrative_analyst_provider = provider
+
+    started = client.post(
+        "/projects/preflight-paused/pipeline-runs/import-and-analyze",
+        data={"real_llm_requested": "true"},
+        files={"file": ("official.txt", _OFFICIAL_TEXT.encode("utf-8"), "text/plain")},
+    )
+
+    assert started.status_code == 200
+    run = client.get(f"/pipeline-runs/{started.json()['analysis_run_id']}").json()
+    assert provider.preflight_calls == 2
+    assert provider.calls == 0
+    assert run["narrative"] == "NEEDS_HUMAN_ACTION"
+    assert run["pipeline_phase"] == "NEEDS_HUMAN_ACTION"
+    assert run["pipeline_safe_issue_codes"] == ["PROVIDER_CIRCUIT_OPEN", "PROVIDER_TIMEOUT"]
+
+
+def test_one_click_real_llm_opt_in_missing_key_is_reported_by_durable_run(
     tmp_path, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setenv("COMIC_AGENT_ENV", "development")
@@ -177,9 +364,15 @@ def test_one_click_real_llm_opt_in_requires_a_local_key_before_import(
         files={"file": ("official.txt", _OFFICIAL_TEXT.encode("utf-8"), "text/plain")},
     )
 
-    assert response.status_code == 409
-    assert response.json()["detail"] == "Real LLM requires a configured local API key"
-    assert client.get("/projects/no-key/documents").json() == []
+    assert response.status_code == 200
+    run_id = response.json()["analysis_run_id"]
+    status = client.get(f"/pipeline-runs/{run_id}")
+    assert status.status_code == 200
+    assert status.json()["narrative"] == "FAILED"
+    assert status.json()["pipeline_phase"] == "FAILED"
+    assert status.json()["pipeline_safe_issue_codes"] == ["PROVIDER_API_KEY_MISSING"]
+    assert "PROVIDER_API_KEY_MISSING" in status.json()["safe_issue_codes"]
+    assert client.get("/projects/no-key/documents").status_code == 200
 
 
 def test_one_click_pipeline_exposes_sanitized_narrative_failure_summary(
@@ -332,3 +525,27 @@ def test_pipeline_status_reports_gate2_pending_for_saved_aggregate_without_route
     assert response.json()["gate2"] == "GATE2_PENDING"
     assert "quote_text" not in response.text
     assert _OFFICIAL_TEXT not in response.text
+
+
+def test_background_failure_does_not_rewrite_a_completed_narrative_run(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """A downstream worker error must retain a completed Narrative checkpoint for resume."""
+
+    client = _client(tmp_path, monkeypatch)
+    started = client.post(
+        "/projects/preserve-narrative/pipeline-runs/import-and-analyze",
+        files={"file": ("official.txt", _OFFICIAL_TEXT.encode("utf-8"), "text/plain")},
+    )
+    run_id = started.json()["analysis_run_id"]
+
+    _save_pipeline_failure(
+        client.app.state.session_factory,
+        run_id,
+        ["PIPELINE_WORKER_FAILED"],
+    )
+
+    status = client.get(f"/pipeline-runs/{run_id}").json()
+    assert status["narrative"] == "SUCCEEDED"
+    assert status["pipeline_phase"] == "FAILED"
+    assert status["pipeline_safe_issue_codes"] == ["PIPELINE_WORKER_FAILED"]

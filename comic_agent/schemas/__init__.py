@@ -59,6 +59,7 @@ from comic_agent.schemas.narrative import (
     KnowledgeTargetKind,
     KnowledgeTargetRefV1,
     KnowledgeTemporalAnchorV1,
+    ProposalMentionRefV1,
     RelationshipAssertionPolarity,
     RelationshipContextEventRefV1,
     RelationshipDirectionality,
@@ -192,6 +193,8 @@ from comic_agent.schemas.timeline import (
     TimelineGate3IssueV1,
     TimelineGate3RunStatus,
     TimelineGate3RunV1,
+    TimelinePairInferenceV1,
+    TimelineProviderDiagnosticsV1,
     TimelineRecoveryBudgetV1,
 )
 from comic_agent.schemas.visual import PanelSpecV1
@@ -220,6 +223,7 @@ from comic_agent.schemas.workflow import (
     NarrativeAnalysisWindowV1,
     NarrativeGate2HandoffStatus,
     NarrativeGate2HandoffV1,
+    NarrativePipelinePhase,
     NarrativeRecoveryPhase,
     NarrativeRecoveryTerminalReason,
     ProviderResultV1,
@@ -297,6 +301,7 @@ __all__ = [
     "KnowledgeTargetKind",
     "KnowledgeTargetRefV1",
     "KnowledgeTemporalAnchorV1",
+    "ProposalMentionRefV1",
     "KnowledgeReferenceResolutionStatus",
     "MockProviderResultV1",
     "NarrativeGate2HandoffStatus",
@@ -305,6 +310,7 @@ __all__ = [
     "NarrativeAnalysisBatchV1",
     "NarrativeAnalysisRunStatus",
     "NarrativeAnalysisRunV1",
+    "NarrativePipelinePhase",
     "NarrativeRecoveryPhase",
     "NarrativeRecoveryTerminalReason",
     "NarrativeAnalysisCreateRequestV1",
@@ -439,5 +445,7 @@ __all__ = [
     "TimelineGate3IssueV1",
     "TimelineGate3RunStatus",
     "TimelineGate3RunV1",
+    "TimelinePairInferenceV1",
+    "TimelineProviderDiagnosticsV1",
     "TimelineRecoveryBudgetV1",
 ]

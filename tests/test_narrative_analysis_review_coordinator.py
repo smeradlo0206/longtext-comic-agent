@@ -191,3 +191,40 @@ def test_rejected_evidence_is_persisted_as_a_safe_route_diagnostic() -> None:
     assert reviewed.review_gate2_route.recovery_diagnostics[0].issue_codes == [
         "EVIDENCE_QUOTE_NOT_FOUND"
     ]
+
+
+def test_repeated_evidence_issues_produce_one_route_diagnostic_code() -> None:
+    chunk = _chunk()
+    invalid_event = EventProposalV1(
+        proposal_id="event-1",
+        event_type="DISCOVERY",
+        summary="A verified event happens.",
+        evidence_refs=[
+            EvidenceRefV1(chunk_id=chunk.chunk_id, quote_text="first missing quote"),
+            EvidenceRefV1(chunk_id=chunk.chunk_id, quote_text="second missing quote"),
+        ],
+        confidence=0.9,
+        reality_layer="PRIMARY",
+    )
+    aggregate = NarrativeAnalysisResultV1(
+        analysis_run_id="analysis-1",
+        events=[
+            AggregatedEventProposalV1(
+                proposal=invalid_event,
+                agent_run_ids=["agent-run-1"],
+                evidence_refs=invalid_event.evidence_refs,
+            )
+        ],
+    )
+    repository = _AnalysisRepository(_run(), aggregate, [_window()])
+
+    reviewed = NarrativeAnalysisReviewCoordinator(
+        source_repository=_SourceRepository([chunk], [chunk.chunk_id]),
+        analysis_repository=repository,  # type: ignore[arg-type]
+    ).review_if_ready("analysis-1")
+
+    assert reviewed.review_gate2_route is not None
+    assert reviewed.review_gate2_route.decision == "REJECTED"
+    assert reviewed.review_gate2_route.recovery_diagnostics[0].issue_codes == [
+        "EVIDENCE_QUOTE_NOT_FOUND"
+    ]

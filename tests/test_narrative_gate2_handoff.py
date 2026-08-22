@@ -1,6 +1,7 @@
 """Regression coverage for durable, provider-free Gate 2 handoff recovery."""
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from sqlalchemy import create_engine
@@ -8,14 +9,18 @@ from sqlalchemy.orm import sessionmaker
 
 from comic_agent.database.base import Base
 from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
+from comic_agent.schemas.base import EvidenceRefV1
+from comic_agent.schemas.narrative import EventProposalV1
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.workflow import (
+    AggregatedEventProposalV1,
     NarrativeAnalysisResultV1,
     NarrativeAnalysisRunStatus,
     NarrativeAnalysisRunV1,
     NarrativeAnalysisWindowStatus,
     NarrativeAnalysisWindowV1,
     NarrativeGate2HandoffStatus,
+    NarrativeGate2HandoffV1,
 )
 from comic_agent.services.narrative_analysis_review_coordinator import (
     NarrativeGate2HandoffCoordinator,
@@ -195,3 +200,91 @@ def test_gate2_handoff_failure_is_sanitized_and_resume_only_retries_gate2(tmp_pa
     assert resumed.review_gate2_result is not None
     assert resumed.gate2_handoff is not None
     assert resumed.gate2_handoff.status == NarrativeGate2HandoffStatus.COMPLETED
+
+
+def test_invalid_legacy_aggregate_marks_gate2_handoff_failed_instead_of_leaking_running(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    """A corrupted legacy aggregate must not strand a claimed Gate 2 checkpoint."""
+
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'gate2_duplicate_ids.db'}", future=True)
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    run_id = _seed(session_factory)
+    proposal_a = EventProposalV1(
+        proposal_id="evt_001",
+        event_type="ACTION",
+        summary="First action.",
+        evidence_refs=[EvidenceRefV1(chunk_id="chunk-1", quote_text="safe")],
+        confidence=0.8,
+        reality_layer="PRIMARY",
+    )
+    proposal_b = proposal_a.model_copy(update={"summary": "Second action."})
+    session = session_factory()
+    try:
+        repository = NarrativeAnalysisRepository(session)
+        repository.save_result(
+            NarrativeAnalysisResultV1(
+                analysis_run_id=run_id,
+                events=[
+                    AggregatedEventProposalV1(
+                        proposal=proposal_a,
+                        agent_run_ids=["agent-run-1"],
+                        evidence_refs=proposal_a.evidence_refs,
+                    ),
+                    AggregatedEventProposalV1(
+                        proposal=proposal_b,
+                        agent_run_ids=["agent-run-1"],
+                        evidence_refs=proposal_b.evidence_refs,
+                    ),
+                ],
+            )
+        )
+        failed = NarrativeGate2HandoffCoordinator(
+            source_repository=_SourceRepository(),
+            analysis_repository=repository,
+        ).review_if_ready(run_id)
+    finally:
+        session.close()
+
+    assert failed.review_gate2_result is None
+    assert failed.gate2_handoff is not None
+    assert failed.gate2_handoff.status == NarrativeGate2HandoffStatus.FAILED
+    assert failed.gate2_handoff.failure_category == "GATE2_EXECUTION_ERROR"
+    assert failed.gate2_handoff.safe_issue_codes == ["GATE2_HANDOFF_FAILED"]
+
+
+def test_stale_gate2_handoff_can_be_reclaimed_after_worker_interruption(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A crashed worker must not permanently own a Gate 2 checkpoint."""
+
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'gate2_stale_claim.db'}", future=True)
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    run_id = _seed(session_factory)
+    session = session_factory()
+    try:
+        repository = NarrativeAnalysisRepository(session)
+        run = repository.get_run(run_id)
+        assert run is not None
+        stale_started_at = datetime.now(UTC) - timedelta(minutes=10)
+        repository.save_run(
+            run.model_copy(
+                update={
+                    "gate2_handoff": NarrativeGate2HandoffV1(
+                        status="RUNNING",
+                        attempt_count=1,
+                        max_attempts=2,
+                        started_at=stale_started_at,
+                    )
+                }
+            )
+        )
+
+        reclaimed = repository.claim_gate2_handoff(run_id)
+    finally:
+        session.close()
+
+    assert reclaimed is not None
+    assert reclaimed.gate2_handoff is not None
+    assert reclaimed.gate2_handoff.status == NarrativeGate2HandoffStatus.RUNNING
+    assert reclaimed.gate2_handoff.attempt_count == 2

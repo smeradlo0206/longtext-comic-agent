@@ -87,7 +87,7 @@ def create_narrative_analysis_run(
     window_size: int = DEFAULT_ANALYSIS_WINDOW_SIZE,
     stride: int = DEFAULT_ANALYSIS_STRIDE,
     batch_max_chunks: int = 20,
-    output_token_budget: int = 2000,
+    output_token_budget: int = 8000,
     time_budget_seconds: int = 300,
     max_call_attempts: int = 2,
     max_split_depth: int = 3,
@@ -216,7 +216,7 @@ def create_narrative_analysis_run(
     ]
     now = datetime.now(UTC)
     run = NarrativeAnalysisRunV1(
-        schema_version="1.3",
+        schema_version="1.7",
         analysis_run_id=analysis_run_id,
         project_id=project_id,
         document_id=document_id,

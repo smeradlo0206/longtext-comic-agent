@@ -121,15 +121,63 @@ back to their existing provider/model-wide selected mode.
 typed `ApprovedProposalBundleV1`; REJECTED carries only sanitized issue summaries;
 NEEDS_HUMAN_REVIEW carries held Proposal ids; FAILED carries sanitized execution diagnostics;
 NOT_READY carries no review artifact. Historical run and Proposal payload versions remain
-readable.
+readable. `NarrativeAnalysisRunV1` v1.7 adds source-free `pipeline_phase` and
+`pipeline_safe_issue_codes` fields for asynchronous Console polling. Existing v1.0-v1.6
+run payloads remain readable with `QUEUED` and an empty issue-code list. No database
+migration is required because these fields remain in the existing JSON payload container.
 Stage B `RecoveryAttemptV1` is an append-only, non-canonical audit contract. Its directive
 locks the original mode, leaf window, approved source scope, and AgentRun provenance; its
 budget records root/proposal/window counts, tokens, and time. A persistent idempotency key
-allows at most one reserved/running attempt and one Provider execution across re-entry,
+allows at most one reserved/running recovery execution across re-entry,
 resume, or restart. Fresh Gate 2 artifacts are never written over the original REJECTED run,
 and only a fresh APPROVED recovery route may be returned by the recovery bundle endpoint.
+`RecoveryDirectiveV1` v1.2 additionally records the reserved number of Provider calls for
+that fixed scope: one verbatim-evidence correction and, only after a structural failure, one
+same-scope JSON-format correction. Earlier v1.0-v1.1 directives remain readable and default
+to one call. This remains JSON-payload compatibility only; no database migration is required.
 
 Stage B recovery uses Alembic migration `0006_narrative_analysis_recovery_attempts`,
 downstream of Timeline migration `0005_timeline_analysis_proposals`. Its persistent
 idempotency key is strengthened in application code to include evidence text, prompt,
 agent version, and provider model before any LLM call.
+
+### 2026-08-22 Parallel Narrative reference compatibility and migration note
+
+`ProposalMentionRefV1` is a new exported, source-first reference contract. Event v1.1
+adds `participant_mentions` and `location_mention`; Claim v1.3 adds `source_reference`
+and `target_event_reference`. The original `participant_ids`, `location_id`, `source_id`,
+and `target_event_id` remain hard internal Proposal links only. Historical Event v1.0 and
+Claim v1.0–v1.2 payloads remain readable.
+
+Because the six Narrative modes execute independently, a provider-local name such as
+`Lin` cannot be assumed to equal an EntityProposal id selected by another mode. During
+aggregation, legacy values that do not name an aggregate Proposal become unresolved
+mention references; source AgentRun payloads are not overwritten. Gate 2 performs only
+exact unique, reality-compatible linking and records its decision. Ambiguous or unmatched
+mentions stay nonblocking and unresolved; no fuzzy matching, LLM linking, or canonical
+write occurs. The Timeline adapter materializes only Gate 2 `RESOLVED` entity links in
+its separate input copy. This is an additive JSON-payload change and needs no database
+migration.
+
+### 2026-08-22 Timeline execution diagnostics compatibility and migration note
+
+`TimelineGate3RunV1` v1.1 adds optional, source-free `failure_category` and
+`safe_issue_codes` fields for a Timeline Provider execution failure. v1.0 payloads remain
+readable, and no Alembic migration is needed because the run is stored in its existing JSON
+payload. For downstream status only, the Pipeline selects the newest fresh Gate 2 APPROVED
+recovery route with a bundle; a later separate rejected or failed recovery attempt does not
+hide that approved bundle's Timeline run. The original root Gate 2 route remains unchanged
+for audit, and no route can bypass Gate 2, Gate 3, or write canonical data.
+
+### 2026-08-22 Timeline pair inference hardening and migration note
+
+`TimelinePairInferenceV1` v1.0 is the Provider-facing contract for one ordered event pair.
+It contains only the temporal relation, indexes into an input EvidenceRef allowlist,
+confidence, and a short summary. Proposal ids, event ids, EvidenceRef values, quotes, and
+offsets are materialized deterministically by `TimelineAgent`; the Provider cannot invent
+them. One schema-only repair is allowed with source-free field paths and rule codes.
+
+`TimelineGate3RunV1` now writes v1.2 and may contain typed
+`TimelineProviderDiagnosticsV1`; historical v1.0/v1.1 JSON payloads remain readable. No
+database migration is required because the new optional fields remain in the existing run
+payload. Gate 3 and downstream access remain blocked after any terminal Timeline failure.

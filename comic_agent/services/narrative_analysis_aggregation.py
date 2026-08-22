@@ -1,13 +1,18 @@
 """Typed, conservative aggregation for whole-document proposal candidates."""
 
+import json
+from collections import Counter
+
 from comic_agent.schemas.base import EvidenceRefV1
 from comic_agent.schemas.narrative import (
     CampusContentProfileProposalV1,
     ClaimProposalV1,
     EntityProposalV1,
     EventProposalV1,
+    KnowledgeReferenceResolutionStatus,
     KnowledgeStateProposalV1,
     KnowledgeTemporalAnchorV1,
+    ProposalMentionRefV1,
     RelationshipDirectionality,
     RelationshipParticipantRefV1,
     RelationshipSignalProposalV1,
@@ -24,6 +29,7 @@ from comic_agent.schemas.workflow import (
     NarrativeAnalysisProposalSourceV1,
     NarrativeAnalysisResultV1,
 )
+from comic_agent.services.id_service import stable_id
 
 
 def aggregate_narrative_analysis(
@@ -33,6 +39,9 @@ def aggregate_narrative_analysis(
 ) -> NarrativeAnalysisResultV1:
     """Merge only exact documented keys; preserve all source run and evidence references."""
 
+    sources = _normalize_parallel_reference_values(
+        _repair_cross_window_proposal_id_collisions(sources)
+    )
     events: dict[tuple[object, ...], AggregatedEventProposalV1] = {}
     entities: dict[tuple[object, ...], AggregatedEntityProposalV1] = {}
     claims: dict[tuple[object, ...], AggregatedClaimProposalV1] = {}
@@ -206,6 +215,159 @@ def aggregate_narrative_analysis(
         relationship_signals=list(relationship_signals.values()),
         campus_content_profiles=list(campus_content_profiles.values()),
     )
+
+
+def _repair_cross_window_proposal_id_collisions(
+    sources: list[NarrativeAnalysisProposalSourceV1],
+) -> list[NarrativeAnalysisProposalSourceV1]:
+    """Repair only colliding Provider-local ids before a whole-document review.
+
+    Normal Proposal ids remain API-compatible. When separate windows produce the
+    same schema/id pair, derive a deterministic aggregate candidate id from the
+    validated Proposal value excluding that local sequence. This preserves the
+    candidate's semantics and evidence while allowing Gate 2 to address it.
+    """
+
+    keys = [
+        (type(source.proposal).__name__, source.proposal.proposal_id)
+        for source in sources
+    ]
+    duplicate_keys = {key for key, count in Counter(keys).items() if count > 1}
+    if not duplicate_keys:
+        return sources
+
+    repaired: list[NarrativeAnalysisProposalSourceV1] = []
+    for source in sources:
+        proposal = source.proposal
+        key = (type(proposal).__name__, proposal.proposal_id)
+        if key not in duplicate_keys:
+            repaired.append(source)
+            continue
+        payload = proposal.model_dump(mode="json")
+        payload.pop("proposal_id", None)
+        repaired.append(
+            source.model_copy(
+                update={
+                    "proposal": proposal.model_copy(
+                        update={
+                            "proposal_id": stable_id(
+                                "narrative-proposal",
+                                type(proposal).__name__,
+                                json.dumps(
+                                    payload,
+                                    ensure_ascii=False,
+                                    sort_keys=True,
+                                    separators=(",", ":"),
+                                ),
+                            )
+                        }
+                    )
+                }
+            )
+        )
+    return repaired
+
+
+def _normalize_parallel_reference_values(
+    sources: list[NarrativeAnalysisProposalSourceV1],
+) -> list[NarrativeAnalysisProposalSourceV1]:
+    """Turn provider-local labels into auditable mention references.
+
+    Individual Narrative modes run in parallel.  A provider can copy a person
+    name (for example ``Lin``), but it cannot know that another run happened to
+    choose ``entity-lin`` as its Proposal id.  Only values that already name a
+    proposal in the aggregate stay hard ids; every other legacy value becomes an
+    unresolved mention for Gate 2's exact, non-fuzzy reference resolver.
+    """
+
+    entity_ids = {
+        source.proposal.proposal_id
+        for source in sources
+        if isinstance(source.proposal, EntityProposalV1)
+    }
+    event_ids = {
+        source.proposal.proposal_id
+        for source in sources
+        if isinstance(source.proposal, EventProposalV1)
+    }
+    claim_ids = {
+        source.proposal.proposal_id
+        for source in sources
+        if isinstance(source.proposal, ClaimProposalV1)
+    }
+
+    normalized: list[NarrativeAnalysisProposalSourceV1] = []
+    for source in sources:
+        proposal = source.proposal
+        if isinstance(proposal, EventProposalV1):
+            retained_ids = [
+                participant_id
+                for participant_id in proposal.participant_ids
+                if participant_id in entity_ids
+            ]
+            legacy_mentions = [
+                ProposalMentionRefV1(
+                    mention_text=participant_id,
+                    resolution_status=KnowledgeReferenceResolutionStatus.UNRESOLVED,
+                )
+                for participant_id in proposal.participant_ids
+                if participant_id not in entity_ids
+            ]
+            location_mention = proposal.location_mention
+            location_id = proposal.location_id
+            if location_id is not None and location_id not in entity_ids:
+                location_mention = ProposalMentionRefV1(
+                    mention_text=location_id,
+                    resolution_status=KnowledgeReferenceResolutionStatus.UNRESOLVED,
+                )
+                location_id = None
+            if (
+                retained_ids != proposal.participant_ids
+                or location_id != proposal.location_id
+            ):
+                proposal = proposal.model_copy(
+                    update={
+                        "schema_version": "1.1",
+                        "participant_ids": retained_ids,
+                        "participant_mentions": [*proposal.participant_mentions, *legacy_mentions],
+                        "location_id": location_id,
+                        "location_mention": location_mention,
+                    }
+                )
+        elif isinstance(proposal, ClaimProposalV1):
+            source_reference = proposal.source_reference
+            source_id = proposal.source_id
+            expected_source_ids = (
+                entity_ids
+                if str(proposal.source_type) == "CHARACTER"
+                else entity_ids | event_ids | claim_ids
+            )
+            if source_id is not None and source_id not in expected_source_ids:
+                source_reference = ProposalMentionRefV1(
+                    mention_text=source_id,
+                    resolution_status=KnowledgeReferenceResolutionStatus.UNRESOLVED,
+                )
+                source_id = None
+            target_event_reference = proposal.target_event_reference
+            target_event_id = proposal.target_event_id
+            if target_event_id is not None and target_event_id not in event_ids:
+                target_event_reference = ProposalMentionRefV1(
+                    mention_text=target_event_id,
+                    resolution_status=KnowledgeReferenceResolutionStatus.UNRESOLVED,
+                )
+                target_event_id = None
+            if source_id != proposal.source_id or target_event_id != proposal.target_event_id:
+                proposal = proposal.model_copy(
+                    update={
+                        "schema_version": "1.3",
+                        "source_id": source_id,
+                        "source_reference": source_reference,
+                        "target_event_id": target_event_id,
+                        "target_event_reference": target_event_reference,
+                    }
+                )
+        normalized.append(source.model_copy(update={"proposal": proposal}))
+    return normalized
 
 
 def _normalized(value: str) -> str:

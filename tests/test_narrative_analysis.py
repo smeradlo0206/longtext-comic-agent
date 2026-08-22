@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier, Event
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -515,6 +516,7 @@ def test_timeout_splits_only_failed_window_after_persisted_backoff(tmp_path: Pat
     assert len(children) == 2
     assert all(child.next_eligible_retry_at is not None for child in children)
     assert all(child.split_depth == 1 and child.max_split_depth == 3 for child in children)
+    assert all(child.effective_max_chars_per_chunk <= 800 for child in children)
 
     still_deferred = worker.run_pending(run.analysis_run_id)
     assert still_deferred.status == NarrativeAnalysisRunStatus.RUNNING
@@ -1052,11 +1054,18 @@ class _StateChangeWindowProvider:
         empty: bool = False,
         failures: dict[int, Exception] | None = None,
         invalid_evidence: bool = False,
+        invalid_evidence_quote: bool = False,
+        repair_evidence_on_retry: bool = False,
+        mismatched_evidence_offsets: bool = False,
     ) -> None:
         self.calls: list[str] = []
         self.empty = empty
         self.failures = failures or {}
         self.invalid_evidence = invalid_evidence
+        self.invalid_evidence_quote = invalid_evidence_quote
+        self.repair_evidence_on_retry = repair_evidence_on_retry
+        self.mismatched_evidence_offsets = mismatched_evidence_offsets
+        self.output_recovery_markers: list[str | None] = []
 
     def structured_generate(self, request, output_model):  # type: ignore[no-untyped-def]
         self.calls.append("state_change_extraction")
@@ -1064,9 +1073,16 @@ class _StateChangeWindowProvider:
         if failure is not None:
             raise failure
         input_context = request["input_context"]
+        self.output_recovery_markers.append(input_context.get("output_recovery"))
         chunk_id = input_context["source_chunk_ids"][0]
         quote = input_context["source_chunks"][0]["text"][:4]
         evidence_chunk_id = "unselected-chunk" if self.invalid_evidence else chunk_id
+        evidence_quote = (
+            "not verbatim source evidence"
+            if self.invalid_evidence_quote
+            and not (self.repair_evidence_on_retry and len(self.calls) > 1)
+            else quote
+        )
         changes = []
         if not self.empty:
             changes = [
@@ -1091,7 +1107,14 @@ class _StateChangeWindowProvider:
                     "new_value": "closed",
                     "persistent": False,
                     "reality_layer": "PRIMARY",
-                    "evidence_refs": [{"chunk_id": evidence_chunk_id, "quote_text": quote}],
+                    "evidence_refs": [
+                        {
+                            "chunk_id": evidence_chunk_id,
+                            "quote_start": 1 if self.mismatched_evidence_offsets else None,
+                            "quote_end": 5 if self.mismatched_evidence_offsets else None,
+                            "quote_text": evidence_quote,
+                        }
+                    ],
                     "new_value_evidence_indexes": [0],
                     "persistence_evidence_indexes": [],
                     "confidence": 0.8,
@@ -1112,11 +1135,15 @@ class _RelationshipSignalWindowProvider:
         *,
         empty: bool = False,
         failures: dict[int, Exception] | None = None,
+        invalid_evidence_chunk: bool = False,
+        mismatched_evidence_offsets: bool = False,
     ) -> None:
         self.calls: list[list[str]] = []
         self.output_recovery_markers: list[str | None] = []
         self.empty = empty
         self.failures = failures or {}
+        self.invalid_evidence_chunk = invalid_evidence_chunk
+        self.mismatched_evidence_offsets = mismatched_evidence_offsets
 
     def structured_generate(self, request, output_model):  # type: ignore[no-untyped-def]
         input_context = request["input_context"]
@@ -1163,7 +1190,18 @@ class _RelationshipSignalWindowProvider:
                         "proposal_schema": None,
                     },
                     "reality_layer": "PRIMARY",
-                    "evidence_refs": [{"chunk_id": chunk_ids[0], "quote_text": "甲信任乙。"}],
+                    "evidence_refs": [
+                        {
+                            "chunk_id": (
+                                "unselected-chunk"
+                                if self.invalid_evidence_chunk
+                                else chunk_ids[0]
+                            ),
+                            "quote_start": 1 if self.mismatched_evidence_offsets else None,
+                            "quote_end": 5 if self.mismatched_evidence_offsets else None,
+                            "quote_text": "甲信任乙。",
+                        }
+                    ],
                     "confidence": 0.8,
                 }
             ]
@@ -1518,6 +1556,67 @@ def test_relationship_signal_worker_reuses_schema_recovery_and_resume(tmp_path: 
     assert len(provider.calls) == calls_before_resume
 
 
+def test_relationship_signal_worker_normalizes_verbatim_evidence_offsets(
+    tmp_path: Path,
+) -> None:
+    chunks = [_chunk(0).model_copy(update={"text": "甲信任乙。"})]
+    source_repository = _FakeSourceRepository(chunks)
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["relationship_signal_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _RelationshipSignalWindowProvider(mismatched_evidence_offsets=True)
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+    result = analysis_repository.get_result(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert result is not None
+    evidence = result.relationship_signals[0].proposal.evidence_refs[0]
+    assert evidence.quote_text == "甲信任乙。"
+    assert evidence.quote_start == 0
+    assert evidence.quote_end == 5
+
+
+def test_relationship_signal_worker_rebinds_unique_verbatim_evidence_chunk(
+    tmp_path: Path,
+) -> None:
+    chunks = [_chunk(0).model_copy(update={"text": "甲信任乙。"})]
+    source_repository = _FakeSourceRepository(chunks)
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["relationship_signal_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _RelationshipSignalWindowProvider(invalid_evidence_chunk=True)
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+    result = analysis_repository.get_result(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert result is not None
+    assert result.relationship_signals[0].proposal.evidence_refs[0].chunk_id == chunks[0].chunk_id
+
+
 def test_relationship_signal_worker_splits_length_failure_by_owned_chunks(tmp_path: Path) -> None:
     chunks = [
         _chunk(index).model_copy(update={"text": "甲信任乙。"}) for index in range(3)
@@ -1566,9 +1665,9 @@ def test_relationship_signal_worker_splits_length_failure_by_owned_chunks(tmp_pa
     ]
     assert provider.output_recovery_markers == [
         None,
-        "length_split",
-        "length_split",
-        "length_split",
+        "length_reduction",
+        "length_reduction",
+        "length_reduction",
     ]
 
 
@@ -1635,19 +1734,19 @@ def test_worker_splits_length_failure_without_truncating_child_source(
     retried_window = next(window for window in windows if window.window_index == 1)
 
     assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
-    assert provider.input_text_lengths == [1200, 1200, 1410, 1410]
+    assert provider.input_text_lengths == [1200, 1200, 800, 800]
     assert provider.output_recovery_markers == [
         None,
         None,
-        "length_split",
-        "length_split",
+        "length_reduction",
+        "length_reduction",
     ]
     assert retried_window.status == NarrativeAnalysisWindowStatus.SPLIT
     assert retried_window.attempt_count == 1
     assert retried_window.effective_max_chars_per_chunk == 1200
     assert retried_window.previous_failure_category is None
     assert all(
-        window.effective_max_chars_per_chunk == 1410
+        window.effective_max_chars_per_chunk <= 800
         for window in windows
         if window.analysis_window_id.startswith(f"{retried_window.analysis_window_id}:split:")
     )
@@ -1682,10 +1781,7 @@ def test_worker_splits_length_failed_window_at_source_chunk_boundaries(
     assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
     assert provider.input_chunk_ids[0] == ["chunk-0", "chunk-1", "chunk-2"]
     assert provider.input_chunk_ids[1:] == [["chunk-0"], ["chunk-1"], ["chunk-2"]]
-    expected_lengths = {chunk.chunk_id: len(chunk.text) for chunk in source_chunks}
-    assert [len(texts[0]) for texts in provider.input_texts[1:]] == [
-        expected_lengths[chunk_ids[0]] for chunk_ids in provider.input_chunk_ids[1:]
-    ]
+    assert [len(texts[0]) for texts in provider.input_texts[1:]] == [800, 800, 800]
     split_windows = [
         window for window in windows if window.status == NarrativeAnalysisWindowStatus.SPLIT
     ]
@@ -1849,7 +1945,7 @@ def test_worker_splits_length_failure_and_preserves_successful_aggregate(
     )
 
     assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
-    assert provider.input_text_lengths == [1200, 1200, 1410, 800, 1410]
+    assert provider.input_text_lengths == [1200, 1200, 800, 800, 800]
     assert split_window.status == NarrativeAnalysisWindowStatus.SPLIT
     assert split_window.attempt_count == 1
     assert split_window.failure_category == "PROVIDER_LENGTH_BEFORE_FINAL_CONTENT"
@@ -2361,10 +2457,215 @@ def test_worker_does_not_convert_source_only_state_change_rejection_to_success(
 
     completed = worker.run_pending(run.analysis_run_id)
     result = analysis_repository.get_result(run.analysis_run_id)
+    failed_window = analysis_repository.list_windows(run.analysis_run_id)[0]
 
-    assert completed.status == NarrativeAnalysisRunStatus.FAILED
-    assert provider.calls == ["state_change_extraction"]
+    assert completed.status == NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
+    assert provider.calls == ["state_change_extraction"] * 2
     assert result is None
+    assert failed_window.status == NarrativeAnalysisWindowStatus.NEEDS_HUMAN_ACTION
+    assert failed_window.failure_category == "EVIDENCE_REPAIR_EXHAUSTED"
+
+
+def test_worker_rebinds_unique_verbatim_state_change_evidence_chunk(
+    tmp_path: Path,
+) -> None:
+    source_repository = _FakeSourceRepository([_chunk(0)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["state_change_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _StateChangeWindowProvider(invalid_evidence=True)
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+    result = analysis_repository.get_result(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert provider.calls == ["state_change_extraction"]
+    assert result is not None
+    assert result.state_changes[0].proposal.evidence_refs[0].chunk_id == _chunk(0).chunk_id
+
+
+def test_worker_repairs_non_verbatim_state_change_evidence_once(
+    tmp_path: Path,
+) -> None:
+    source_repository = _FakeSourceRepository([_chunk(0)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["state_change_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _StateChangeWindowProvider(
+        invalid_evidence_quote=True,
+        repair_evidence_on_retry=True,
+    )
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert provider.calls == ["state_change_extraction"] * 2
+    assert provider.output_recovery_markers == [None, "evidence_validation"]
+
+
+def test_worker_falls_back_to_a_verbatim_source_anchor_after_one_non_verbatim_repair(
+    tmp_path: Path,
+) -> None:
+    source_repository = _FakeSourceRepository([_chunk(0)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["state_change_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _StateChangeWindowProvider(invalid_evidence_quote=True)
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+    window = analysis_repository.list_windows(run.analysis_run_id)[0]
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert provider.calls == ["state_change_extraction"] * 2
+    assert window.status == NarrativeAnalysisWindowStatus.SUCCEEDED
+    assert window.failure_category is None
+    result = analysis_repository.get_result(run.analysis_run_id)
+    assert result is not None
+    evidence = result.state_changes[0].proposal.evidence_refs[0]
+    assert evidence.quote_text is not None
+    assert evidence.quote_text in _chunk(0).text
+
+
+def test_worker_normalizes_verbatim_state_change_evidence_before_offset_validation(
+    tmp_path: Path,
+) -> None:
+    source_repository = _FakeSourceRepository([_chunk(0)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["state_change_extraction"],
+        real_llm_requested=True,
+    )
+    provider = _StateChangeWindowProvider(mismatched_evidence_offsets=True)
+    worker = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    )
+
+    completed = worker.run_pending(run.analysis_run_id)
+    result = analysis_repository.get_result(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert provider.calls == ["state_change_extraction"]
+    assert result is not None
+    evidence = result.state_changes[0].proposal.evidence_refs[0]
+    assert evidence.quote_text == "synt"
+    assert evidence.quote_start == 0
+    assert evidence.quote_end == 4
+
+
+def test_stage_b_recovery_reissues_evidence_then_one_schema_repair_on_same_scope() -> None:
+    """Stage B must not bypass the bounded correction instructions used by windows."""
+
+    failed = SimpleNamespace(
+        status=AgentRunStatus.FAILED,
+        provider_result=SimpleNamespace(
+            execution_metadata=SimpleNamespace(total_tokens=101),
+        ),
+        payload={
+            "provider_error_diagnostics": {
+                "schema_error_kind": "value_error",
+                "schema_error_rule_codes": ["EVENT_MENTION_FIELDS_REQUIRE_V11"],
+            }
+        },
+    )
+    succeeded = SimpleNamespace(
+        status=AgentRunStatus.SUCCEEDED,
+        provider_result=SimpleNamespace(
+            execution_metadata=SimpleNamespace(total_tokens=103),
+        ),
+        payload={},
+    )
+
+    class _RecoveryWorkflow:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def run(self, **kwargs: object) -> object:
+            self.calls.append(kwargs)
+            return SimpleNamespace(agent_run=[failed, succeeded][len(self.calls) - 1])
+
+    workflow = _RecoveryWorkflow()
+    directive = SimpleNamespace(
+        project_id="project-1",
+        mode="event_extraction",
+        ordered_source_chunk_ids=["chunk-0"],
+        max_chars_per_chunk=1200,
+        max_provider_calls=2,
+    )
+
+    result = NarrativeAnalysisWorker._rerun_stage_b_directive(
+        workflow, directive, "attempt-1", real_llm_requested=True, allow_fake_provider=False
+    )
+
+    assert result.agent_run is succeeded
+    assert result.provider_requests == 2
+    assert result.total_tokens == 204
+    assert workflow.calls == [
+        {
+            "project_id": "project-1",
+            "mode": "event_extraction",
+            "chunk_ids": ["chunk-0"],
+            "chunk_limit": 1,
+            "max_chars_per_chunk": 1200,
+            "output_recovery": "evidence_validation",
+            "output_recovery_rule_codes": ["EVIDENCE_QUOTE_NOT_VERBATIM"],
+            "execution_nonce": "attempt-1:evidence",
+            "real_llm_requested": True,
+            "allow_fake_provider": False,
+        },
+        {
+            "project_id": "project-1",
+            "mode": "event_extraction",
+            "chunk_ids": ["chunk-0"],
+            "chunk_limit": 1,
+            "max_chars_per_chunk": 1200,
+            "output_recovery": "schema_validation",
+            "output_recovery_rule_codes": ["EVENT_MENTION_FIELDS_REQUIRE_V11"],
+            "execution_nonce": "attempt-1:schema",
+            "real_llm_requested": True,
+            "allow_fake_provider": False,
+        },
+    ]
 
 
 def test_rockery_cross_window_event_wording_stays_separate_for_manual_review() -> None:

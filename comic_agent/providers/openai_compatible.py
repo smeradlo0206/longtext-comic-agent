@@ -141,7 +141,7 @@ class OpenAICompatibleLLMProvider:
         response_format: str | None = None,
         structured_output_policy: StructuredOutputPolicy = StructuredOutputPolicy.JSON_OBJECT_ONLY,
         timeout_seconds: int = 60,
-        max_output_tokens: int = 2000,
+        max_output_tokens: int = 8000,
         http_client: HttpClient | None = None,
     ) -> None:
         if api_key is None or api_key.strip() == "":
@@ -450,11 +450,19 @@ class OpenAICompatibleLLMProvider:
                     diagnostics={"safe_issue_code": "UNSUPPORTED_STRUCTURED_OUTPUT"},
                 )
             return schema_mode
-        # Preserve the historical explicit environment override. New source-bearing
-        # paths resolve a persisted profile before calling this provider.
+        # The source-bearing path normally applies a persisted profile during
+        # preflight.  If a caller reaches the provider without a profile, the
+        # safe JSON_OBJECT_ONLY/AUTO fallback must still send a structured
+        # request; silently falling back to PROMPT_ONLY is what caused long
+        # runs to drift into repeated schema failures.
         if self._response_format == "json_object":
             return StructuredOutputMode.JSON_OBJECT
-        return StructuredOutputMode.PROMPT_ONLY
+        if self._structured_output_policy == StructuredOutputPolicy.REQUIRE_STRICT:
+            raise ProviderResponseError(
+                "strict structured-output capability preflight is required",
+                diagnostics={"safe_issue_code": "CAPABILITY_PRECHECK_REQUIRED"},
+            )
+        return StructuredOutputMode.JSON_OBJECT
 
     @staticmethod
     def _response_format_for(
@@ -524,6 +532,8 @@ class OpenAICompatibleLLMProvider:
         )
         if output_schema_name == "RelationshipSignalProposalBatchV1" and field_paths:
             rule_codes.append("RELATIONSHIP_SIGNAL_SCHEMA_INVALID")
+        if output_schema_name == "TimelinePairInferenceV1" and field_paths:
+            rule_codes.append("TIMELINE_PAIR_SCHEMA_INVALID")
         diagnostics: ProviderDiagnostics = {
             "schema_error_kind": unique_kinds[0] if len(unique_kinds) == 1 else "multiple",
             "schema_error_field_paths": sorted(set(field_paths)),
@@ -551,6 +561,21 @@ class OpenAICompatibleLLMProvider:
             ),
             "contains an out-of-range index": "STATE_CHANGE_EVIDENCE_INDEX_OUT_OF_RANGE",
             "new_value_evidence_indexes is required": "STATE_CHANGE_NEW_VALUE_EVIDENCE_REQUIRED",
+            "EventProposalV1 v1.0 cannot include mention references": (
+                "EVENT_MENTION_FIELDS_REQUIRE_V11"
+            ),
+            "event location_id and location_mention are mutually exclusive": (
+                "EVENT_LOCATION_REFERENCE_CONFLICT"
+            ),
+            "KNOWN actor resolution requires participants or participant_mentions": (
+                "EVENT_KNOWN_ACTOR_REQUIRES_PARTICIPANT_IDS"
+            ),
+            "evidence_indexes must be unique": "TIMELINE_EVIDENCE_INDEX_DUPLICATE",
+            "evidence_indexes cannot be negative": "TIMELINE_EVIDENCE_INDEX_NEGATIVE",
+            "UNKNOWN relation cannot select evidence": "TIMELINE_UNKNOWN_MUST_NOT_SELECT_EVIDENCE",
+            "known relation requires at least one evidence index": (
+                "TIMELINE_KNOWN_RELATION_REQUIRES_EVIDENCE"
+            ),
             "new_value_evidence_indexes must not be empty": (
                 "STATE_CHANGE_NEW_VALUE_EVIDENCE_REQUIRED"
             ),
@@ -741,6 +766,7 @@ class OpenAICompatibleLLMProvider:
         if input_context.get("output_recovery") not in {
             "schema_validation",
             "state_change_schema_recovery",
+            "evidence_validation",
         }:
             return ""
         batch_contract = {
@@ -828,6 +854,15 @@ class OpenAICompatibleLLMProvider:
                 "or a non-batch object."
                 f"{statement_support_recovery}"
             )
+        evidence_recovery = ""
+        if input_context.get("output_recovery") == "evidence_validation":
+            evidence_recovery = (
+                " For every retained proposal, copy each evidence quote_text verbatim from "
+                "one supplied source_chunk and set evidence.chunk_id to that exact supplied "
+                "chunk_id. Leave quote_start and quote_end null unless both exact local offsets "
+                "are known. If no exact supplied quote supports a proposal, omit that proposal "
+                "rather than paraphrasing or inventing evidence."
+            )
         rule_hint = (
             f" The previous output violated these safe schema rules: {', '.join(safe_rule_codes)}."
             if safe_rule_codes
@@ -838,6 +873,7 @@ class OpenAICompatibleLLMProvider:
             f"{schema_name} JSON object. Return no markdown, explanation, reasoning, or alternate "
             f"schema. {batch_instruction}{rule_hint}{event_shape}{knowledge_state_shape}"
             f"{state_change_shape}{relationship_signal_shape}\n\n"
+            f"{evidence_recovery}\n\n"
         )
 
     def _compact_output_contract(self, output_model: type[BaseModel]) -> dict[str, object]:
@@ -1033,14 +1069,18 @@ class OpenAICompatibleLLMProvider:
         return causes
 
 
-def build_openai_compatible_provider(settings: Settings) -> OpenAICompatibleLLMProvider:
+def build_openai_compatible_provider(
+    settings: Settings,
+    *,
+    model: str | None = None,
+) -> OpenAICompatibleLLMProvider:
     """Build the configured production provider from one authoritative settings object."""
 
     api_key = settings.llm_api_key.get_secret_value() if settings.llm_api_key is not None else None
     return OpenAICompatibleLLMProvider(
         api_key=api_key,
         base_url=settings.llm_base_url,
-        model=settings.llm_model,
+        model=model or settings.llm_model,
         provider_name=settings.llm_provider_name,
         response_format=settings.llm_response_format,
         structured_output_policy=settings.llm_structured_output_policy,

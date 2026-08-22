@@ -4,6 +4,7 @@ from collections.abc import Sequence
 
 from comic_agent.schemas import (
     ApprovedProposalBundleV1,
+    ApprovedProposalItemV1,
     CampusContentProfileProposalV1,
     ClaimProposalV1,
     ClaimType,
@@ -58,7 +59,7 @@ class NarrativeTimelineInputAdapter:
         if len(chunks) != len(source_chunks):
             raise ValueError("NarrativeTimelineInputAdapter source chunk ids must be unique")
         events: list[EventProposalV1] = [
-            item.source.proposal
+            self._event_with_gate2_links(item)
             for item in bundle.approved_proposals
             if isinstance(item.source.proposal, EventProposalV1)
         ]
@@ -88,6 +89,31 @@ class NarrativeTimelineInputAdapter:
             event_proposals=events,
             claim_proposals=claims,
             state_change_proposals=changes,
+        )
+
+    @staticmethod
+    def _event_with_gate2_links(item: ApprovedProposalItemV1) -> EventProposalV1:
+        """Materialize only Gate 2's explicit, audited entity links for Timeline."""
+
+        proposal = item.source.proposal
+        if not isinstance(proposal, EventProposalV1):
+            raise ValueError("approved event item must contain EventProposalV1")
+        participant_ids = list(proposal.participant_ids)
+        location_id = proposal.location_id
+        for reference in item.reference_decisions:
+            if (
+                str(reference.status) != "RESOLVED"
+                or reference.selected_target_proposal_schema != "EntityProposalV1"
+                or reference.selected_target_proposal_id is None
+            ):
+                continue
+            if reference.reference_path.startswith("participant_mentions["):
+                if reference.selected_target_proposal_id not in participant_ids:
+                    participant_ids.append(reference.selected_target_proposal_id)
+            elif reference.reference_path == "location_mention" and location_id is None:
+                location_id = reference.selected_target_proposal_id
+        return proposal.model_copy(
+            update={"participant_ids": participant_ids, "location_id": location_id}
         )
 
     @staticmethod
@@ -154,7 +180,7 @@ class NarrativeTimelineInputAdapter:
             required_claims.append(claim)
         selected = [*claims]
         events = [
-            item.source.proposal
+            NarrativeTimelineInputAdapter._event_with_gate2_links(item)
             for item in bundle.approved_proposals
             if isinstance(item.source.proposal, EventProposalV1)
         ]

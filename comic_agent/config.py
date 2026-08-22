@@ -117,6 +117,12 @@ class Settings(BaseSettings):
         le=20_000,
         validation_alias="NARRATIVE_WINDOW_MIN_SLICE_CHARS",
     )
+    narrative_window_length_retry_max_chars_per_chunk: int = Field(
+        default=800,
+        ge=64,
+        le=20_000,
+        validation_alias="NARRATIVE_WINDOW_LENGTH_RETRY_MAX_CHARS_PER_CHUNK",
+    )
     llm_structured_output_policy: StructuredOutputPolicy = Field(
         default=StructuredOutputPolicy.JSON_OBJECT_ONLY,
         validation_alias="LLM_STRUCTURED_OUTPUT_POLICY",
@@ -132,7 +138,12 @@ class Settings(BaseSettings):
         le=86_400,
         validation_alias="PROVIDER_CAPABILITY_TTL_SECONDS",
     )
-    llm_max_output_tokens: int = Field(default=2000, validation_alias="LLM_MAX_OUTPUT_TOKENS")
+    llm_max_output_tokens: int = Field(
+        default=8000,
+        ge=1,
+        le=100_000,
+        validation_alias="LLM_MAX_OUTPUT_TOKENS",
+    )
     internal_demo_require_access_code: bool = Field(
         default=False,
         validation_alias="INTERNAL_DEMO_REQUIRE_ACCESS_CODE",

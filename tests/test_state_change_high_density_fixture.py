@@ -200,6 +200,90 @@ def test_fake_provider_accepts_high_density_positive_batches() -> None:
         assert all(change.persistence_evidence_indexes == [] for change in batch.changes)
 
 
+def test_agent_replaces_paraphrased_selected_evidence_with_a_verbatim_anchor() -> None:
+    """A source-scoped paraphrase must not exhaust a whole Narrative run.
+
+    The replacement is deterministic and remains inside the selected chunk; it
+    is not a model-generated quote or a rebinding to another source.
+    """
+
+    fixture = json.loads(_FIXTURE_PATH.read_text(encoding="utf-8"))
+    case = next(case for case in fixture["cases"] if case["expected_changes"])
+    response = _response_for_case(case)
+    changes = response["changes"]
+    assert isinstance(changes, list)
+    first_change = changes[0]
+    assert isinstance(first_change, dict)
+    evidence_refs = first_change["evidence_refs"]
+    assert isinstance(evidence_refs, list)
+    first_evidence = evidence_refs[0]
+    assert isinstance(first_evidence, dict)
+    first_evidence["quote_text"] = "模型改写的非逐字证据"
+
+    chunk = _source_chunk(case)
+    batch = StateChangeExtractionAgent(_FixtureProvider(response)).run(
+        {
+            "source_chunk_ids": [chunk.chunk_id],
+            "source_chunks": [chunk],
+            "output_recovery": "evidence_validation",
+        }
+    )
+
+    repaired = batch.changes[0].evidence_refs[0]
+    assert repaired.chunk_id == chunk.chunk_id
+    assert repaired.quote_text is not None
+    assert repaired.quote_text in chunk.text
+    assert repaired.quote_start is not None
+    assert repaired.quote_end is not None
+    assert chunk.text[repaired.quote_start : repaired.quote_end] == repaired.quote_text
+
+
+def test_agent_does_not_move_paraphrased_evidence_to_an_unrelated_selected_chunk() -> None:
+    """The deterministic fallback must retain the provider-selected chunk scope."""
+
+    fixture = json.loads(_FIXTURE_PATH.read_text(encoding="utf-8"))
+    case = next(case for case in fixture["cases"] if case["expected_changes"])
+    unrelated_case = next(
+        candidate
+        for candidate in fixture["cases"]
+        if candidate["source_chunk_id"] != case["source_chunk_id"]
+    )
+    response = _response_for_case(case)
+    changes = response["changes"]
+    assert isinstance(changes, list)
+    first_change = changes[0]
+    assert isinstance(first_change, dict)
+    evidence_refs = first_change["evidence_refs"]
+    assert isinstance(evidence_refs, list)
+    first_evidence = evidence_refs[0]
+    assert isinstance(first_evidence, dict)
+    first_evidence["chunk_id"] = unrelated_case["source_chunk_id"]
+    first_evidence["quote_text"] = "模型改写的非逐字证据"
+    source_text = str(case["text"])
+    unrelated_text = str(unrelated_case["text"])
+    target_mention = next(
+        source_text[start : start + width]
+        for width in range(8, 1, -1)
+        for start in range(len(source_text) - width + 1)
+        if source_text[start : start + width] not in unrelated_text
+    )
+    target = first_change["target"]
+    assert isinstance(target, dict)
+    target["mention_text"] = target_mention
+
+    with pytest.raises(ValueError, match="cannot replace evidence outside"):
+        StateChangeExtractionAgent(_FixtureProvider(response)).run(
+            {
+                "source_chunk_ids": [
+                    case["source_chunk_id"],
+                    unrelated_case["source_chunk_id"],
+                ],
+                "source_chunks": [_source_chunk(case), _source_chunk(unrelated_case)],
+                "output_recovery": "evidence_validation",
+            }
+        )
+
+
 def test_fake_provider_returns_empty_batch_for_high_density_negative_chunks() -> None:
     fixture = json.loads(_FIXTURE_PATH.read_text(encoding="utf-8"))
     cases_by_id = {case["source_chunk_id"]: case for case in fixture["cases"]}

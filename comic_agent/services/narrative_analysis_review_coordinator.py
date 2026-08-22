@@ -78,42 +78,42 @@ class NarrativeGate2HandoffCoordinator:
                 return current if current is not None else run
             run = claimed
 
-        windows = self._analysis_repository.list_windows(analysis_run_id)
-        leaf_windows = [
-            window
-            for window in windows
-            if window.status == NarrativeAnalysisWindowStatus.SUCCEEDED
-        ]
-        used_chunk_ids = _stable_unique(
-            chunk_id for window in leaf_windows for chunk_id in window.chunk_ids
-        )
-        all_document_chunks = self._source_repository.list_document_chunks(run.document_id)
-        chunks_by_id = {chunk.chunk_id: chunk for chunk in all_document_chunks}
-        selected_chunks = [
-            chunks_by_id[chunk_id] for chunk_id in used_chunk_ids if chunk_id in chunks_by_id
-        ]
-        get_review_gate1 = getattr(self._source_repository, "get_review_gate1", None)
-        if not callable(get_review_gate1):
-            return run
-        gate1 = get_review_gate1(run.document_id)
-        approved_chunk_ids = (
-            set(gate1.approved_chunk_bundle.chunk_ids)
-            if gate1 is not None and gate1.approved_chunk_bundle is not None
-            else set()
-        )
-        allowed_chunk_ids = [
-            chunk.chunk_id for chunk in selected_chunks if chunk.chunk_id in approved_chunk_ids
-        ]
-        known_agent_run_ids = _stable_unique(
-            window.agent_run_id for window in leaf_windows if window.agent_run_id
-        )
-        review_input = build_review_gate2_input(
-            result=aggregate,
-            project_id=run.project_id,
-            document_id=run.document_id,
-            allowed_chunk_ids=allowed_chunk_ids,
-        )
         try:
+            windows = self._analysis_repository.list_windows(analysis_run_id)
+            leaf_windows = [
+                window
+                for window in windows
+                if window.status == NarrativeAnalysisWindowStatus.SUCCEEDED
+            ]
+            used_chunk_ids = _stable_unique(
+                chunk_id for window in leaf_windows for chunk_id in window.chunk_ids
+            )
+            all_document_chunks = self._source_repository.list_document_chunks(run.document_id)
+            chunks_by_id = {chunk.chunk_id: chunk for chunk in all_document_chunks}
+            selected_chunks = [
+                chunks_by_id[chunk_id] for chunk_id in used_chunk_ids if chunk_id in chunks_by_id
+            ]
+            get_review_gate1 = getattr(self._source_repository, "get_review_gate1", None)
+            if not callable(get_review_gate1):
+                return run
+            gate1 = get_review_gate1(run.document_id)
+            approved_chunk_ids = (
+                set(gate1.approved_chunk_bundle.chunk_ids)
+                if gate1 is not None and gate1.approved_chunk_bundle is not None
+                else set()
+            )
+            allowed_chunk_ids = [
+                chunk.chunk_id for chunk in selected_chunks if chunk.chunk_id in approved_chunk_ids
+            ]
+            known_agent_run_ids = _stable_unique(
+                window.agent_run_id for window in leaf_windows if window.agent_run_id
+            )
+            review_input = build_review_gate2_input(
+                result=aggregate,
+                project_id=run.project_id,
+                document_id=run.document_id,
+                allowed_chunk_ids=allowed_chunk_ids,
+            )
             review_result = self._review_service.review(
                 review_input,
                 ReviewGate2ServiceContext(
@@ -226,7 +226,7 @@ class NarrativeGate2HandoffCoordinator:
     ) -> ProposalRecoveryDiagnosticV1:
         envelope = envelopes[(decision.proposal_schema, decision.proposal_id)]
         issues = sorted(decision.issues, key=lambda item: item.issue_id)
-        issue_codes = [issue.code for issue in issues]
+        issue_codes = _stable_unique(issue.code for issue in issues)
         source_chunk_ids = _stable_unique(
             evidence.chunk_id for evidence in envelope.aggregated_evidence_refs
         )

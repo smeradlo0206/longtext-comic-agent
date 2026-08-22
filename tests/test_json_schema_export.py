@@ -114,6 +114,7 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     assert (output_dir / "ReviewGate2ResultV1.json").exists()
     assert (output_dir / "NarrativeAnalysisReviewRouteV1.json").exists()
     assert (output_dir / "ProposalRecoveryDiagnosticV1.json").exists()
+    assert (output_dir / "ProposalMentionRefV1.json").exists()
     assert (output_dir / "ReviewIssueV1.json").exists()
     assert (output_dir / "ReferenceResolutionDecisionV1.json").exists()
     assert (output_dir / "ReviewableProposalEnvelopeV1.json").exists()

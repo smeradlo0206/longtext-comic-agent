@@ -20,7 +20,10 @@ from comic_agent.config import get_settings
 from comic_agent.database.base import Base
 from comic_agent.database.session import make_engine, make_session_factory
 from comic_agent.providers.mocks import LocalSafeDemoProvider
-from comic_agent.providers.openai_compatible import OpenAICompatibleProvider
+from comic_agent.providers.openai_compatible import (
+    OpenAICompatibleProvider,
+    build_openai_compatible_provider,
+)
 
 
 def create_app(database_url: str | None = None) -> FastAPI:
@@ -42,11 +45,10 @@ def create_app(database_url: str | None = None) -> FastAPI:
     )
     timeline_model = settings.timeline_model or settings.storybible_model
     app.state.timeline_agent = TimelineAgent(
-        OpenAICompatibleProvider(
-            base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key or SecretStr(""),
-            model=timeline_model,
-            timeout_seconds=settings.llm_timeout_seconds,
+        (
+            build_openai_compatible_provider(settings, model=timeline_model)
+            if settings.llm_api_key is not None
+            else None
         ),
         provider_model=timeline_model,
     )

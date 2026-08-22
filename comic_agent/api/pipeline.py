@@ -1,6 +1,8 @@
 """One-click, safe local pipeline entrypoints built from existing Gate services."""
 
 import json
+from datetime import UTC, datetime
+from time import sleep
 from typing import Annotated, Any
 
 from fastapi import (
@@ -14,6 +16,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import JSONResponse
+from starlette.datastructures import State
 
 from comic_agent.api.agent_runs import _require_real_llm_enabled, _run_whole_document_analysis
 from comic_agent.api.dependencies import (
@@ -39,7 +42,11 @@ from comic_agent.schemas.reliability import (
     StructuredOutputMode,
 )
 from comic_agent.schemas.source import FidelityMode, ProjectSpecV1, ProjectType
-from comic_agent.schemas.workflow import NarrativeAnalysisRunStatus, NarrativeGate2HandoffStatus
+from comic_agent.schemas.workflow import (
+    NarrativeAnalysisRunStatus,
+    NarrativeGate2HandoffStatus,
+    NarrativePipelinePhase,
+)
 from comic_agent.services.narrative_analysis_coordinator import (
     DEFAULT_NARRATIVE_ANALYST_MODES,
     NarrativeAnalysisCoordinator,
@@ -98,18 +105,12 @@ async def import_and_analyze(
     file: UploadFileDep,
     repository: RepositoryDep,
     analysis_repository: AnalysisRepositoryDep,
-    circuit_repository: CircuitRepositoryDep,
     project_name: Annotated[str | None, Form()] = None,
     real_llm_requested: Annotated[bool, Form()] = False,
     narrative_modes: Annotated[str | None, Form()] = None,
 ) -> dict[str, object] | JSONResponse:
     """Import once, then schedule the established Gate 1 -> Narrative worker path."""
 
-    _require_real_pipeline_opt_in(
-        real_llm_requested,
-        request=request,
-        circuit_repository=circuit_repository,
-    )
     try:
         selected_modes = _parse_narrative_modes(narrative_modes)
     except ValueError as exc:
@@ -136,7 +137,7 @@ async def import_and_analyze(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     background_tasks.add_task(
-        _run_whole_document_analysis,
+        _run_pipeline_background,
         request.app.state.session_factory,
         request.app.state,
         run.analysis_run_id,
@@ -146,7 +147,8 @@ async def import_and_analyze(
         "project_id": project_id,
         "document_id": document["document_id"],
         "analysis_run_id": run.analysis_run_id,
-        "pipeline_status": "NARRATIVE_QUEUED",
+        "pipeline_status": "QUEUED",
+        "pipeline_phase": str(run.pipeline_phase),
         "status_url": f"/pipeline-runs/{run.analysis_run_id}",
         "real_llm_requested": real_llm_requested,
     }
@@ -196,8 +198,7 @@ def get_pipeline_status(
     route = run.review_gate2_route
     aggregate = analysis_repository.get_result(analysis_run_id)
     attempts = recovery_repository.list_attempts(analysis_run_id)
-    fresh_routes = [attempt.fresh_route for attempt in attempts if attempt.fresh_route is not None]
-    latest_gate2_route = fresh_routes[-1] if fresh_routes else route
+    latest_gate2_route = _latest_approved_recovery_route(attempts) or route
     timeline_route = latest_gate2_route
     bundle = timeline_route.approved_proposal_bundle if timeline_route is not None else None
     timeline = (
@@ -208,8 +209,16 @@ def get_pipeline_status(
     gate3_route = timeline.gate3_route if timeline is not None else None
     gate3_result = timeline.gate3_result if timeline is not None else None
     safe_codes = sorted(
-        {str(code) for attempt in attempts for code in attempt.original_gate2_issue_codes}
+        set(run.pipeline_safe_issue_codes)
+        | _gate2_safe_issue_codes(run.review_gate2_result)
+        | {str(code) for attempt in attempts for code in attempt.original_gate2_issue_codes}
         | set(str(code) for code in (gate3_route.safe_issue_codes if gate3_route else []))
+        | set(str(code) for code in (timeline.safe_issue_codes if timeline else []))
+        | set(
+            timeline.provider_diagnostics.schema_error_rule_codes
+            if timeline is not None and timeline.provider_diagnostics is not None
+            else []
+        )
         | set(run.gate2_handoff.safe_issue_codes if run.gate2_handoff is not None else [])
         | {
             window.failure_category
@@ -231,6 +240,8 @@ def get_pipeline_status(
         "analysis_run_id": run.analysis_run_id,
         "project_id": run.project_id,
         "document_id": run.document_id,
+        "pipeline_phase": str(run.pipeline_phase),
+        "pipeline_safe_issue_codes": list(run.pipeline_safe_issue_codes),
         "gate1": str(gate1.decision) if gate1 is not None else "PENDING",
         "narrative": str(run.status),
         "narrative_failure_summary": _narrative_failure_summary(windows),
@@ -244,6 +255,28 @@ def get_pipeline_status(
         ),
         "narrative_recovery": _recovery_status(attempts),
         "timeline": str(timeline.status) if timeline is not None else "NOT_READY",
+        "timeline_failure_category": (
+            str(timeline.failure_category)
+            if timeline is not None and timeline.failure_category is not None
+            else None
+        ),
+        "timeline_safe_issue_codes": (
+            sorted(
+                set(timeline.safe_issue_codes)
+                | set(
+                    timeline.provider_diagnostics.schema_error_rule_codes
+                    if timeline.provider_diagnostics is not None
+                    else []
+                )
+            )
+            if timeline is not None
+            else []
+        ),
+        "timeline_provider_diagnostics": (
+            timeline.provider_diagnostics.model_dump(mode="json")
+            if timeline is not None and timeline.provider_diagnostics is not None
+            else None
+        ),
         "timeline_recovery": _timeline_recovery_status(timeline),
         "gate3": str(gate3_route.route) if gate3_route is not None else "NOT_READY",
         "approved_timeline_bundle_id": (
@@ -258,6 +291,35 @@ def get_pipeline_status(
         "timeline_recovery_budget": (
             timeline.recovery_budget.model_dump(mode="json") if timeline is not None else None
         ),
+    }
+
+
+def _latest_approved_recovery_route(attempts: list[Any]) -> Any | None:
+    """Return the newest fresh APPROVED route eligible for downstream execution."""
+
+    for attempt in reversed(attempts):
+        route = getattr(attempt, "fresh_route", None)
+        if (
+            route is not None
+            and str(getattr(route, "decision", "")) == "APPROVED"
+            and getattr(route, "approved_proposal_bundle", None) is not None
+        ):
+            return route
+    return None
+
+
+def _gate2_safe_issue_codes(result: Any) -> set[str]:
+    """Return only typed Gate 2 diagnostics suitable for the progress summary."""
+
+    if result is None:
+        return set()
+    return {
+        str(issue.code)
+        for issue in [
+            *getattr(result, "execution_issues", []),
+            *(issue for decision in getattr(result, "decisions", []) for issue in decision.issues),
+        ]
+        if isinstance(getattr(issue, "code", None), str)
     }
 
 
@@ -290,10 +352,10 @@ def _ensure_project(repository: SourceRepository, project_id: str, name: str | N
 def _require_real_pipeline_opt_in(
     real_llm_requested: bool,
     *,
-    request: Request,
+    app_state: State,
     circuit_repository: ProviderCircuitRepository,
 ) -> None:
-    """Reject unsafe real-provider requests before importing or scheduling work."""
+    """Validate real-provider readiness inside the background execution boundary."""
 
     if not real_llm_requested:
         return
@@ -310,9 +372,13 @@ def _require_real_pipeline_opt_in(
             status_code=409,
             detail="Real LLM requires a configured local API key",
         )
-    provider = getattr(request.app.state, "narrative_analyst_provider", None)
+    provider = getattr(app_state, "narrative_analyst_provider", None)
     if provider is None:
         provider = build_openai_compatible_provider(settings)
+        # Reuse the exact instance that was preflighted.  Constructing a second
+        # provider inside the Narrative workflow loses the negotiated capability
+        # profile and silently falls back to legacy prompt-only requests.
+        app_state.narrative_analyst_provider = provider
     result = ProviderHealthService(settings=settings, repository=circuit_repository).preflight(
         provider_key=settings.llm_provider_name,
         provider=provider,
@@ -334,6 +400,301 @@ def _require_real_pipeline_opt_in(
                 "structured_output": "UNAVAILABLE",
             },
         )
+    unsupported_schema_modes = [
+        item.output_schema_name
+        for item in capability.schema_capabilities
+        if item.selected_output_mode
+        in {StructuredOutputMode.UNAVAILABLE, StructuredOutputMode.PROMPT_ONLY}
+    ]
+    if unsupported_schema_modes:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "safe_issue_codes": ["NARRATIVE_SCHEMA_CAPABILITY_UNAVAILABLE"],
+                "unsupported_schema_count": len(unsupported_schema_modes),
+            },
+        )
+    timeline_provider = getattr(getattr(app_state, "timeline_agent", None), "_provider", None)
+    if timeline_provider is None:
+        raise HTTPException(
+            status_code=409,
+            detail={"safe_issue_codes": ["TIMELINE_PROVIDER_NOT_CONFIGURED"]},
+        )
+    timeline_model = settings.timeline_model or settings.storybible_model
+    timeline_capability = capability_service.resolve(
+        provider_key=f"{settings.llm_provider_name}:{timeline_model}",
+        provider=timeline_provider,
+    )
+    if timeline_capability.selected_output_mode == StructuredOutputMode.UNAVAILABLE:
+        raise HTTPException(
+            status_code=409,
+            detail={"safe_issue_codes": ["TIMELINE_STRUCTURED_OUTPUT_UNAVAILABLE"]},
+        )
+    pair_capability = next(
+        (
+            item
+            for item in timeline_capability.schema_capabilities
+            if item.output_schema_name == "TimelinePairInferenceV1"
+        ),
+        None,
+    )
+    if pair_capability is not None and pair_capability.selected_output_mode in {
+        StructuredOutputMode.UNAVAILABLE,
+        StructuredOutputMode.PROMPT_ONLY,
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail={"safe_issue_codes": ["TIMELINE_SCHEMA_CAPABILITY_UNAVAILABLE"]},
+        )
+
+
+def _safe_preflight_issue_codes(exc: HTTPException) -> list[str]:
+    """Extract only allowlisted issue identifiers from a preflight failure."""
+
+    detail = exc.detail
+    if isinstance(detail, dict):
+        values = detail.get("safe_issue_codes", [])
+        if isinstance(values, list):
+            return sorted({str(value) for value in values if isinstance(value, str)})
+    if isinstance(detail, str):
+        if "API key" in detail:
+            return ["PROVIDER_API_KEY_MISSING"]
+        if "Fake" in detail or "ENABLE_REAL_LLM" in detail:
+            return ["REAL_LLM_NOT_ENABLED"]
+    return ["PROVIDER_PREFLIGHT_FAILED"]
+
+
+def _preflight_retry_at(exc: HTTPException) -> datetime | None:
+    """Return the persisted retry deadline for a transient Provider preflight failure."""
+
+    detail = exc.detail
+    if not isinstance(detail, dict) or detail.get("status") != "WAITING_RETRY":
+        return None
+    raw_retry_at = detail.get("next_eligible_retry_at")
+    if not isinstance(raw_retry_at, str):
+        return None
+    try:
+        retry_at = datetime.fromisoformat(raw_retry_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return retry_at if retry_at.tzinfo is not None else retry_at.replace(tzinfo=UTC)
+
+
+def _preflight_requires_human_action(exc: HTTPException) -> bool:
+    """A paused circuit has consumed its bounded preflight retry allowance."""
+
+    detail = exc.detail
+    return isinstance(detail, dict) and detail.get("status") == "PAUSED"
+
+
+def _save_pipeline_failure(
+    session_factory: Any,
+    analysis_run_id: str,
+    issue_codes: list[str],
+) -> None:
+    """Persist a source-free terminal startup failure after the request returned."""
+
+    session = session_factory()
+    try:
+        repository = NarrativeAnalysisRepository(session)
+        run = repository.get_run(analysis_run_id)
+        if run is None:
+            return
+        # A downstream orchestration failure cannot invalidate a fully saved
+        # Narrative result.  Retaining SUCCEEDED keeps Gate 2 resumable while
+        # the separate pipeline phase exposes the safe worker diagnostic.
+        status = (
+            NarrativeAnalysisRunStatus.SUCCEEDED
+            if run.status == NarrativeAnalysisRunStatus.SUCCEEDED
+            else NarrativeAnalysisRunStatus.FAILED
+        )
+        repository.save_run(
+            run.model_copy(
+                update={
+                    "status": status,
+                    "pipeline_phase": NarrativePipelinePhase.FAILED,
+                    "pipeline_safe_issue_codes": sorted(set(issue_codes)),
+                }
+            )
+        )
+    finally:
+        session.close()
+
+
+def _run_pipeline_background(
+    session_factory: Any,
+    app_state: State,
+    analysis_run_id: str,
+    real_llm_requested: bool,
+) -> None:
+    """Run preflight and the existing worker after the run id has been returned."""
+
+    while True:
+        retry_at: datetime | None = None
+        start_worker = True
+        session = session_factory()
+        try:
+            analysis_repository = NarrativeAnalysisRepository(session)
+            run = analysis_repository.get_run(analysis_run_id)
+            if run is None:
+                return
+            analysis_repository.save_run(
+                run.model_copy(
+                    update={
+                        "pipeline_phase": (
+                            NarrativePipelinePhase.PROVIDER_CHECKING
+                            if real_llm_requested
+                            else NarrativePipelinePhase.NARRATIVE_RUNNING
+                        )
+                    }
+                )
+            )
+            if real_llm_requested:
+                try:
+                    _require_real_pipeline_opt_in(
+                        True,
+                        app_state=app_state,
+                        circuit_repository=ProviderCircuitRepository(session),
+                    )
+                except HTTPException as exc:
+                    issue_codes = _safe_preflight_issue_codes(exc)
+                    retry_at = _preflight_retry_at(exc)
+                    run = analysis_repository.get_run(analysis_run_id)
+                    if run is not None and retry_at is not None:
+                        analysis_repository.save_run(
+                            run.model_copy(
+                                update={
+                                    "status": NarrativeAnalysisRunStatus.RUNNING,
+                                    "pipeline_phase": NarrativePipelinePhase.PROVIDER_CHECKING,
+                                    "pipeline_safe_issue_codes": issue_codes,
+                                }
+                            )
+                        )
+                    elif run is not None:
+                        needs_human_action = _preflight_requires_human_action(exc)
+                        analysis_repository.save_run(
+                            run.model_copy(
+                                update={
+                                    "status": (
+                                        NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
+                                        if needs_human_action
+                                        else NarrativeAnalysisRunStatus.FAILED
+                                    ),
+                                    "pipeline_phase": (
+                                        NarrativePipelinePhase.NEEDS_HUMAN_ACTION
+                                        if needs_human_action
+                                        else NarrativePipelinePhase.FAILED
+                                    ),
+                                    "pipeline_safe_issue_codes": issue_codes,
+                                }
+                            )
+                        )
+                    start_worker = False
+                except Exception:
+                    run = analysis_repository.get_run(analysis_run_id)
+                    if run is not None:
+                        analysis_repository.save_run(
+                            run.model_copy(
+                                update={
+                                    "status": NarrativeAnalysisRunStatus.FAILED,
+                                    "pipeline_phase": NarrativePipelinePhase.FAILED,
+                                    "pipeline_safe_issue_codes": ["PROVIDER_PREFLIGHT_FAILED"],
+                                }
+                            )
+                        )
+                    start_worker = False
+        finally:
+            session.close()
+
+        if retry_at is not None:
+            delay = _pipeline_retry_wait_seconds(retry_at)
+            if delay > 0:
+                sleep(delay)
+            continue
+        if not start_worker:
+            return
+        break
+
+    _run_pipeline_until_terminal(
+        session_factory,
+        app_state,
+        analysis_run_id,
+        real_llm_requested,
+    )
+
+
+def _pipeline_retry_wait_seconds(
+    next_retry_at: datetime | None,
+    *,
+    now: datetime | None = None,
+) -> float:
+    """Return a bounded wait; an overdue checkpoint must be runnable immediately."""
+
+    if next_retry_at is None:
+        return 1.0
+    current = now or datetime.now(UTC)
+    return max(0.0, min(5.0, (next_retry_at - current).total_seconds()))
+
+
+def _run_pipeline_until_terminal(
+    session_factory: Any,
+    app_state: State,
+    analysis_run_id: str,
+    real_llm_requested: bool,
+) -> None:
+    """Keep the background task alive across persisted window retry deadlines.
+
+    The worker intentionally returns RUNNING while a failed window is waiting for
+    backoff.  The old one-shot caller then exited permanently, leaving the run in
+    RUNNING forever.  Re-entering the idempotent worker after the deadline resumes
+    only eligible windows; successful windows remain untouched.
+    """
+
+    while True:
+        try:
+            _run_whole_document_analysis(
+                session_factory,
+                app_state,
+                analysis_run_id,
+                real_llm_requested,
+            )
+        except Exception:
+            _save_pipeline_failure(session_factory, analysis_run_id, ["PIPELINE_WORKER_FAILED"])
+            return
+
+        session = session_factory()
+        try:
+            repository = NarrativeAnalysisRepository(session)
+            run = repository.get_run(analysis_run_id)
+            if run is None:
+                return
+            if run.status != NarrativeAnalysisRunStatus.RUNNING:
+                phase = (
+                    NarrativePipelinePhase.COMPLETED
+                    if run.status == NarrativeAnalysisRunStatus.SUCCEEDED
+                    else NarrativePipelinePhase.NEEDS_HUMAN_ACTION
+                    if run.status == NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
+                    else NarrativePipelinePhase.FAILED
+                )
+                update: dict[str, object] = {"pipeline_phase": phase}
+                if run.status == NarrativeAnalysisRunStatus.SUCCEEDED:
+                    # The durable circuit audit retains transient Provider failures;
+                    # the completed run should not continue to present them as current.
+                    update["pipeline_safe_issue_codes"] = []
+                repository.save_run(run.model_copy(update=update))
+                return
+            retry_times = [
+                window.next_eligible_retry_at
+                for window in repository.list_windows(analysis_run_id)
+                if window.next_eligible_retry_at is not None
+            ]
+            next_retry_at = min(retry_times) if retry_times else None
+        finally:
+            session.close()
+
+        delay = _pipeline_retry_wait_seconds(next_retry_at)
+        if delay > 0:
+            sleep(delay)
 
 
 def _gate2_status(run: Any, aggregate: Any, route: Any) -> str:
@@ -403,15 +764,27 @@ def _window_summary(windows: list[Any]) -> dict[str, object]:
     provider_requests_used = 0
     elapsed_seconds_used = 0
     output_tokens_used = 0
+    output_token_budgets: set[int] = set()
+    recovery_phase_counts: dict[str, int] = {}
+    deferred_window_count = 0
+    overdue_retry_count = 0
+    now = datetime.now(UTC)
     for window in windows:
         status = str(window.status)
         counts[status] = counts.get(status, 0) + 1
+        phase = str(window.recovery_phase)
+        recovery_phase_counts[phase] = recovery_phase_counts.get(phase, 0) + 1
         attempts_used += int(window.attempt_count)
         provider_requests_used += int(window.provider_request_count)
         elapsed_seconds_used += int(window.elapsed_seconds_used)
         output_tokens_used += int(window.output_tokens_used)
+        output_token_budgets.add(int(window.output_token_budget))
         if window.next_eligible_retry_at is not None:
             retry_times.append(window.next_eligible_retry_at)
+            if window.next_eligible_retry_at > now:
+                deferred_window_count += 1
+            else:
+                overdue_retry_count += 1
     return {
         "total": len(windows),
         "status_counts": counts,
@@ -419,7 +792,12 @@ def _window_summary(windows: list[Any]) -> dict[str, object]:
         "provider_requests_used": provider_requests_used,
         "elapsed_seconds_used": elapsed_seconds_used,
         "output_tokens_used": output_tokens_used,
+        "output_token_budgets": sorted(output_token_budgets),
         "next_eligible_retry_at": min(retry_times).isoformat() if retry_times else None,
+        "recovery_phase_counts": recovery_phase_counts,
+        "deferred_window_count": deferred_window_count,
+        "overdue_retry_count": overdue_retry_count,
+        "automatic_split_count": counts.get("SPLIT", 0),
     }
 
 
@@ -494,6 +872,12 @@ def _batch_summary(run: Any, windows: list[Any]) -> dict[str, object]:
         elif any(status == "FAILED" for status in statuses):
             status = "FAILED"
         elif all(status == "SUCCEEDED" for status in statuses):
+            status = "SUCCEEDED"
+        elif all(status in {"SUCCEEDED", "SPLIT"} for status in statuses) and any(
+            status == "SUCCEEDED" for status in statuses
+        ):
+            # A split parent remains as an audit checkpoint after every child
+            # has succeeded.  It must not make the completed batch look planned.
             status = "SUCCEEDED"
         elif all(status in {"SPLIT", "EXHAUSTED"} for status in statuses):
             status = "EXHAUSTED"
