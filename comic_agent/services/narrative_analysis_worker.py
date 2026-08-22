@@ -37,6 +37,7 @@ from comic_agent.services.narrative_analyst_summary import (
     sanitize_provider_diagnostics,
     set_failure,
 )
+from comic_agent.services.narrative_proposal_id_normalizer import proposal_window_scope
 from comic_agent.services.narrative_timeline_coordinator import NarrativeTimelineCoordinator
 from comic_agent.workflows.narrative_analyst_workflow import NarrativeAnalystWorkflow
 
@@ -469,6 +470,7 @@ class NarrativeAnalysisWorker:
         if not callable(get_agent_run):
             return
         sources: list[NarrativeAnalysisProposalSourceV1] = []
+        source_scopes: dict[str, str] = {}
         for window in windows:
             if window.status != NarrativeAnalysisWindowStatus.SUCCEEDED or not window.agent_run_id:
                 continue
@@ -476,7 +478,14 @@ class NarrativeAnalysisWorker:
             if not hasattr(agent_run, "payload"):
                 continue
             sources.extend(proposal_sources_for_window(agent_run, window))
+            source_scopes[agent_run.agent_run_id] = proposal_window_scope(
+                run.analysis_run_id, window.window_index, window.chunk_ids
+            )
         typed_sources = sources
         self._analysis_repository.save_result(
-            aggregate_narrative_analysis(typed_sources, analysis_run_id=run.analysis_run_id)
+            aggregate_narrative_analysis(
+                typed_sources,
+                analysis_run_id=run.analysis_run_id,
+                source_scopes=source_scopes,
+            )
         )

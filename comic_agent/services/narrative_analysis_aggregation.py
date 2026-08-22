@@ -1,5 +1,8 @@
 """Typed, conservative aggregation for whole-document proposal candidates."""
 
+from collections.abc import Iterable, Mapping
+from typing import TypeVar
+
 from comic_agent.schemas.base import EvidenceRefV1
 from comic_agent.schemas.narrative import (
     CampusContentProfileProposalV1,
@@ -24,15 +27,36 @@ from comic_agent.schemas.workflow import (
     NarrativeAnalysisProposalSourceV1,
     NarrativeAnalysisResultV1,
 )
+from comic_agent.services.narrative_proposal_id_normalizer import (
+    normalize_proposal_sources,
+    rewrite_proposal_ids,
+)
+
+AggregatedProposalT = TypeVar(
+    "AggregatedProposalT",
+    AggregatedEventProposalV1,
+    AggregatedEntityProposalV1,
+    AggregatedClaimProposalV1,
+    AggregatedKnowledgeStateProposalV1,
+    AggregatedStateChangeProposalV1,
+    AggregatedRelationshipSignalProposalV1,
+    AggregatedCampusContentProfileProposalV1,
+)
 
 
 def aggregate_narrative_analysis(
     sources: list[NarrativeAnalysisProposalSourceV1],
     *,
     analysis_run_id: str = "aggregate-preview",
+    source_scopes: Mapping[str, str] | None = None,
 ) -> NarrativeAnalysisResultV1:
     """Merge only exact documented keys; preserve all source run and evidence references."""
 
+    original_sources = sources
+    sources = normalize_proposal_sources(
+        sources, analysis_run_id=analysis_run_id, source_scopes=source_scopes
+    )
+    aliases: dict[tuple[str, str], str] = {}
     events: dict[tuple[object, ...], AggregatedEventProposalV1] = {}
     entities: dict[tuple[object, ...], AggregatedEntityProposalV1] = {}
     claims: dict[tuple[object, ...], AggregatedClaimProposalV1] = {}
@@ -40,13 +64,15 @@ def aggregate_narrative_analysis(
     state_changes: dict[tuple[object, ...], AggregatedStateChangeProposalV1] = {}
     relationship_signals: dict[tuple[object, ...], AggregatedRelationshipSignalProposalV1] = {}
     campus_content_profiles: dict[tuple[object, ...], AggregatedCampusContentProfileProposalV1] = {}
-    for source in sources:
+    for source, original_source in zip(sources, original_sources, strict=True):
         proposal = source.proposal
+        semantic_proposal = original_source.proposal
         if isinstance(proposal, EventProposalV1):
+            assert isinstance(semantic_proposal, EventProposalV1)
             event_key = (
-                _normalized(proposal.event_type),
-                _normalized(proposal.summary),
-                _evidence_key(proposal.evidence_refs),
+                _normalized(semantic_proposal.event_type),
+                _normalized(semantic_proposal.summary),
+                _evidence_key(semantic_proposal.evidence_refs),
             )
             existing_event = events.get(event_key)
             if existing_event is None:
@@ -56,6 +82,9 @@ def aggregate_narrative_analysis(
                     evidence_refs=proposal.evidence_refs,
                 )
             else:
+                aliases[("EventProposalV1", proposal.proposal_id)] = (
+                    existing_event.proposal.proposal_id
+                )
                 events[event_key] = existing_event.model_copy(
                     update={
                         "agent_run_ids": _append_unique(
@@ -64,9 +93,10 @@ def aggregate_narrative_analysis(
                     }
                 )
         elif isinstance(proposal, EntityProposalV1):
+            assert isinstance(semantic_proposal, EntityProposalV1)
             entity_key = (
-                _normalized(proposal.canonical_name),
-                _normalized(str(proposal.entity_type)),
+                _normalized(semantic_proposal.canonical_name),
+                _normalized(str(semantic_proposal.entity_type)),
             )
             existing_entity = entities.get(entity_key)
             if existing_entity is None:
@@ -76,6 +106,9 @@ def aggregate_narrative_analysis(
                     evidence_refs=proposal.evidence_refs,
                 )
             else:
+                aliases[("EntityProposalV1", proposal.proposal_id)] = (
+                    existing_entity.proposal.proposal_id
+                )
                 entities[entity_key] = existing_entity.model_copy(
                     update={
                         "agent_run_ids": _append_unique(
@@ -87,11 +120,12 @@ def aggregate_narrative_analysis(
                     }
                 )
         elif isinstance(proposal, ClaimProposalV1):
+            assert isinstance(semantic_proposal, ClaimProposalV1)
             claim_key = (
-                _normalized(str(proposal.claim_type)),
-                _normalized(proposal.claim_text),
-                _normalized(str(proposal.source_type)),
-                _evidence_key(proposal.evidence_refs),
+                _normalized(str(semantic_proposal.claim_type)),
+                _normalized(semantic_proposal.claim_text),
+                _normalized(str(semantic_proposal.source_type)),
+                _evidence_key(semantic_proposal.evidence_refs),
             )
             existing_claim = claims.get(claim_key)
             if existing_claim is None:
@@ -101,6 +135,9 @@ def aggregate_narrative_analysis(
                     evidence_refs=proposal.evidence_refs,
                 )
             else:
+                aliases[("ClaimProposalV1", proposal.proposal_id)] = (
+                    existing_claim.proposal.proposal_id
+                )
                 claims[claim_key] = existing_claim.model_copy(
                     update={
                         "agent_run_ids": _append_unique(
@@ -109,7 +146,8 @@ def aggregate_narrative_analysis(
                     }
                 )
         elif isinstance(proposal, KnowledgeStateProposalV1):
-            knowledge_key = _knowledge_state_key(proposal)
+            assert isinstance(semantic_proposal, KnowledgeStateProposalV1)
+            knowledge_key = _knowledge_state_key(semantic_proposal)
             existing_state = knowledge_states.get(knowledge_key)
             if existing_state is None:
                 knowledge_states[knowledge_key] = AggregatedKnowledgeStateProposalV1(
@@ -118,6 +156,9 @@ def aggregate_narrative_analysis(
                     evidence_refs=proposal.evidence_refs,
                 )
             else:
+                aliases[("KnowledgeStateProposalV1", proposal.proposal_id)] = (
+                    existing_state.proposal.proposal_id
+                )
                 knowledge_states[knowledge_key] = existing_state.model_copy(
                     update={
                         "agent_run_ids": _append_unique(
@@ -129,7 +170,8 @@ def aggregate_narrative_analysis(
                     }
                 )
         elif isinstance(proposal, StateChangeProposalV1):
-            state_change_key = _state_change_key(proposal)
+            assert isinstance(semantic_proposal, StateChangeProposalV1)
+            state_change_key = _state_change_key(semantic_proposal)
             existing_change = state_changes.get(state_change_key)
             if existing_change is None:
                 state_changes[state_change_key] = AggregatedStateChangeProposalV1(
@@ -138,6 +180,9 @@ def aggregate_narrative_analysis(
                     evidence_refs=proposal.evidence_refs,
                 )
             else:
+                aliases[("StateChangeProposalV1", proposal.proposal_id)] = (
+                    existing_change.proposal.proposal_id
+                )
                 state_changes[state_change_key] = existing_change.model_copy(
                     update={
                         "agent_run_ids": _append_unique(
@@ -149,7 +194,8 @@ def aggregate_narrative_analysis(
                     }
                 )
         elif isinstance(proposal, RelationshipSignalProposalV1):
-            relationship_key = _relationship_signal_key(proposal)
+            assert isinstance(semantic_proposal, RelationshipSignalProposalV1)
+            relationship_key = _relationship_signal_key(semantic_proposal)
             existing_signal = relationship_signals.get(relationship_key)
             if existing_signal is None:
                 relationship_signals[relationship_key] = AggregatedRelationshipSignalProposalV1(
@@ -158,6 +204,9 @@ def aggregate_narrative_analysis(
                     evidence_refs=proposal.evidence_refs,
                 )
             else:
+                aliases[("RelationshipSignalProposalV1", proposal.proposal_id)] = (
+                    existing_signal.proposal.proposal_id
+                )
                 relationship_signals[relationship_key] = existing_signal.model_copy(
                     update={
                         "agent_run_ids": _append_unique(
@@ -169,14 +218,15 @@ def aggregate_narrative_analysis(
                     }
                 )
         elif isinstance(proposal, CampusContentProfileProposalV1):
+            assert isinstance(semantic_proposal, CampusContentProfileProposalV1)
             profile_key = (
-                proposal.project_id,
-                proposal.content_type,
-                tuple(proposal.audience),
-                tuple(proposal.must_preserve_fact_ids),
-                proposal.tone,
-                proposal.page_budget,
-                _evidence_key(proposal.evidence_refs),
+                semantic_proposal.project_id,
+                semantic_proposal.content_type,
+                tuple(semantic_proposal.audience),
+                tuple(semantic_proposal.must_preserve_fact_ids),
+                semantic_proposal.tone,
+                semantic_proposal.page_budget,
+                _evidence_key(semantic_proposal.evidence_refs),
             )
             existing_profile = campus_content_profiles.get(profile_key)
             if existing_profile is None:
@@ -186,6 +236,9 @@ def aggregate_narrative_analysis(
                     evidence_refs=proposal.evidence_refs,
                 )
             else:
+                aliases[("CampusContentProfileProposalV1", proposal.proposal_id)] = (
+                    existing_profile.proposal.proposal_id
+                )
                 campus_content_profiles[profile_key] = existing_profile.model_copy(
                     update={
                         "agent_run_ids": _append_unique(
@@ -198,14 +251,38 @@ def aggregate_narrative_analysis(
                 )
     return NarrativeAnalysisResultV1(
         analysis_run_id=analysis_run_id,
-        events=list(events.values()),
-        entities=list(entities.values()),
-        claims=list(claims.values()),
-        knowledge_states=list(knowledge_states.values()),
-        state_changes=list(state_changes.values()),
-        relationship_signals=list(relationship_signals.values()),
-        campus_content_profiles=list(campus_content_profiles.values()),
+        events=_rewrite_aggregated(events.values(), aliases),
+        entities=_rewrite_aggregated(entities.values(), aliases),
+        claims=_rewrite_aggregated(claims.values(), aliases),
+        knowledge_states=_rewrite_aggregated(knowledge_states.values(), aliases),
+        state_changes=_rewrite_aggregated(state_changes.values(), aliases),
+        relationship_signals=_rewrite_aggregated(relationship_signals.values(), aliases),
+        campus_content_profiles=_rewrite_aggregated(campus_content_profiles.values(), aliases),
     )
+
+
+def _rewrite_aggregated(  # noqa: UP047 - constrained TypeVar supports Python 3.11
+    values: Iterable[AggregatedProposalT], aliases: Mapping[tuple[str, str], str]
+) -> list[AggregatedProposalT]:
+    def resolve(schema: str, proposal_id: str | None) -> str | None:
+        while proposal_id is not None and (schema, proposal_id) in aliases:
+            proposal_id = aliases[(schema, proposal_id)]
+        return proposal_id
+
+    return [
+        value.model_copy(
+            update={
+                "proposal": rewrite_proposal_ids(
+                    value.proposal,
+                    proposal_id=resolve(
+                        type(value.proposal).__name__, value.proposal.proposal_id
+                    ),
+                    resolve=resolve,
+                )
+            }
+        )
+        for value in values
+    ]
 
 
 def _normalized(value: str) -> str:
