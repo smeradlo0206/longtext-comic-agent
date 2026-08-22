@@ -77,6 +77,82 @@ class ReviewGate3Decision(StrEnum):
     FAILED = "FAILED"
 
 
+class Gate3HumanReviewResolution(StrEnum):
+    """Narrow final decisions available to an explicit human reviewer."""
+
+    APPROVE = "APPROVE"
+    REJECT = "REJECT"
+
+
+class Gate3HumanReviewInputV1(StrictBaseModel):
+    """Caller-supplied fields required to resolve one held Gate 3 run."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0")
+    gate3_run_id: str = Field(min_length=1)
+    resolution: Gate3HumanReviewResolution
+    reviewer_id: str = Field(min_length=1)
+    note: str | None = Field(default=None, min_length=1, max_length=2000)
+
+
+class Gate3HumanReviewRequestV1(StrictBaseModel):
+    """HTTP body for a run id already supplied by the request path."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0")
+    resolution: Gate3HumanReviewResolution
+    reviewer_id: str = Field(min_length=1)
+    note: str | None = Field(default=None, min_length=1, max_length=2000)
+
+
+class Gate3HumanReviewV1(Gate3HumanReviewInputV1):
+    """Persisted human resolution layered over the automated Gate 3 result."""
+
+    reviewed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    automated_decision: Literal[ReviewGate3Decision.NEEDS_HUMAN_REVIEW] = (
+        ReviewGate3Decision.NEEDS_HUMAN_REVIEW
+    )
+    final_decision: ReviewGate3Decision
+
+    @model_validator(mode="after")
+    def validate_human_resolution(self) -> "Gate3HumanReviewV1":
+        if self.reviewed_at.tzinfo is None or self.reviewed_at.utcoffset() != timedelta(0):
+            raise ValueError("reviewed_at must be UTC")
+        expected = (
+            ReviewGate3Decision.APPROVED
+            if self.resolution == Gate3HumanReviewResolution.APPROVE
+            else ReviewGate3Decision.REJECTED
+        )
+        if self.final_decision != expected:
+            raise ValueError("final_decision must match the human resolution")
+        return self
+
+
+class Gate3HumanReviewResponseV1(StrictBaseModel):
+    """Safe finalized state returned by the human-review HTTP operation."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0")
+    gate3_run_id: str = Field(min_length=1)
+    project_id: str = Field(min_length=1)
+    status: Literal[ReviewGate3Decision.APPROVED, ReviewGate3Decision.REJECTED]
+    automated_decision: Literal[ReviewGate3Decision.NEEDS_HUMAN_REVIEW]
+    effective_decision: Literal[ReviewGate3Decision.APPROVED, ReviewGate3Decision.REJECTED]
+    human_review: Gate3HumanReviewV1
+    approved_timeline_bundle_id: str | None = Field(default=None, min_length=1)
+    approved_timeline_bundle_available: bool
+
+    @model_validator(mode="after")
+    def validate_finalized_response(self) -> "Gate3HumanReviewResponseV1":
+        available = self.approved_timeline_bundle_id is not None
+        if available != self.approved_timeline_bundle_available:
+            raise ValueError("bundle availability must match approved_timeline_bundle_id")
+        if self.status == ReviewGate3Decision.APPROVED and not available:
+            raise ValueError("APPROVED response requires an approved Timeline bundle")
+        if self.status == ReviewGate3Decision.REJECTED and available:
+            raise ValueError("REJECTED response cannot contain an approved Timeline bundle")
+        if self.effective_decision != self.status:
+            raise ValueError("effective_decision must match status")
+        return self
+
+
 class TimelineGate3IssueCode(StrEnum):
     TEMPORAL_CYCLE = "TEMPORAL_CYCLE"
     UNSUPPORTED_RELATION = "UNSUPPORTED_RELATION"
@@ -134,6 +210,8 @@ class ReviewGate3ResultV1(StrictBaseModel):
     checked_event_ids: list[str] = Field(default_factory=list)
     checked_temporal_relation_ids: list[str] = Field(default_factory=list)
     evidence_refs: list[EvidenceRefV1] = Field(default_factory=list)
+    human_review: Gate3HumanReviewV1 | None = None
+    effective_decision: ReviewGate3Decision | None = None
 
     @model_validator(mode="after")
     def validate_result(self) -> "ReviewGate3ResultV1":
@@ -145,6 +223,16 @@ class ReviewGate3ResultV1(StrictBaseModel):
             raise ValueError("APPROVED Gate 3 results cannot contain issues")
         if self.decision != ReviewGate3Decision.APPROVED and not self.issues:
             raise ValueError("non-APPROVED Gate 3 results require issues")
+        if self.human_review is None:
+            if self.effective_decision not in {None, self.decision}:
+                raise ValueError("effective_decision requires matching human review metadata")
+        else:
+            if self.decision != ReviewGate3Decision.NEEDS_HUMAN_REVIEW:
+                raise ValueError("human review requires an automated NEEDS_HUMAN_REVIEW decision")
+            if self.human_review.gate3_run_id != self.timeline_run_id:
+                raise ValueError("human review gate3_run_id must match timeline_run_id")
+            if self.effective_decision != self.human_review.final_decision:
+                raise ValueError("effective_decision must match the human final decision")
         return self
 
 
@@ -404,8 +492,15 @@ class TimelineGate3RunV1(StrictBaseModel):
         ):
             raise ValueError("post-provider states require Timeline input/output/AgentRun")
         if self.status == TimelineGate3RunStatus.APPROVED:
-            if self.approved_timeline_bundle is None or self.gate3_route is None:
-                raise ValueError("APPROVED state requires a Gate 3 approved bundle")
+            human_approved = (
+                self.gate3_result is not None
+                and self.gate3_result.human_review is not None
+                and self.gate3_result.effective_decision == ReviewGate3Decision.APPROVED
+            )
+            if (self.approved_timeline_bundle is None and not human_approved) or (
+                self.gate3_route is None
+            ):
+                raise ValueError("APPROVED state requires a Gate 3 approval")
         elif self.approved_timeline_bundle is not None:
             raise ValueError("only APPROVED state may expose a Timeline bundle")
         preserved = (

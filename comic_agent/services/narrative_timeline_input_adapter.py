@@ -13,6 +13,7 @@ from comic_agent.schemas import (
     SourceChunkV1,
     StateChangeProposalV1,
     TimelineAnalysisInputV1,
+    TimelineAnalysisMode,
 )
 from comic_agent.schemas.base import EvidenceRefV1
 
@@ -43,6 +44,7 @@ class NarrativeTimelineInputAdapter:
         *,
         route: NarrativeAnalysisReviewRouteV1,
         source_chunks: Sequence[SourceChunkV1],
+        mode: TimelineAnalysisMode = TimelineAnalysisMode.RULES_ONLY,
     ) -> TimelineAnalysisInputV1:
         """Build normal Timeline input from Gate 2's typed approved bundle only."""
 
@@ -83,6 +85,7 @@ class NarrativeTimelineInputAdapter:
             project_id=bundle.project_id,
             source_approved_bundle_id=bundle.bundle_id,
             source_review_run_id=bundle.review_run_id,
+            mode=mode,
             event_proposals=events,
             claim_proposals=claims,
             state_change_proposals=changes,

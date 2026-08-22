@@ -40,6 +40,52 @@ def claim(claim_id: str, object_value: str) -> ClaimProposalV1:
     )
 
 
+def modern_claim(
+    proposal_id: str,
+    *,
+    text: str = "The archive door is locked.",
+    verification_status: str = "SUPPORTED",
+) -> ClaimProposalV1:
+    return ClaimProposalV1(
+        schema_version="1.2",
+        proposal_id=proposal_id,
+        claim_type="FACTUAL_ASSERTION",
+        claim_text=text,
+        temporal_scope="PRESENT",
+        source_type="NARRATOR",
+        verification_status=verification_status,
+        evidence_refs=EVIDENCE,
+        confidence=0.8,
+        reality_layer=RealityLayer.PRIMARY,
+    )
+
+
+def modern_state_change(proposal_id: str, event_id: str) -> StateChangeProposalV1:
+    return StateChangeProposalV1(
+        schema_version="1.1",
+        proposal_id=proposal_id,
+        event={
+            "event_summary": "Chen hands Lin an umbrella.",
+            "event_proposal_id": event_id,
+            "proposal_schema": "EventProposalV1",
+            "resolution_status": "RESOLVED",
+        },
+        target={
+            "mention_text": "Lin",
+            "entity_proposal_id": "entity-lin",
+            "proposal_schema": "EntityProposalV1",
+            "resolution_status": "RESOLVED",
+        },
+        attribute_path="inventory.umbrella",
+        old_value=None,
+        new_value="held",
+        persistent=True,
+        reality_layer=RealityLayer.PRIMARY,
+        evidence_refs=EVIDENCE,
+        confidence=0.9,
+    )
+
+
 def test_timeline_agent_outputs_safe_unknown_relation_and_duplicate_candidate() -> None:
     analysis = TimelineAgent().run(
         TimelineAnalysisInputV1(
@@ -83,6 +129,38 @@ def test_timeline_agent_reports_missing_event_and_contradictory_claims() -> None
     }
 
 
+def test_timeline_agent_resolves_modern_state_change_event_reference() -> None:
+    analysis = TimelineAgent().run(
+        TimelineAnalysisInputV1(
+            project_id="project-1",
+            event_proposals=[event("event-1")],
+            state_change_proposals=[modern_state_change("state-modern-1", "event-1")],
+        )
+    )
+
+    assert not any(
+        item.category == TimelineConflictCategory.MISSING_EVENT_REFERENCE
+        for item in analysis.conflicts
+    )
+
+
+def test_timeline_agent_reports_missing_modern_state_change_event_reference() -> None:
+    analysis = TimelineAgent().run(
+        TimelineAnalysisInputV1(
+            project_id="project-1",
+            event_proposals=[event("event-1")],
+            state_change_proposals=[modern_state_change("state-modern-1", "event-missing")],
+        )
+    )
+
+    conflict = next(
+        item
+        for item in analysis.conflicts
+        if item.category == TimelineConflictCategory.MISSING_EVENT_REFERENCE
+    )
+    assert "event-missing" in conflict.summary
+
+
 def test_timeline_agent_marks_exact_claims_as_duplicate_candidates() -> None:
     analysis = TimelineAgent().run(
         TimelineAnalysisInputV1(
@@ -92,6 +170,39 @@ def test_timeline_agent_marks_exact_claims_as_duplicate_candidates() -> None:
     )
 
     assert analysis.duplicate_candidates[0].candidate_type == DuplicateCandidateType.CLAIM
+
+
+def test_timeline_agent_uses_modern_claim_ids_for_duplicates() -> None:
+    analysis = TimelineAgent().run(
+        TimelineAnalysisInputV1(
+            project_id="project-1",
+            claim_proposals=[modern_claim("claim-modern-1"), modern_claim("claim-modern-2")],
+        )
+    )
+
+    assert analysis.duplicate_candidates[0].proposal_ids == [
+        "claim-modern-1",
+        "claim-modern-2",
+    ]
+
+
+def test_timeline_agent_detects_modern_factual_status_contradiction() -> None:
+    analysis = TimelineAgent().run(
+        TimelineAnalysisInputV1(
+            project_id="project-1",
+            claim_proposals=[
+                modern_claim("claim-modern-1", verification_status="CONFIRMED"),
+                modern_claim("claim-modern-2", verification_status="CONTRADICTED"),
+            ],
+        )
+    )
+
+    conflict = next(
+        item
+        for item in analysis.conflicts
+        if item.category == TimelineConflictCategory.CONTRADICTORY_CLAIMS
+    )
+    assert conflict.affected_proposal_ids == ["claim-modern-1", "claim-modern-2"]
 
 
 def source_chunk() -> SourceChunkV1:

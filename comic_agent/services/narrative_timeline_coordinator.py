@@ -10,6 +10,7 @@ from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.timeline import (
     ReviewGate3Decision,
     TimelineAnalysisInputV1,
+    TimelineAnalysisMode,
     TimelineAnalysisProposalV1,
     TimelineGate3RunStatus,
     TimelineGate3RunV1,
@@ -51,12 +52,14 @@ class NarrativeTimelineCoordinator:
         agent_run_repository: AgentRunRepository,
         input_adapter: NarrativeTimelineInputAdapter | None = None,
         review_service: ReviewGate3Service | None = None,
+        timeline_mode: TimelineAnalysisMode = TimelineAnalysisMode.RULES_ONLY,
     ) -> None:
         self._repository = repository
         self._timeline_runner = timeline_runner
         self._agent_runs = agent_run_repository
         self._adapter = input_adapter or NarrativeTimelineInputAdapter()
         self._review_service = review_service or ReviewGate3Service()
+        self._timeline_mode = timeline_mode
 
     def run_if_approved(
         self,
@@ -94,6 +97,7 @@ class NarrativeTimelineCoordinator:
         timeline_input = self._adapter.build_from_approved_bundle(
             route=route,
             source_chunks=source_chunks,
+            mode=self._timeline_mode,
         )
         claimed = self._repository.claim_provider(
             reserved,

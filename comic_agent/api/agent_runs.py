@@ -25,6 +25,7 @@ from comic_agent.repositories.timeline_gate3_repository import TimelineGate3Repo
 from comic_agent.schemas.base import RealityLayer
 from comic_agent.schemas.narrative import EventProposalBatchV1
 from comic_agent.schemas.source import SourceChunkV1
+from comic_agent.schemas.timeline import TimelineAnalysisMode
 from comic_agent.schemas.workflow import (
     AgentRunV1,
     NarrativeAnalysisCreateRequestV1,
@@ -433,6 +434,11 @@ def _run_whole_document_analysis(
                 repository=TimelineGate3Repository(session),
                 timeline_runner=getattr(app_state, "timeline_runner", app_state.timeline_agent),
                 agent_run_repository=AgentRunRepository(session),
+                timeline_mode=(
+                    TimelineAnalysisMode.LLM
+                    if real_llm_requested and get_settings().timeline_llm_enabled
+                    else TimelineAnalysisMode.RULES_ONLY
+                ),
             ),
         )
         worker.run_pending(analysis_run_id, real_llm_requested=real_llm_requested)

@@ -9,9 +9,12 @@ from comic_agent.providers.llm import LLMProvider
 from comic_agent.schemas.base import EvidenceRefV1, RecordStatus
 from comic_agent.schemas.narrative import (
     ClaimProposalV1,
+    ClaimType,
     EventProposalV1,
+    StateChangeProposalV1,
     TemporalRelation,
     TemporalRelationProposalV1,
+    VerificationStatus,
 )
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.timeline import (
@@ -322,21 +325,31 @@ class TimelineAgent:
         input_context: TimelineAnalysisInputV1,
     ) -> list[TimelineConflictV1]:
         known_event_ids = {proposal.proposal_id for proposal in input_context.event_proposals}
-        return [
-            TimelineConflictV1(
-                conflict_id=stable_id("timeline-conflict", change.proposal_id),
-                project_id=input_context.project_id,
-                category=TimelineConflictCategory.MISSING_EVENT_REFERENCE,
-                summary=(
-                    f"State-change proposal {change.proposal_id} references missing event "
-                    f"{change.event_id}."
-                ),
-                affected_proposal_ids=[change.proposal_id],
-                evidence_refs=change.evidence_refs,
+        conflicts: list[TimelineConflictV1] = []
+        for change in input_context.state_change_proposals:
+            event_id = TimelineAgent._state_change_event_id(change)
+            if event_id in known_event_ids:
+                continue
+            conflicts.append(
+                TimelineConflictV1(
+                    conflict_id=stable_id("timeline-conflict", change.proposal_id),
+                    project_id=input_context.project_id,
+                    category=TimelineConflictCategory.MISSING_EVENT_REFERENCE,
+                    summary=(
+                        f"State-change proposal {change.proposal_id} references missing event "
+                        f"{event_id}."
+                    ),
+                    affected_proposal_ids=[change.proposal_id],
+                    evidence_refs=change.evidence_refs,
+                )
             )
-            for change in input_context.state_change_proposals
-            if change.event_id not in known_event_ids
-        ]
+        return conflicts
+
+    @staticmethod
+    def _state_change_event_id(change: StateChangeProposalV1) -> str | None:
+        if change.schema_version != "1.0":
+            return change.event.event_proposal_id if change.event is not None else None
+        return change.event_id
 
     @staticmethod
     def _contradictory_claim_conflicts(
@@ -344,23 +357,19 @@ class TimelineAgent:
     ) -> list[TimelineConflictV1]:
         conflicts = []
         for first, second in combinations(input_context.claim_proposals, 2):
-            if (
-                first.subject_id == second.subject_id
-                and first.predicate == second.predicate
-                and first.object_value != second.object_value
-                and first.reality_layer == second.reality_layer
-            ):
+            if TimelineAgent._claims_contradict(first, second):
                 conflicts.append(
                     TimelineConflictV1(
-                        conflict_id=stable_id("claim-conflict", first.claim_id, second.claim_id),
+                        conflict_id=stable_id(
+                            "claim-conflict", first.proposal_id, second.proposal_id
+                        ),
                         project_id=input_context.project_id,
                         category=TimelineConflictCategory.CONTRADICTORY_CLAIMS,
                         summary=(
-                            f"Claims {first.claim_id} and {second.claim_id} assign "
-                            "different values "
-                            f"to {first.subject_id}.{first.predicate}."
+                            f"Claims {first.proposal_id} and {second.proposal_id} "
+                            "have contradictory factual status or values."
                         ),
-                        affected_proposal_ids=[first.claim_id, second.claim_id],
+                        affected_proposal_ids=[first.proposal_id, second.proposal_id],
                         evidence_refs=[*first.evidence_refs, *second.evidence_refs],
                     )
                 )
@@ -392,12 +401,14 @@ class TimelineAgent:
                 duplicates.append(
                     DuplicateCandidateV1(
                         candidate_id=stable_id(
-                            "duplicate-claim", first_claim.claim_id, second_claim.claim_id
+                            "duplicate-claim",
+                            first_claim.proposal_id,
+                            second_claim.proposal_id,
                         ),
                         project_id=input_context.project_id,
                         candidate_type=DuplicateCandidateType.CLAIM,
-                        proposal_ids=[first_claim.claim_id, second_claim.claim_id],
-                        reason="Exact subject, predicate, value, source, and reality layer match.",
+                        proposal_ids=[first_claim.proposal_id, second_claim.proposal_id],
+                        reason="Exact version-appropriate claim semantics match.",
                         evidence_refs=[*first_claim.evidence_refs, *second_claim.evidence_refs],
                         confidence=1.0,
                     )
@@ -416,10 +427,55 @@ class TimelineAgent:
 
     @staticmethod
     def _claim_key(claim: ClaimProposalV1) -> tuple[object, ...]:
+        if claim.schema_version == "1.0":
+            return (
+                "legacy",
+                claim.subject_id,
+                claim.predicate,
+                claim.object_value,
+                claim.asserted_by_entity_id,
+                claim.reality_layer,
+            )
         return (
-            claim.subject_id,
-            claim.predicate,
-            claim.object_value,
-            claim.asserted_by_entity_id,
+            "modern",
+            claim.claim_text.casefold().strip(),
+            claim.claim_type,
+            claim.temporal_scope,
+            claim.source_type,
+            claim.source_id,
+            claim.target_event_id,
+            claim.verification_status,
             claim.reality_layer,
         )
+
+    @staticmethod
+    def _claims_contradict(first: ClaimProposalV1, second: ClaimProposalV1) -> bool:
+        if first.schema_version == "1.0" and second.schema_version == "1.0":
+            return (
+                first.subject_id == second.subject_id
+                and first.predicate == second.predicate
+                and first.object_value != second.object_value
+                and first.reality_layer == second.reality_layer
+            )
+        if first.schema_version == "1.0" or second.schema_version == "1.0":
+            return False
+        if (
+            first.claim_type != ClaimType.FACTUAL_ASSERTION
+            or second.claim_type != ClaimType.FACTUAL_ASSERTION
+        ):
+            return False
+        same_proposition = (
+            first.claim_text.casefold().strip() == second.claim_text.casefold().strip()
+            and first.temporal_scope == second.temporal_scope
+            and first.target_event_id == second.target_event_id
+            and first.reality_layer == second.reality_layer
+        )
+        positive = {VerificationStatus.SUPPORTED, VerificationStatus.CONFIRMED}
+        statuses_conflict = (
+            first.verification_status in positive
+            and second.verification_status == VerificationStatus.CONTRADICTED
+        ) or (
+            second.verification_status in positive
+            and first.verification_status == VerificationStatus.CONTRADICTED
+        )
+        return same_proposition and statuses_conflict

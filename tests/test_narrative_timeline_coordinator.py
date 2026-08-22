@@ -10,7 +10,11 @@ from comic_agent.database.base import Base
 from comic_agent.repositories.agent_run_repository import AgentRunRepository
 from comic_agent.repositories.timeline_gate3_repository import TimelineGate3Repository
 from comic_agent.schemas.base import EvidenceRefV1, RealityLayer
-from comic_agent.schemas.narrative import EventProposalV1, TemporalRelationProposalV1
+from comic_agent.schemas.narrative import (
+    ClaimProposalV1,
+    EventProposalV1,
+    TemporalRelationProposalV1,
+)
 from comic_agent.schemas.review import (
     ApprovedProposalBundleV1,
     ApprovedProposalItemV1,
@@ -22,11 +26,13 @@ from comic_agent.schemas.review import (
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.timeline import (
     TimelineAnalysisInputV1,
+    TimelineAnalysisMode,
     TimelineAnalysisProposalV1,
     TimelineGate3RunStatus,
 )
 from comic_agent.services.id_service import checksum_text
 from comic_agent.services.narrative_timeline_coordinator import NarrativeTimelineCoordinator
+from comic_agent.services.narrative_timeline_input_adapter import NarrativeTimelineInputAdapter
 
 
 def _chunk() -> SourceChunkV1:
@@ -148,12 +154,94 @@ class _RecoveryRunner:
         )
 
 
+class _CapturingRunner:
+    def __init__(self) -> None:
+        self.input_context: TimelineAnalysisInputV1 | None = None
+
+    def run(
+        self,
+        input_context: TimelineAnalysisInputV1,
+        *,
+        source_chunks: list[SourceChunkV1],
+    ) -> TimelineAnalysisProposalV1:
+        self.input_context = input_context
+        return TimelineAnalysisProposalV1(
+            proposal_id="timeline-mode-proposal",
+            project_id=input_context.project_id,
+            evidence_refs=input_context.event_proposals[0].evidence_refs,
+            confidence=0.9,
+        )
+
+
 def _coordinator(session: Session, runner: _BlockingRunner) -> NarrativeTimelineCoordinator:
     return NarrativeTimelineCoordinator(
         repository=TimelineGate3Repository(session),
         timeline_runner=runner,
         agent_run_repository=AgentRunRepository(session),
     )
+
+
+@pytest.mark.parametrize("mode", [TimelineAnalysisMode.LLM, TimelineAnalysisMode.RULES_ONLY])
+def test_coordinator_explicitly_propagates_timeline_mode(tmp_path, mode) -> None:  # type: ignore[no-untyped-def]
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / f'timeline-{mode}.db'}")
+    Base.metadata.create_all(engine)
+    runner = _CapturingRunner()
+    coordinator = NarrativeTimelineCoordinator(
+        repository=TimelineGate3Repository(Session(engine)),
+        timeline_runner=runner,
+        agent_run_repository=AgentRunRepository(Session(engine)),
+        timeline_mode=mode,
+    )
+
+    result = coordinator.run_if_approved(route=_route(), source_chunks=[_chunk()])
+
+    assert result is not None
+    assert runner.input_context is not None
+    assert runner.input_context.mode == mode
+    assert result.timeline_input is not None
+    assert result.timeline_input.mode == mode
+
+
+def test_adapter_filters_nonfactual_modern_claims() -> None:
+    route = _route()
+    bundle = route.approved_proposal_bundle
+    assert bundle is not None
+    claim = ClaimProposalV1(
+        proposal_id="claim-belief-1",
+        claim_type="BELIEF",
+        claim_text="Lin believes the archive is closed.",
+        temporal_scope="PRESENT",
+        source_type="CHARACTER",
+        source_id="lin",
+        verification_status="UNVERIFIED",
+        evidence_refs=[EvidenceRefV1(chunk_id="chunk-1", quote_text="bell rings")],
+        confidence=0.8,
+        reality_layer=RealityLayer.PRIMARY,
+    )
+    claim_item = ApprovedProposalItemV1(
+        source=ReviewableProposalEnvelopeV1(
+            mode="claim_extraction",
+            proposal_schema="ClaimProposalV1",
+            proposal=claim,
+            agent_run_ids=["narrative-agent-claim-1"],
+            aggregated_evidence_refs=claim.evidence_refs,
+        ),
+        review_decision_id="gate2-decision-claim-1",
+    )
+    route = route.model_copy(
+        update={
+            "approved_proposal_bundle": bundle.model_copy(
+                update={"approved_proposals": [*bundle.approved_proposals, claim_item]}
+            )
+        }
+    )
+
+    timeline_input = NarrativeTimelineInputAdapter().build_from_approved_bundle(
+        route=route,
+        source_chunks=[_chunk()],
+    )
+
+    assert timeline_input.claim_proposals == []
 
 
 def test_two_sessions_claim_one_provider_and_resume_only_reviews(tmp_path) -> None:
