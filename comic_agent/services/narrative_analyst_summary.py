@@ -503,13 +503,13 @@ def add_event_batch_details(
 ) -> None:
     """Add sanitized EventProposalBatchV1 metadata to a summary."""
 
-    first_event = batch.events[0]
+    first_event = batch.events[0] if batch.events else None
     evidence_results = [_event_evidence_summary(event, selected_chunks) for event in batch.events]
     summary["batch_id"] = batch.batch_id
     summary["events_count"] = len(batch.events)
     summary["event_proposal_ids"] = [event.proposal_id for event in batch.events]
-    summary["primary_event_type"] = first_event.event_type
-    summary["primary_event_summary"] = _safe_summary(first_event.summary)
+    summary["primary_event_type"] = first_event.event_type if first_event else None
+    summary["primary_event_summary"] = _safe_summary(first_event.summary) if first_event else None
     summary["event_evidence_results"] = [
         {
             "proposal_id": result["proposal_id"],

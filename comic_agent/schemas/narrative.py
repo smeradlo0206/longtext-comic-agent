@@ -630,11 +630,20 @@ class EventProposalV1(StrictBaseModel):
 class EventProposalBatchV1(StrictBaseModel):
     """Candidate story events discovered from one bounded source context."""
 
-    schema_version: Literal["1.0"] = Field(default="1.0", description="Schema version.")
+    schema_version: Literal["1.0", "1.1"] = Field(
+        default="1.1",
+        description=(
+            "Schema version. v1.0 remains readable; v1.1 permits an auditable empty "
+            "batch when a bounded scope contains no independently supportable event."
+        ),
+    )
     batch_id: str = Field(description="Batch proposal id.")
     events: list[EventProposalV1] = Field(
-        min_length=1,
-        description="Candidate event proposals in source order where possible.",
+        default_factory=list,
+        description=(
+            "Candidate event proposals in source order where possible. May be empty only "
+            "when this bounded scope has no independently auditable event."
+        ),
     )
 
     @model_validator(mode="after")

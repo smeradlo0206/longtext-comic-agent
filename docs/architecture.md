@@ -100,3 +100,8 @@ repair. A second failure may split only the failed approved scope, first at Sour
 and then into non-overlapping slices of one approved SourceChunk. Budgets, lineage and
 idempotency are persisted. When recovery cannot proceed, the window and root run become
 `NEEDS_HUMAN_ACTION`; no aggregate, Gate 2, Timeline, StoryBible, or canonical write follows.
+For Event extraction, a single-chunk schema split first chooses a deterministic paragraph or
+sentence boundary while preserving the exact original offsets; it falls back to the midpoint only
+when no eligible natural boundary exists. Event actor-resolution rule failures are converted to
+safe repair labels and the single repair request may return an auditable empty Event batch rather
+than inventing a candidate.
