@@ -198,8 +198,9 @@ class NarrativeAnalysisWorker:
                     "effective_max_chars_per_chunk": self._retry_max_chars_per_chunk(completed),
                     "recovery_phase": (
                         NarrativeRecoveryPhase.SCHEMA_REPAIR
-                        if completed.failure_category
-                        in {"SCHEMA_VALIDATION_FAILED", "EVIDENCE_VALIDATION_FAILED"}
+                        if completed.failure_category == "SCHEMA_VALIDATION_FAILED"
+                        else NarrativeRecoveryPhase.EVIDENCE_REPAIR
+                        if completed.failure_category == "EVIDENCE_VALIDATION_FAILED"
                         else NarrativeRecoveryPhase.LENGTH_RECOVERY
                     ),
                     "length_recovery_attempts_used": (
@@ -209,14 +210,17 @@ class NarrativeAnalysisWorker:
                     ),
                     "schema_repair_attempts_used": (
                         completed.schema_repair_attempts_used + 1
-                        if completed.failure_category
-                        in {"SCHEMA_VALIDATION_FAILED", "EVIDENCE_VALIDATION_FAILED"}
+                        if completed.failure_category == "SCHEMA_VALIDATION_FAILED"
                         else completed.schema_repair_attempts_used
+                    ),
+                    "evidence_repair_attempts_used": (
+                        completed.evidence_repair_attempts_used + 1
+                        if completed.failure_category == "EVIDENCE_VALIDATION_FAILED"
+                        else completed.evidence_repair_attempts_used
                     ),
                     "schema_recovery_attempt_count": (
                         completed.schema_recovery_attempt_count + 1
-                        if completed.failure_category
-                        in {"SCHEMA_VALIDATION_FAILED", "EVIDENCE_VALIDATION_FAILED"}
+                        if completed.failure_category == "SCHEMA_VALIDATION_FAILED"
                         else completed.schema_recovery_attempt_count
                     ),
                     "schema_recovery_rule_codes": (
@@ -343,6 +347,10 @@ class NarrativeAnalysisWorker:
             # Format repair gets its own bounded reservation.  It must not be
             # consumed by a preceding length retry in the same child scope.
             call_cap += window.max_schema_repair_attempts
+        elif window.recovery_phase == NarrativeRecoveryPhase.EVIDENCE_REPAIR:
+            # Evidence repair is a distinct deterministic source-anchor pass.
+            # A preceding format repair must not consume this finite reservation.
+            call_cap += window.max_evidence_repair_attempts
         return (
             window.provider_request_count >= call_cap
             or window.elapsed_seconds_used >= window.time_budget_seconds
@@ -415,6 +423,12 @@ class NarrativeAnalysisWorker:
                     and window.provider_request_count
                     < window.max_call_attempts + window.max_schema_repair_attempts
                 )
+                if window.failure_category == "SCHEMA_VALIDATION_FAILED"
+                else (
+                    window.evidence_repair_attempts_used < window.max_evidence_repair_attempts
+                    and window.provider_request_count
+                    < window.max_call_attempts + window.max_evidence_repair_attempts
+                )
             )
         )
 
@@ -448,9 +462,18 @@ class NarrativeAnalysisWorker:
 
         if (
             window.status == NarrativeAnalysisWindowStatus.FAILED
-            and window.failure_category
-            in {"SCHEMA_VALIDATION_FAILED", "EVIDENCE_VALIDATION_FAILED"}
-            and window.schema_repair_attempts_used >= window.max_schema_repair_attempts
+            and (
+                (
+                    window.failure_category == "SCHEMA_VALIDATION_FAILED"
+                    and window.schema_repair_attempts_used
+                    >= window.max_schema_repair_attempts
+                )
+                or (
+                    window.failure_category == "EVIDENCE_VALIDATION_FAILED"
+                    and window.evidence_repair_attempts_used
+                    >= window.max_evidence_repair_attempts
+                )
+            )
             and (
                 window.failure_category == "EVIDENCE_VALIDATION_FAILED"
                 or window.split_depth >= window.max_split_depth
@@ -506,9 +529,18 @@ class NarrativeAnalysisWorker:
 
         if (
             window.status == NarrativeAnalysisWindowStatus.FAILED
-            and window.failure_category
-            in {"SCHEMA_VALIDATION_FAILED", "EVIDENCE_VALIDATION_FAILED"}
-            and window.schema_repair_attempts_used < window.max_schema_repair_attempts
+            and (
+                (
+                    window.failure_category == "SCHEMA_VALIDATION_FAILED"
+                    and window.schema_repair_attempts_used
+                    < window.max_schema_repair_attempts
+                )
+                or (
+                    window.failure_category == "EVIDENCE_VALIDATION_FAILED"
+                    and window.evidence_repair_attempts_used
+                    < window.max_evidence_repair_attempts
+                )
+            )
         ):
             # The independently budgeted repair is scheduled before applying a
             # call-cap check.  This fixes length -> split child -> schema paths.

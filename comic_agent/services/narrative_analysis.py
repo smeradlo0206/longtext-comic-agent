@@ -228,11 +228,12 @@ def create_narrative_analysis_run(
         window_ids=[window.analysis_window_id for window in windows],
         batches=batches,
         # Reserve a conservative full binary split tree. Each source-bounded
-        # scope can use its ordinary calls plus its one independent schema repair.
+        # scope can use its ordinary calls plus one independent schema repair
+        # and one independent deterministic evidence repair.
         max_provider_requests=(
             len(windows)
             * sum(2**depth for depth in range(max_split_depth + 1))
-            * (max_call_attempts + 1)
+            * (max_call_attempts + 2)
         ),
         created_at=now,
         updated_at=now,
