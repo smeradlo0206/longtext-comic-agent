@@ -126,3 +126,11 @@ TimelineAgent V2's provider-facing `TemporalRelationLLMResultV1` is an internal 
 the model may choose only `supporting_evidence_ids` supplied by the program. The program
 then restores the existing `EvidenceRefV1` values and validates them before persisting a
 candidate relation. No LLM output can create a new source quotation or offset.
+
+### StoryBible production run v1.1 migration note
+
+`StoryBibleProductionRunV1` v1.1 adds an optional strict `failure_stage` and permits a
+FAILED run to reference its immutable terminal FAILED `AgentRunV1`. Historical v1.0 JSON
+payloads remain readable; SUCCEEDED still requires both the complete normalized curator
+proposal and AgentRun id, while non-SUCCEEDED runs still forbid curator output. The existing
+JSON database column requires no Alembic change.

@@ -294,3 +294,26 @@ class TimelineGate3RunModel(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class StoryBibleProductionRunModel(Base):
+    """Idempotent non-canonical production StoryBible execution checkpoint."""
+
+    __tablename__ = "storybible_production_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "input_hash", name="uq_storybible_production_project_input"
+        ),
+    )
+
+    run_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    gate2_approved_bundle_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    approved_timeline_bundle_id: Mapped[str] = mapped_column(
+        String(128), index=True, nullable=False
+    )
+    input_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

@@ -286,6 +286,16 @@ class StoryBibleRepository:
         ).all()
         return [StoryEntityStateV1.model_validate(row.payload) for row in rows]
 
+    def list_relationships(self, project_id: str) -> list[StoryRelationshipV1]:
+        """Return canonical relationships owned by one project in stable id order."""
+
+        rows = self._session.scalars(
+            select(StoryRelationshipModel)
+            .where(StoryRelationshipModel.project_id == project_id)
+            .order_by(StoryRelationshipModel.relationship_id)
+        ).all()
+        return [StoryRelationshipV1.model_validate(row.payload) for row in rows]
+
     def find_profiles(self, project_id: str, query: str) -> list[StoryEntityProfileV1]:
         """Find exact case-insensitive canonical-name or alias matches in one project."""
 
