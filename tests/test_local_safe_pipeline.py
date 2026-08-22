@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,6 +10,7 @@ from pydantic import ValidationError
 
 from comic_agent.agents.timeline_agent import TimelineAgent
 from comic_agent.api.pipeline import (
+    _batch_summary,
     _gate2_safe_issue_codes,
     _parse_narrative_modes,
     _pipeline_retry_wait_seconds,
@@ -72,6 +74,19 @@ def test_pipeline_accepts_only_distinct_known_requested_narrative_modes() -> Non
 
 def test_pipeline_defaults_to_all_six_narrative_modes() -> None:
     assert _parse_narrative_modes(None) == _ALL_NARRATIVE_MODES
+
+
+def test_batch_summary_marks_a_split_parent_with_successful_children_as_succeeded() -> None:
+    """A completed split tree must not look like a planned batch in the Console."""
+
+    run = SimpleNamespace(batches=[SimpleNamespace(batch_id="batch-1")])
+    windows = [
+        SimpleNamespace(batch_id="batch-1", status="SPLIT"),
+        SimpleNamespace(batch_id="batch-1", status="SUCCEEDED"),
+        SimpleNamespace(batch_id="batch-1", status="SUCCEEDED"),
+    ]
+
+    assert _batch_summary(run, windows) == {"total": 1, "status_counts": {"SUCCEEDED": 1}}
 
 
 def test_overdue_pipeline_retry_checkpoint_is_immediately_eligible() -> None:

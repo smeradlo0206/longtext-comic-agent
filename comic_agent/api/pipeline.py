@@ -800,6 +800,12 @@ def _batch_summary(run: Any, windows: list[Any]) -> dict[str, object]:
             status = "FAILED"
         elif all(status == "SUCCEEDED" for status in statuses):
             status = "SUCCEEDED"
+        elif all(status in {"SUCCEEDED", "SPLIT"} for status in statuses) and any(
+            status == "SUCCEEDED" for status in statuses
+        ):
+            # A split parent remains as an audit checkpoint after every child
+            # has succeeded.  It must not make the completed batch look planned.
+            status = "SUCCEEDED"
         elif all(status in {"SPLIT", "EXHAUSTED"} for status in statuses):
             status = "EXHAUSTED"
         else:
