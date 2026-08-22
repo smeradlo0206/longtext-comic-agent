@@ -698,7 +698,7 @@ def _real_event_summary(
     selected_chunks: list[SourceChunkV1],
 ) -> dict[str, Any]:
     provider_result = agent_run.provider_result
-    first_event = proposal.events[0] if proposal else None
+    first_event = proposal.events[0] if proposal and proposal.events else None
     summary: dict[str, Any] = {
         "agent_run_id": agent_run.agent_run_id,
         "agent_run_status": agent_run.status,

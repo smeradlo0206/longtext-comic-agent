@@ -641,7 +641,13 @@ class NarrativeAnalysisWorker:
             return
         start = failed_window.slice_start or 0
         end = failed_window.slice_end if failed_window.slice_end is not None else len(chunk.text)
-        midpoint = start + (end - start) // 2
+        midpoint = self._schema_slice_midpoint(
+            text=chunk.text,
+            start=start,
+            end=end,
+            minimum_slice_chars=failed_window.minimum_slice_chars,
+            prefer_natural_boundary=failed_window.mode == "event_extraction",
+        )
         boundaries = [(start, midpoint), (midpoint, end)]
         child_windows = [
             NarrativeAnalysisWindowV1(
@@ -702,6 +708,31 @@ class NarrativeAnalysisWorker:
         )
         for child in child_windows:
             self._run_window(workflow, run, child, real_llm_requested)
+
+    @staticmethod
+    def _schema_slice_midpoint(
+        *,
+        text: str,
+        start: int,
+        end: int,
+        minimum_slice_chars: int,
+        prefer_natural_boundary: bool,
+    ) -> int:
+        """Choose an auditable Event slice boundary without changing source offsets."""
+
+        midpoint = start + (end - start) // 2
+        if not prefer_natural_boundary:
+            return midpoint
+        lower = start + minimum_slice_chars
+        upper = end - minimum_slice_chars
+        candidates = [
+            boundary
+            for boundary in range(lower, upper + 1)
+            if text[boundary - 1] in "\n\r。！？!?"
+        ]
+        if not candidates:
+            return midpoint
+        return min(candidates, key=lambda boundary: (abs(boundary - midpoint), boundary))
 
     def _retry_max_chars_per_chunk(self, window: NarrativeAnalysisWindowV1) -> int:
         """Reduce only a length-truncated window; schema retries retain the same context."""

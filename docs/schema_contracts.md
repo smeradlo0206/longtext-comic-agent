@@ -109,6 +109,10 @@ LENGTH_RECOVERY, SCHEMA_REPAIR, SPLIT_CHILD, and TERMINAL budget phases, plus se
 length/schema repair counters and source-free terminal reasons. It uses the existing JSON
 payload and requires no database migration.)
 or resolves references implicitly.
+`EventProposalBatchV1` v1.1 keeps v1.0 readable and permits `events=[]` only for a bounded
+scope with no independently auditable event. This prevents a Provider from inventing an Event
+solely to satisfy a non-empty array rule; an empty batch remains non-canonical and still passes
+through the normal aggregate and Gate 2 boundary.
 `ProviderCapabilityProfileV1` v1.1 adds an optional, source-free capability record for each
 concrete Narrative Proposal batch Schema; v1.0 capability payloads remain readable and fall
 back to their existing provider/model-wide selected mode.

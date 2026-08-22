@@ -843,6 +843,23 @@ class _FakeProvider:
         )
 
 
+class _EmptyEventProvider(_FakeProvider):
+    """Return a valid empty Event batch for a scope without an auditable event."""
+
+    def structured_generate(self, request, output_model):  # type: ignore[no-untyped-def]
+        mode_prompt = str(request["system_prompt"])
+        if "EventExtractionAgent" not in mode_prompt:
+            return super().structured_generate(request, output_model)
+        input_context = request["input_context"]
+        assert isinstance(input_context, dict)
+        source_chunk_ids = input_context["source_chunk_ids"]
+        assert isinstance(source_chunk_ids, list)
+        self.calls.append("event_extraction")
+        return output_model.model_validate(
+            {"batch_id": f"event-batch-{source_chunk_ids[0]}", "events": []}
+        )
+
+
 class _BlockingFakeProvider(_FakeProvider):
     """Keep the winning worker inside its Provider call for re-entry coverage."""
 
@@ -3060,6 +3077,36 @@ def test_schema_repair_exhaustion_is_explicit_and_never_enters_gate2(tmp_path: P
     assert completed.review_gate2_route is None
 
 
+def test_auditable_empty_event_scope_aggregates_without_an_invalid_placeholder(
+    tmp_path: Path,
+) -> None:
+    """A source slice may safely contribute no Event without inventing one."""
+
+    source_repository = _FakeSourceRepository([_chunk(0)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        real_llm_requested=True,
+    )
+
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=_EmptyEventProvider(),
+    ).run_pending(run.analysis_run_id)
+
+    result = analysis_repository.get_result(run.analysis_run_id)
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert result is not None
+    assert result.events == []
+
+
 def test_schema_repair_then_chunk_split_preserves_successful_siblings(tmp_path: Path) -> None:
     """The second schema failure narrows only its window and may still complete the root."""
 
@@ -3142,6 +3189,53 @@ def test_schema_repair_single_chunk_uses_non_overlapping_auditable_slices(tmp_pa
     ]
     assert all(item.status == NarrativeAnalysisWindowStatus.SUCCEEDED for item in slices)
     assert all(item.chunk_ids == ["chunk-0"] for item in slices)
+
+
+def test_schema_repair_single_chunk_prefers_sentence_boundary_for_slices(tmp_path: Path) -> None:
+    """Schema recovery preserves a complete sentence instead of cutting it in half."""
+
+    text = ("甲" * 520) + "。" + ("乙" * 400)
+    source_repository = _FakeSourceRepository([_chunk(0).model_copy(update={"text": text})])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        max_split_depth=1,
+        real_llm_requested=True,
+    )
+    schema_error = ProviderResponseError(
+        "LLM provider response failed schema validation",
+        {"schema_error_kind": "missing", "schema_error_field_paths": ["events.0.summary"]},
+    )
+    provider = _RetryingWindowProvider({1: schema_error, 2: schema_error})
+
+    NarrativeAnalysisWorker(
+        settings=Settings(
+            _env_file=None,
+            enable_real_llm=True,
+            narrative_window_min_slice_chars=100,
+        ),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+
+    slices = [
+        window
+        for window in analysis_repository.list_windows(run.analysis_run_id)
+        if window.slice_chunk_id is not None
+    ]
+    boundary = slices[0].slice_end
+    assert boundary == 521
+    assert text[boundary - 1] in "。！？!?\n"
+    assert [(item.slice_start, item.slice_end) for item in slices] == [
+        (0, boundary),
+        (boundary, len(text)),
+    ]
 
 
 def test_length_split_child_gets_independent_schema_repair_budget(tmp_path: Path) -> None:

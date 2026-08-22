@@ -9,6 +9,8 @@ from pydantic import BaseModel, ValidationError
 
 from comic_agent.config import Settings
 from comic_agent.providers.openai_compatible import OpenAICompatibleLLMProvider
+from comic_agent.schemas.base import EvidenceRefV1, RealityLayer
+from comic_agent.schemas.narrative import EventProposalV1
 from comic_agent.schemas.reliability import (
     ProviderCapabilityProfileV1,
     ProviderCapabilityState,
@@ -276,3 +278,43 @@ def test_unknown_schema_errors_expose_only_safe_contract_diagnostics() -> None:
     assert diagnostics["expected_output_schema"] == "_Output"
     assert diagnostics["schema_error_field_paths"] == ["answer"]
     assert "3" not in json.dumps(diagnostics)
+
+
+def test_event_actor_rule_exposes_a_safe_repair_code() -> None:
+    with pytest.raises(ValidationError) as captured:
+        EventProposalV1.model_validate(
+            {
+                "proposal_id": "event-1",
+                "event_type": "ACTION",
+                "summary": "A bounded action.",
+                "participant_ids": [],
+                "actor_resolution_status": "KNOWN",
+                "evidence_refs": [EvidenceRefV1(chunk_id="chunk-1")],
+                "confidence": 0.8,
+                "reality_layer": RealityLayer.PRIMARY,
+            }
+        )
+
+    diagnostics = OpenAICompatibleLLMProvider.schema_validation_diagnostics(
+        captured.value, "EventProposalBatchV1"
+    )
+
+    assert diagnostics["schema_error_rule_codes"] == [
+        "EVENT_KNOWN_ACTOR_REQUIRES_PARTICIPANT_IDS"
+    ]
+
+
+def test_event_schema_repair_instruction_allows_empty_or_complete_items() -> None:
+    provider = OpenAICompatibleLLMProvider(api_key="test-key")
+
+    instruction = provider._format_recovery_instruction(
+        {
+            "output_recovery": "schema_validation",
+            "schema_error_rule_codes": ["EVENT_KNOWN_ACTOR_REQUIRES_PARTICIPANT_IDS"],
+        },
+        "EventProposalBatchV1",
+    )
+
+    assert "events may be empty" in instruction
+    assert "EVENT_KNOWN_ACTOR_REQUIRES_PARTICIPANT_IDS" in instruction
+    assert "actor_resolution_status" in instruction

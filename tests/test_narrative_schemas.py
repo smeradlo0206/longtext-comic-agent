@@ -178,7 +178,7 @@ def test_event_proposal_batch_minimal_valid_example() -> None:
         ],
     )
 
-    assert batch.schema_version == "1.0"
+    assert batch.schema_version == "1.1"
     assert batch.batch_id == "event-batch-1"
     assert [event.proposal_id for event in batch.events] == [
         "proposal-event-1",
@@ -186,14 +186,23 @@ def test_event_proposal_batch_minimal_valid_example() -> None:
     ]
 
 
-def test_event_proposal_batch_requires_events() -> None:
-    with pytest.raises(ValidationError):
-        EventProposalBatchV1(batch_id="event-batch-1")
+def test_event_proposal_batch_allows_an_auditable_empty_scope() -> None:
+    """A bounded source slice may have no independently supportable event."""
+
+    batch = EventProposalBatchV1(batch_id="event-batch-1", events=[])
+
+    assert batch.schema_version == "1.1"
+    assert batch.events == []
 
 
-def test_event_proposal_batch_rejects_empty_events() -> None:
-    with pytest.raises(ValidationError):
-        EventProposalBatchV1(batch_id="event-batch-1", events=[])
+def test_event_proposal_batch_reads_legacy_v10_payload() -> None:
+    batch = EventProposalBatchV1(
+        schema_version="1.0",
+        batch_id="event-batch-legacy",
+        events=[EventProposalV1(**event_payload())],
+    )
+
+    assert batch.schema_version == "1.0"
 
 
 def test_event_proposal_batch_rejects_duplicate_event_ids() -> None:

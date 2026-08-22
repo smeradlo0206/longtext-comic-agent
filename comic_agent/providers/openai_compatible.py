@@ -607,6 +607,33 @@ class OpenAICompatibleLLMProvider:
             "relationship change signal requires non-empty temporal anchor_text": (
                 "RELATIONSHIP_SIGNAL_CHANGE_REQUIRES_TEMPORAL_ANCHOR"
             ),
+            "KNOWN actor resolution requires participant_ids": (
+                "EVENT_KNOWN_ACTOR_REQUIRES_PARTICIPANT_IDS"
+            ),
+            "KNOWN actor resolution cannot include unresolved_actor_ref_id": (
+                "EVENT_KNOWN_ACTOR_FORBIDS_UNRESOLVED_REFERENCE"
+            ),
+            "UNKNOWN actor resolution requires empty participant_ids": (
+                "EVENT_UNKNOWN_ACTOR_REQUIRES_EMPTY_PARTICIPANTS"
+            ),
+            "UNKNOWN actor resolution cannot include unresolved_actor_ref_id": (
+                "EVENT_UNKNOWN_ACTOR_FORBIDS_UNRESOLVED_REFERENCE"
+            ),
+            "UNRESOLVED actor resolution requires empty participant_ids": (
+                "EVENT_UNRESOLVED_ACTOR_REQUIRES_EMPTY_PARTICIPANTS"
+            ),
+            "UNRESOLVED actor resolution requires unresolved_actor_ref_id": (
+                "EVENT_UNRESOLVED_ACTOR_REQUIRES_REFERENCE"
+            ),
+            "NOT_APPLICABLE actor resolution requires empty participant_ids": (
+                "EVENT_NOT_APPLICABLE_REQUIRES_EMPTY_PARTICIPANTS"
+            ),
+            "NOT_APPLICABLE actor resolution cannot include unresolved_actor_ref_id": (
+                "EVENT_NOT_APPLICABLE_FORBIDS_UNRESOLVED_REFERENCE"
+            ),
+            "UNSPECIFIED actor resolution cannot include unresolved_actor_ref_id": (
+                "EVENT_UNSPECIFIED_FORBIDS_UNRESOLVED_REFERENCE"
+            ),
         }
         for message_prefix, code in known_rules.items():
             if message_prefix in message:
@@ -717,7 +744,7 @@ class OpenAICompatibleLLMProvider:
         }:
             return ""
         batch_contract = {
-            "EventProposalBatchV1": ("events", True),
+            "EventProposalBatchV1": ("events", False),
             "EntityProposalBatchV1": ("entities", True),
             "ClaimProposalBatchV1": ("claims", True),
             "KnowledgeStateProposalBatchV1": ("states", False),
@@ -744,6 +771,17 @@ class OpenAICompatibleLLMProvider:
             batch_instruction = (
                 f"Include a {batch_field} array and every required field for each item. "
                 f"{batch_field} may be empty only when no reliable, auditable output is supported."
+            )
+        event_shape = ""
+        if schema_name == "EventProposalBatchV1":
+            event_shape = (
+                " For every event, use one complete EventProposalV1. "
+                "Set actor_resolution_status consistently: KNOWN requires a non-empty "
+                "participant_ids array and null unresolved_actor_ref_id. UNKNOWN and "
+                "NOT_APPLICABLE require empty participant_ids and null unresolved_actor_ref_id. "
+                "UNRESOLVED requires empty participant_ids and a non-null unresolved_actor_ref_id. "
+                "UNSPECIFIED requires null unresolved_actor_ref_id. Do not emit a partial event; "
+                "return events=[] when the bounded scope supplies no independently auditable event."
             )
         knowledge_state_shape = ""
         if schema_name == "KnowledgeStateProposalBatchV1":
@@ -798,7 +836,7 @@ class OpenAICompatibleLLMProvider:
         return (
             "Format recovery instruction: Return exactly one "
             f"{schema_name} JSON object. Return no markdown, explanation, reasoning, or alternate "
-            f"schema. {batch_instruction}{rule_hint}{knowledge_state_shape}"
+            f"schema. {batch_instruction}{rule_hint}{event_shape}{knowledge_state_shape}"
             f"{state_change_shape}{relationship_signal_shape}\n\n"
         )
 

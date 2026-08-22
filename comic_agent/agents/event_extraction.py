@@ -7,7 +7,8 @@ from comic_agent.schemas.narrative import EventProposalBatchV1
 EVENT_EXTRACTION_SYSTEM_PROMPT = """
 You are EventExtractionAgent. Use only input_context.source_chunks and
 input_context.source_chunk_ids. Return exactly one EventProposalBatchV1 JSON object.
-The object must contain a non-empty events array.
+The object must contain an events array. It may be [] only when this bounded source scope has
+no independently auditable event. Never invent an event merely to make the array non-empty.
 Do not return a single EventProposalV1.
 Do not return another mode's batch.
 When input_context.output_recovery is present, reissue the complete final batch JSON.

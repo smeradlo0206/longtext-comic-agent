@@ -586,7 +586,8 @@ def test_openai_compatible_provider_adds_fixed_schema_recovery_instruction() -> 
     user_message = client.requests[0]["json"]["messages"][1]["content"]
     assert "Format recovery instruction:" in user_message
     assert "exactly one EventProposalBatchV1 JSON object" in user_message
-    assert "non-empty events array" in user_message
+    assert "events may be empty" in user_message
+    assert "actor_resolution_status" in user_message
 
 
 def test_state_change_schema_recovery_instruction_is_numeric_and_source_free() -> None:
@@ -996,7 +997,6 @@ def test_openai_compatible_provider_adds_sanitized_diagnostics_for_schema_failur
 @pytest.mark.parametrize(
     ("output_model", "batch_field"),
     [
-        (EventProposalBatchV1, "events"),
         (EntityProposalBatchV1, "entities"),
         (ClaimProposalBatchV1, "claims"),
     ],
@@ -1025,6 +1025,22 @@ def test_openai_compatible_provider_schema_failure_reports_batch_field_paths_onl
     assert diagnostics["expected_output_schema"] == output_model.__name__
     assert "batch_id" not in serialized
     assert "secret-test-key" not in serialized
+
+
+def test_openai_compatible_provider_accepts_empty_event_batch_for_a_bounded_scope() -> None:
+    provider = OpenAICompatibleLLMProvider(
+        api_key="secret-test-key",
+        http_client=FakeHttpClient(
+            response=_chat_response(
+                json.dumps({"batch_id": "empty-event-scope", "events": []}),
+                finish_reason="stop",
+            )
+        ),
+    )
+
+    proposal = provider.structured_generate({}, EventProposalBatchV1)
+
+    assert proposal.events == []
 
 
 @pytest.mark.parametrize("status_code", [401, 403, 429, 500])
