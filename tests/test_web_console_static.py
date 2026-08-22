@@ -237,6 +237,9 @@ def test_web_console_exposes_whole_document_analysis_as_the_normal_flow() -> Non
     assert "batch_summary" in html
     assert "GATE2_PENDING" in html
     assert "叙事已完成，正在补齐 Gate 2 审核" in html
+    assert "Timeline 执行失败" in html
+    assert "timeline_failure_category" in html
+    assert "timeline_safe_issue_codes" in html
     assert "ensureSafePipelineRealLlmEnabled" in html
     assert "describeSafePipelineStartError" in html
     assert "START_FAILED" in html

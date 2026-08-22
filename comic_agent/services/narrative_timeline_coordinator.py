@@ -3,8 +3,15 @@
 from datetime import UTC, datetime
 from typing import Protocol, cast
 
+from comic_agent.providers.openai_compatible import (
+    ProviderHttpError,
+    ProviderNetworkError,
+    ProviderResponseError,
+    ProviderTimeoutError,
+)
 from comic_agent.repositories.agent_run_repository import AgentRunRepository
 from comic_agent.repositories.timeline_gate3_repository import TimelineGate3Repository
+from comic_agent.schemas.reliability import ProviderFailureCategory
 from comic_agent.schemas.review import NarrativeAnalysisReviewRouteV1, ReviewGate2RoutingDecision
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.timeline import (
@@ -106,10 +113,13 @@ class NarrativeTimelineCoordinator:
             raise RuntimeError("Timeline Gate 3 reservation disappeared")
         try:
             proposal = self._timeline_runner.run(timeline_input, source_chunks=source_chunks)
-        except (RuntimeError, TimeoutError, ValueError):
+        except (RuntimeError, TimeoutError, ValueError) as exc:
+            failure_category, safe_issue_codes = _safe_failure_diagnostics(exc)
             failed = running.model_copy(
                 update={
                     "status": TimelineGate3RunStatus.FAILED,
+                    "failure_category": failure_category,
+                    "safe_issue_codes": safe_issue_codes,
                     "updated_at": datetime.now(UTC),
                 }
             )
@@ -183,10 +193,13 @@ class NarrativeTimelineCoordinator:
                 recovering.timeline_input,
                 source_chunks=source_chunks,
             )
-        except (RuntimeError, TimeoutError, ValueError):
+        except (RuntimeError, TimeoutError, ValueError) as exc:
+            failure_category, safe_issue_codes = _safe_failure_diagnostics(exc)
             failed = recovering.model_copy(
                 update={
                     "status": TimelineGate3RunStatus.FAILED,
+                    "failure_category": failure_category,
+                    "safe_issue_codes": safe_issue_codes,
                     "updated_at": datetime.now(UTC),
                 }
             )
@@ -301,3 +314,17 @@ class NarrativeTimelineCoordinator:
                 for evidence in proposal.evidence_refs
             )
         )
+
+
+def _safe_failure_diagnostics(exc: Exception) -> tuple[ProviderFailureCategory, list[str]]:
+    """Classify Timeline execution failures without persisting provider response text."""
+
+    if isinstance(exc, (ProviderTimeoutError, TimeoutError)):
+        return ProviderFailureCategory.TIMEOUT, ["TIMELINE_PROVIDER_TIMEOUT"]
+    if isinstance(exc, ProviderNetworkError):
+        return ProviderFailureCategory.CONNECTION, ["TIMELINE_PROVIDER_CONNECTION_ERROR"]
+    if isinstance(exc, ProviderHttpError):
+        return ProviderFailureCategory.SERVER, ["TIMELINE_PROVIDER_HTTP_ERROR"]
+    if isinstance(exc, (ProviderResponseError, ValueError)):
+        return ProviderFailureCategory.SCHEMA, ["TIMELINE_SCHEMA_VALIDATION_FAILED"]
+    return ProviderFailureCategory.UNKNOWN, ["TIMELINE_EXECUTION_FAILED"]

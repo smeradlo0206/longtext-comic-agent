@@ -13,6 +13,7 @@ from comic_agent.schemas.narrative import (
     StateChangeProposalV1,
     TemporalRelationProposalV1,
 )
+from comic_agent.schemas.reliability import ProviderFailureCategory
 
 
 class TimelineConflictCategory(StrEnum):
@@ -331,7 +332,7 @@ class TimelineRecoveryBudgetV1(StrictBaseModel):
 class TimelineGate3RunV1(StrictBaseModel):
     """Durable non-canonical work state for exactly one Gate 2 approved bundle."""
 
-    schema_version: Literal["1.0"] = Field(default="1.0")
+    schema_version: Literal["1.0", "1.1"] = Field(default="1.1")
     timeline_run_id: str = Field(min_length=1)
     project_id: str = Field(min_length=1)
     source_approved_proposal_bundle_id: str = Field(min_length=1)
@@ -346,6 +347,8 @@ class TimelineGate3RunV1(StrictBaseModel):
     gate3_route: NarrativeTimelineReviewRouteV1 | None = None
     approved_timeline_bundle: ApprovedTimelineBundleV1 | None = None
     provider_request_count: int = Field(default=0, ge=0)
+    failure_category: ProviderFailureCategory | None = None
+    safe_issue_codes: list[str] = Field(default_factory=list)
     recovery_budget: TimelineRecoveryBudgetV1 = Field(default_factory=TimelineRecoveryBudgetV1)
     initial_timeline_proposal: TimelineAnalysisProposalV1 | None = None
     initial_gate3_result: ReviewGate3ResultV1 | None = None

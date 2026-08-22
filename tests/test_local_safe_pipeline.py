@@ -89,6 +89,21 @@ def test_batch_summary_marks_a_split_parent_with_successful_children_as_succeede
     assert _batch_summary(run, windows) == {"total": 1, "status_counts": {"SUCCEEDED": 1}}
 
 
+def test_pipeline_selects_latest_fresh_approved_route_despite_later_failed_recovery() -> None:
+    """A later rejected recovery cannot hide an earlier approved Timeline input."""
+
+    approved = SimpleNamespace(decision="APPROVED", approved_proposal_bundle=object())
+    attempts = [
+        SimpleNamespace(fresh_route=approved),
+        SimpleNamespace(fresh_route=SimpleNamespace(decision="REJECTED")),
+        SimpleNamespace(fresh_route=None),
+    ]
+
+    from comic_agent.api import pipeline
+
+    assert pipeline._latest_approved_recovery_route(attempts) is approved
+
+
 def test_overdue_pipeline_retry_checkpoint_is_immediately_eligible() -> None:
     from datetime import UTC, datetime, timedelta
 

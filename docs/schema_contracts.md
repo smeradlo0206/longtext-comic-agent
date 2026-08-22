@@ -154,3 +154,13 @@ mentions stay nonblocking and unresolved; no fuzzy matching, LLM linking, or can
 write occurs. The Timeline adapter materializes only Gate 2 `RESOLVED` entity links in
 its separate input copy. This is an additive JSON-payload change and needs no database
 migration.
+
+### 2026-08-22 Timeline execution diagnostics compatibility and migration note
+
+`TimelineGate3RunV1` v1.1 adds optional, source-free `failure_category` and
+`safe_issue_codes` fields for a Timeline Provider execution failure. v1.0 payloads remain
+readable, and no Alembic migration is needed because the run is stored in its existing JSON
+payload. For downstream status only, the Pipeline selects the newest fresh Gate 2 APPROVED
+recovery route with a bundle; a later separate rejected or failed recovery attempt does not
+hide that approved bundle's Timeline run. The original root Gate 2 route remains unchanged
+for audit, and no route can bypass Gate 2, Gate 3, or write canonical data.

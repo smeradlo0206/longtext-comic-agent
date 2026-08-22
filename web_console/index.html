@@ -1117,6 +1117,8 @@
         gate2_handoff: data.gate2_handoff ?? null,
         narrative_recovery: data.narrative_recovery ?? "NOT_STARTED",
         timeline: data.timeline ?? "NOT_READY",
+        timeline_failure_category: data.timeline_failure_category ?? null,
+        timeline_safe_issue_codes: data.timeline_safe_issue_codes ?? [],
         timeline_recovery: data.timeline_recovery ?? "NOT_STARTED",
         gate3: data.gate3 ?? "NOT_READY",
         approved_timeline_bundle: data.approved_timeline_bundle_id ?? null,
@@ -1149,6 +1151,11 @@
         setSafePipelineRunState("后台启动失败", `后台任务已停止；安全错误码：${data.pipeline_safe_issue_codes.join(", ")}`, "bad");
       } else if (data.pipeline_phase === "COMPLETED" && data.gate3 === "APPROVED") {
         setSafePipelineRunState("已成功", "Gate 3 已批准；已生成可供下游使用的时间线包。", "ok");
+      } else if (data.timeline === "FAILED") {
+        const codes = Array.isArray(data.timeline_safe_issue_codes) && data.timeline_safe_issue_codes.length
+          ? data.timeline_safe_issue_codes.join(", ")
+          : (data.timeline_failure_category ?? "TIMELINE_EXECUTION_FAILED");
+        setSafePipelineRunState("Timeline 执行失败", `Timeline 已启动但未完成；安全错误码：${codes}。不会进入 Gate 3 或下游。`, "bad");
       } else if (["REJECTED", "NEEDS_HUMAN_REVIEW", "FAILED"].includes(data.gate2)) {
         setSafePipelineRunState("已停止", `Gate 2 为 ${data.gate2}；Timeline 没有运行。`, data.gate2 === "NEEDS_HUMAN_REVIEW" ? "warn" : "bad");
       } else if (data.gate2 === "GATE2_PENDING") {

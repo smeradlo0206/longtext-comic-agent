@@ -198,8 +198,7 @@ def get_pipeline_status(
     route = run.review_gate2_route
     aggregate = analysis_repository.get_result(analysis_run_id)
     attempts = recovery_repository.list_attempts(analysis_run_id)
-    fresh_routes = [attempt.fresh_route for attempt in attempts if attempt.fresh_route is not None]
-    latest_gate2_route = fresh_routes[-1] if fresh_routes else route
+    latest_gate2_route = _latest_approved_recovery_route(attempts) or route
     timeline_route = latest_gate2_route
     bundle = timeline_route.approved_proposal_bundle if timeline_route is not None else None
     timeline = (
@@ -214,6 +213,7 @@ def get_pipeline_status(
         | _gate2_safe_issue_codes(run.review_gate2_result)
         | {str(code) for attempt in attempts for code in attempt.original_gate2_issue_codes}
         | set(str(code) for code in (gate3_route.safe_issue_codes if gate3_route else []))
+        | set(str(code) for code in (timeline.safe_issue_codes if timeline else []))
         | set(run.gate2_handoff.safe_issue_codes if run.gate2_handoff is not None else [])
         | {
             window.failure_category
@@ -250,6 +250,14 @@ def get_pipeline_status(
         ),
         "narrative_recovery": _recovery_status(attempts),
         "timeline": str(timeline.status) if timeline is not None else "NOT_READY",
+        "timeline_failure_category": (
+            str(timeline.failure_category)
+            if timeline is not None and timeline.failure_category is not None
+            else None
+        ),
+        "timeline_safe_issue_codes": (
+            list(timeline.safe_issue_codes) if timeline is not None else []
+        ),
         "timeline_recovery": _timeline_recovery_status(timeline),
         "gate3": str(gate3_route.route) if gate3_route is not None else "NOT_READY",
         "approved_timeline_bundle_id": (
@@ -265,6 +273,20 @@ def get_pipeline_status(
             timeline.recovery_budget.model_dump(mode="json") if timeline is not None else None
         ),
     }
+
+
+def _latest_approved_recovery_route(attempts: list[Any]) -> Any | None:
+    """Return the newest fresh APPROVED route eligible for downstream execution."""
+
+    for attempt in reversed(attempts):
+        route = getattr(attempt, "fresh_route", None)
+        if (
+            route is not None
+            and str(getattr(route, "decision", "")) == "APPROVED"
+            and getattr(route, "approved_proposal_bundle", None) is not None
+        ):
+            return route
+    return None
 
 
 def _gate2_safe_issue_codes(result: Any) -> set[str]:
