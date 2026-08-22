@@ -617,6 +617,51 @@ def test_openai_compatible_provider_adds_fixed_schema_recovery_instruction() -> 
     assert "non-empty events array" in user_message
 
 
+def test_event_actor_validation_exposes_safe_rule_code() -> None:
+    invalid = _event_batch_json()
+    invalid["events"][0].update(
+        {
+            "actor_resolution_status": "KNOWN",
+            "participant_ids": [],
+            "unresolved_actor_ref_id": None,
+        }
+    )
+    provider = OpenAICompatibleLLMProvider(
+        api_key="secret-test-key",
+        http_client=FakeHttpClient(response=_chat_response(json.dumps(invalid))),
+    )
+
+    with pytest.raises(ProviderResponseError) as exc_info:
+        provider.structured_generate({}, EventProposalBatchV1)
+
+    diagnostics = exc_info.value.diagnostics
+    assert diagnostics["schema_error_rule_codes"] == ["ACTOR_RESOLUTION_INVARIANT"]
+    assert "participant_ids" not in str(diagnostics.get("schema_error_rule_codes"))
+
+
+def test_event_actor_schema_recovery_includes_exact_safe_truth_table() -> None:
+    client = FakeHttpClient(
+        response=_chat_response(json.dumps(_event_batch_json(), ensure_ascii=False))
+    )
+    provider = OpenAICompatibleLLMProvider(api_key="secret-test-key", http_client=client)
+
+    provider.structured_generate(
+        {
+            "input_context": {
+                "output_recovery": "schema_validation",
+                "schema_error_rule_codes": ["ACTOR_RESOLUTION_INVARIANT"],
+            }
+        },
+        EventProposalBatchV1,
+    )
+
+    user_message = client.requests[0]["json"]["messages"][1]["content"]
+    assert "ACTOR_RESOLUTION_INVARIANT" in user_message
+    assert "KNOWN requires non-empty participant_ids" in user_message
+    assert "UNRESOLVED requires empty participant_ids" in user_message
+    assert "non-null unresolved_actor_ref_id" in user_message
+
+
 def test_state_change_schema_recovery_instruction_is_numeric_and_source_free() -> None:
     client = FakeHttpClient(
         response=_chat_response(json.dumps(_state_change_batch_json(), ensure_ascii=False))

@@ -3,6 +3,7 @@ from typing import TypeVar
 import pytest
 from pydantic import BaseModel
 
+from comic_agent.agents.event_extraction import EVENT_EXTRACTION_SYSTEM_PROMPT
 from comic_agent.agents.narrative_analyst import NarrativeAnalyst
 from comic_agent.schemas.narrative import (
     ClaimProposalBatchV1,
@@ -258,3 +259,22 @@ def test_unknown_mode_is_rejected_and_does_not_call_provider() -> None:
     assert "secret-test-key" not in message
     assert "raw provider" not in message
     assert "message.content" not in message
+
+
+def test_event_extraction_prompt_matches_actor_resolution_validator_contract() -> None:
+    prompt = EVENT_EXTRACTION_SYSTEM_PROMPT
+
+    for token in (
+        "KNOWN",
+        "UNKNOWN",
+        "UNRESOLVED",
+        "NOT_APPLICABLE",
+        "UNSPECIFIED",
+        "participant_ids",
+        "unresolved_actor_ref_id",
+    ):
+        assert token in prompt
+    assert "KNOWN: participant_ids MUST contain at least one" in prompt
+    assert "UNKNOWN: participant_ids MUST be empty" in prompt
+    assert "UNRESOLVED: participant_ids MUST be empty" in prompt
+    assert "unresolved_actor_ref_id MUST be non-null" in prompt

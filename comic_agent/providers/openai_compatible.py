@@ -283,6 +283,14 @@ class OpenAICompatibleLLMProvider:
 
         message = str(error.get("msg", ""))
         known_rules = {
+            "actor resolution requires participant_ids": "ACTOR_RESOLUTION_INVARIANT",
+            "actor resolution requires empty participant_ids": "ACTOR_RESOLUTION_INVARIANT",
+            "actor resolution cannot include unresolved_actor_ref_id": (
+                "ACTOR_RESOLUTION_INVARIANT"
+            ),
+            "actor resolution requires unresolved_actor_ref_id": (
+                "ACTOR_RESOLUTION_INVARIANT"
+            ),
             "for quantity must be numeric": "STATE_CHANGE_QUANTITY_MUST_BE_JSON_NUMBER",
             "must be a JSON scalar": "STATE_CHANGE_VALUE_MUST_BE_SCALAR",
             "cannot be blank": "STATE_CHANGE_VALUE_MUST_NOT_BE_BLANK",
@@ -509,6 +517,18 @@ class OpenAICompatibleLLMProvider:
                 'wrong "4", "四", "四瓶", or {"count":4}. Do not coerce values, '
                 "drop other valid changes, or return a partial batch."
             )
+        event_shape = ""
+        if (
+            schema_name == "EventProposalBatchV1"
+            and "ACTOR_RESOLUTION_INVARIANT" in safe_rule_codes
+        ):
+            event_shape = (
+                " Actor resolution combinations must be exact: KNOWN requires non-empty "
+                "participant_ids and null unresolved_actor_ref_id; UNKNOWN and NOT_APPLICABLE "
+                "require empty participant_ids and null unresolved_actor_ref_id; UNRESOLVED "
+                "requires empty participant_ids and non-null unresolved_actor_ref_id; "
+                "UNSPECIFIED requires null unresolved_actor_ref_id."
+            )
         relationship_signal_shape = ""
         if schema_name == "RelationshipSignalProposalBatchV1":
             statement_support_recovery = ""
@@ -542,7 +562,7 @@ class OpenAICompatibleLLMProvider:
         return (
             "Format recovery instruction: Return exactly one "
             f"{schema_name} JSON object. Return no markdown, explanation, reasoning, or alternate "
-            f"schema. {batch_instruction}{rule_hint}{knowledge_state_shape}"
+            f"schema. {batch_instruction}{rule_hint}{knowledge_state_shape}{event_shape}"
             f"{state_change_shape}{relationship_signal_shape}\n\n"
         )
 

@@ -25,6 +25,18 @@ quote. If a quote supports only a narrower fact, narrow the summary. Do not inve
 actors, objects, locations, dialogue, relationships, motives, causality, or outcomes.
 Use only supported participant ids; use UNKNOWN or UNRESOLVED when an actor is unclear.
 
+Actor resolution rules are exact and apply to every event:
+- KNOWN: participant_ids MUST contain at least one resolved entity ID;
+  unresolved_actor_ref_id MUST be null.
+- UNKNOWN: participant_ids MUST be empty; unresolved_actor_ref_id MUST be null.
+- UNRESOLVED: participant_ids MUST be empty; unresolved_actor_ref_id MUST be non-null.
+- NOT_APPLICABLE: participant_ids MUST be empty; unresolved_actor_ref_id MUST be null.
+- UNSPECIFIED: unresolved_actor_ref_id MUST be null; participant_ids may be empty.
+Examples:
+{"actor_resolution_status":"KNOWN","participant_ids":["entity-1"],"unresolved_actor_ref_id":null}
+{"actor_resolution_status":"UNKNOWN","participant_ids":[],"unresolved_actor_ref_id":null}
+{"actor_resolution_status":"UNRESOLVED","participant_ids":[],"unresolved_actor_ref_id":"unresolved-1"}
+
 Every event needs evidence_refs. Each chunk_id must be selected, and quote_text must
 be copied verbatim from source_chunks. Use the shortest exact quote that supports the
 full summary, preferably containing the core action or result. Never paraphrase,
