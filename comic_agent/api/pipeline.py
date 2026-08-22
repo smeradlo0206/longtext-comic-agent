@@ -841,13 +841,21 @@ def _structured_execution_summary(windows: list[Any]) -> dict[str, object]:
         "schema_repair_attempts_used": sum(
             window.schema_repair_attempts_used for window in windows
         ),
+        "evidence_repair_attempts_used": sum(
+            window.evidence_repair_attempts_used for window in windows
+        ),
         "max_split_depth": max((window.split_depth for window in windows), default=0),
         "completion_tokens": sum(completion_values) if completion_values else None,
         "completion_tokens_status": (
             "REPORTED" if completion_values else "PROVIDER_NOT_REPORTED"
         ),
         "provider_calls_consumed": sum(window.provider_request_count for window in windows),
-        "provider_calls_budget": sum(window.max_call_attempts for window in windows),
+        "provider_calls_budget": sum(
+            window.max_call_attempts
+            + window.max_schema_repair_attempts
+            + window.max_evidence_repair_attempts
+            for window in windows
+        ),
         "elapsed_seconds_consumed": sum(window.elapsed_seconds_used for window in windows),
         "elapsed_seconds_budget": sum(window.time_budget_seconds for window in windows),
         "needs_human_action": any(

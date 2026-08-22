@@ -643,7 +643,7 @@ def test_window_diagnostics_v1_2_keeps_prior_payloads_readable() -> None:
     assert v1_1.attempt_count == 0
     assert v1_2.schema_version == "1.2"
     assert v1_3.schema_version == "1.3"
-    assert current.schema_version == "1.9"
+    assert current.schema_version == "1.10"
     assert current.owned_chunk_ids == ["chunk-0"]
     assert current.provider_error_diagnostics == {"timeout_kind": "read"}
 
@@ -1056,6 +1056,7 @@ class _StateChangeWindowProvider:
         invalid_evidence: bool = False,
         invalid_evidence_quote: bool = False,
         repair_evidence_on_retry: bool = False,
+        repair_evidence_on_call: int | None = None,
         mismatched_evidence_offsets: bool = False,
     ) -> None:
         self.calls: list[str] = []
@@ -1064,6 +1065,7 @@ class _StateChangeWindowProvider:
         self.invalid_evidence = invalid_evidence
         self.invalid_evidence_quote = invalid_evidence_quote
         self.repair_evidence_on_retry = repair_evidence_on_retry
+        self.repair_evidence_on_call = repair_evidence_on_call
         self.mismatched_evidence_offsets = mismatched_evidence_offsets
         self.output_recovery_markers: list[str | None] = []
 
@@ -1080,7 +1082,13 @@ class _StateChangeWindowProvider:
         evidence_quote = (
             "not verbatim source evidence"
             if self.invalid_evidence_quote
-            and not (self.repair_evidence_on_retry and len(self.calls) > 1)
+            and not (
+                (self.repair_evidence_on_retry and len(self.calls) > 1)
+                or (
+                    self.repair_evidence_on_call is not None
+                    and len(self.calls) >= self.repair_evidence_on_call
+                )
+            )
             else quote
         )
         changes = []
@@ -2523,6 +2531,100 @@ def test_worker_repairs_non_verbatim_state_change_evidence_once(
     assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
     assert provider.calls == ["state_change_extraction"] * 2
     assert provider.output_recovery_markers == [None, "evidence_validation"]
+
+
+def test_worker_gives_evidence_repair_its_own_budget_after_schema_repair(
+    tmp_path: Path,
+) -> None:
+    """A format retry must not consume the later deterministic evidence retry."""
+
+    source_repository = _FakeSourceRepository([_chunk(0)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["state_change_extraction"],
+        real_llm_requested=True,
+    )
+    schema_error = ProviderResponseError(
+        "LLM provider response failed schema validation",
+        {"schema_error_rule_codes": ["STATE_CHANGE_SCHEMA_INVALID"]},
+    )
+    provider = _StateChangeWindowProvider(
+        failures={1: schema_error},
+        invalid_evidence_quote=True,
+        repair_evidence_on_call=3,
+    )
+
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+
+    window = analysis_repository.list_windows(run.analysis_run_id)[0]
+    result = analysis_repository.get_result(run.analysis_run_id)
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    assert provider.calls == ["state_change_extraction"] * 3
+    assert provider.output_recovery_markers == [
+        "state_change_schema_recovery",
+        "evidence_validation",
+    ]
+    assert window.schema_repair_attempts_used == 1
+    assert window.evidence_repair_attempts_used == 1
+    assert str(window.recovery_phase) == "EVIDENCE_REPAIR"
+    assert result is not None
+    assert result.state_changes[0].proposal.evidence_refs[0].quote_text in _chunk(0).text
+
+
+def test_worker_exhausts_evidence_only_after_its_own_repair_attempt(
+    tmp_path: Path,
+) -> None:
+    """An evidence terminal outcome must follow, not replace, its one repair call."""
+
+    source_repository = _FakeSourceRepository([_chunk(0)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["state_change_extraction"],
+        real_llm_requested=True,
+    )
+    schema_error = ProviderResponseError(
+        "LLM provider response failed schema validation",
+        {"schema_error_rule_codes": ["STATE_CHANGE_SCHEMA_INVALID"]},
+    )
+    provider = _StateChangeWindowProvider(
+        failures={1: schema_error},
+        invalid_evidence=True,
+        invalid_evidence_quote=True,
+    )
+
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+    ).run_pending(run.analysis_run_id)
+
+    window = analysis_repository.list_windows(run.analysis_run_id)[0]
+    assert completed.status == NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
+    assert provider.calls == ["state_change_extraction"] * 3
+    assert provider.output_recovery_markers == [
+        "state_change_schema_recovery",
+        "evidence_validation",
+    ]
+    assert window.evidence_repair_attempts_used == 1
+    assert window.failure_category == "EVIDENCE_REPAIR_EXHAUSTED"
+    assert analysis_repository.get_result(run.analysis_run_id) is None
+    assert completed.review_gate2_result is None
 
 
 def test_worker_falls_back_to_a_verbatim_source_anchor_after_one_non_verbatim_repair(
