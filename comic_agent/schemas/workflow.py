@@ -80,6 +80,7 @@ class NarrativeRecoveryPhase(StrEnum):
     INITIAL = "INITIAL"
     LENGTH_RECOVERY = "LENGTH_RECOVERY"
     SCHEMA_REPAIR = "SCHEMA_REPAIR"
+    EVIDENCE_REPAIR = "EVIDENCE_REPAIR"
     SPLIT_CHILD = "SPLIT_CHILD"
     TERMINAL = "TERMINAL"
 
@@ -138,14 +139,15 @@ class NarrativeAnalysisWindowPlanV1(StrictBaseModel):
     """Deterministic source chunk window planned before execution."""
 
     schema_version: Literal[
-        "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9"
+        "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10"
     ] = Field(
-        default="1.9",
+        default="1.10",
         description=(
             "Schema version. Historical 1.0 through 1.3 records remain readable; "
             "1.4 adds deterministic output ownership; 1.5 adds execution checkpoints; "
             "1.6 adds batch budgets; 1.7 adds bounded split-recovery accounting; "
-            "1.8 adds schema-recovery slice provenance; 1.9 adds phased recovery budgets."
+            "1.8 adds schema-recovery slice provenance; 1.9 adds phased recovery budgets; "
+            "1.10 separates deterministic evidence repair from schema repair."
         ),
     )
     window_index: int = Field(ge=0, description="Zero-based window sequence.")
@@ -160,15 +162,16 @@ class NarrativeAnalysisWindowV1(NarrativeAnalysisWindowPlanV1):
     """Auditable state for one mode over one planned source window."""
 
     schema_version: Literal[
-        "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9"
+        "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10"
     ] = Field(
-        default="1.9",
+        default="1.10",
         description=(
             "Schema version. Historical 1.0 through 1.3 window records remain readable; "
             "1.5 adds source-free retry scheduling and Provider checkpoints; 1.6 adds "
             "planned batch and execution-budget audit fields; 1.7 adds bounded "
             "split-recovery accounting; 1.8 adds schema-recovery execution metadata; "
-            "1.9 separates length and schema-repair budgets."
+            "1.9 separates length and schema-repair budgets; 1.10 separates "
+            "deterministic evidence repair from schema repair."
         ),
     )
 
@@ -283,6 +286,8 @@ class NarrativeAnalysisWindowV1(NarrativeAnalysisWindowPlanV1):
     max_length_recovery_attempts: int = Field(default=1, ge=0, le=1)
     schema_repair_attempts_used: int = Field(default=0, ge=0)
     max_schema_repair_attempts: int = Field(default=1, ge=0, le=1)
+    evidence_repair_attempts_used: int = Field(default=0, ge=0)
+    max_evidence_repair_attempts: int = Field(default=1, ge=0, le=1)
     # Retained as a compatibility projection for v1.8 persistence payloads.
     schema_recovery_attempt_count: int = Field(default=0, ge=0, le=1)
     schema_recovery_rule_codes: list[str] = Field(default_factory=list)

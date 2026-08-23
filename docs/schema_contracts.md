@@ -104,9 +104,10 @@ not implement SceneContext, beat generation, panels, images, materials, Gate 3/4
 `NarrativeAnalysisRunV1`, `NarrativeAnalysisWindowV1`, and the six typed Proposal families
 are the source-of-truth contracts for bounded whole-document analysis. Gate 1-approved
 chunk ids and AgentRun provenance are explicit review context; no service expands that scope
-(`NarrativeAnalysisWindowV1` v1.9 adds backward-compatible persisted INITIAL,
-LENGTH_RECOVERY, SCHEMA_REPAIR, SPLIT_CHILD, and TERMINAL budget phases, plus separate
-length/schema repair counters and source-free terminal reasons. It uses the existing JSON
+(`NarrativeAnalysisWindowV1` v1.10 adds backward-compatible persisted INITIAL,
+LENGTH_RECOVERY, SCHEMA_REPAIR, EVIDENCE_REPAIR, SPLIT_CHILD, and TERMINAL budget phases,
+plus independent length, schema, and deterministic evidence-repair counters and source-free
+terminal reasons. It uses the existing JSON
 payload and requires no database migration.)
 or resolves references implicitly.
 `EventProposalBatchV1` v1.1 keeps v1.0 readable and permits `events=[]` only for a bounded
