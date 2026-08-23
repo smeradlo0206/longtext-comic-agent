@@ -1,5 +1,6 @@
 """Versioned, evidence-backed contracts for StoryBible curation."""
 
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal
 
@@ -12,6 +13,7 @@ from comic_agent.schemas.narrative import (
     StateChangeProposalV1,
     TemporalRelationProposalV1,
 )
+from comic_agent.schemas.source import SourceChunkV1
 
 
 class StoryEntityKind(StrEnum):
@@ -272,3 +274,521 @@ class StoryBibleCuratorProposalV1(StrictBaseModel):
     @classmethod
     def identifiers_are_not_blank(cls, value: str) -> str:
         return _reject_blank(value)
+
+
+class StoryBibleProductionRunStatus(StrEnum):
+    """Execution-only lifecycle for one production curator checkpoint."""
+
+    RESERVED = "RESERVED"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+class StoryBibleProductionFailureStage(StrEnum):
+    """Sanitized execution boundary at which production curation stopped."""
+
+    INPUT_ADAPTATION = "INPUT_ADAPTATION"
+    CONTEXT_BUDGET = "CONTEXT_BUDGET"
+    PROVIDER = "PROVIDER"
+    SCHEMA = "SCHEMA"
+    NORMALIZATION = "NORMALIZATION"
+    AGENT_RUN_PERSISTENCE = "AGENT_RUN_PERSISTENCE"
+    RUN_CHECKPOINT_PERSISTENCE = "RUN_CHECKPOINT_PERSISTENCE"
+
+
+class StoryBibleProductionInputV1(StrictBaseModel):
+    """Server-built references to approved inputs for production curation."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    project_id: StoryBibleId
+    gate2_approved_bundle_id: StoryBibleId
+    approved_timeline_bundle_id: StoryBibleId
+    canonical_storybible_snapshot_hash: StoryBibleId
+
+    @field_validator(
+        "project_id",
+        "gate2_approved_bundle_id",
+        "approved_timeline_bundle_id",
+        "canonical_storybible_snapshot_hash",
+    )
+    @classmethod
+    def production_references_are_not_blank(cls, value: str) -> str:
+        return _reject_blank(value)
+
+
+class StoryBibleCanonicalSnapshotV1(StrictBaseModel):
+    """Deterministically ordered canonical StoryBible state used by production."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    project_id: StoryBibleId
+    profiles: list[StoryEntityProfileV1] = Field(default_factory=list)
+    states: list[StoryEntityStateV1] = Field(default_factory=list)
+    relationships: list[StoryRelationshipV1] = Field(default_factory=list)
+    world_rules: list[WorldRuleV1] = Field(default_factory=list)
+
+    @field_validator("project_id")
+    @classmethod
+    def snapshot_project_is_not_blank(cls, value: str) -> str:
+        return _reject_blank(value)
+
+    @model_validator(mode="after")
+    def validate_snapshot_scope_and_order(self) -> "StoryBibleCanonicalSnapshotV1":
+        collections = (
+            (self.profiles, "profile_id"),
+            (self.states, "state_id"),
+            (self.relationships, "relationship_id"),
+            (self.world_rules, "rule_id"),
+        )
+        for resources, id_field in collections:
+            if any(resource.project_id != self.project_id for resource in resources):
+                raise ValueError("canonical snapshot resources must belong to its project")
+            ids = [getattr(resource, id_field) for resource in resources]
+            if ids != sorted(ids) or len(ids) != len(set(ids)):
+                raise ValueError("canonical snapshot resources must be unique and id-sorted")
+        return self
+
+
+class StoryBibleTrustedEventOrderV1(StrictBaseModel):
+    """Approved strict predecessors and an order only when they form a total order."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    event_id: StoryBibleId
+    strict_predecessor_event_ids: list[StoryBibleId] = Field(default_factory=list)
+    resolved_order: int | None = Field(default=None, ge=0)
+
+    @field_validator("event_id")
+    @classmethod
+    def event_id_is_not_blank(cls, value: str) -> str:
+        return _reject_blank(value)
+
+    @model_validator(mode="after")
+    def validate_predecessors(self) -> "StoryBibleTrustedEventOrderV1":
+        if self.event_id in self.strict_predecessor_event_ids:
+            raise ValueError("event cannot precede itself")
+        if self.strict_predecessor_event_ids != sorted(self.strict_predecessor_event_ids):
+            raise ValueError("strict predecessor ids must be sorted")
+        if len(self.strict_predecessor_event_ids) != len(
+            set(self.strict_predecessor_event_ids)
+        ):
+            raise ValueError("strict predecessor ids must be unique")
+        return self
+
+
+class StoryBibleProductionContextV1(StrictBaseModel):
+    """Server-built trusted context derived only from approved persisted artifacts."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    project_id: StoryBibleId
+    gate2_approved_bundle_id: StoryBibleId
+    narrative_analysis_run_id: StoryBibleId
+    approved_timeline_bundle_id: StoryBibleId
+    timeline_run_id: StoryBibleId
+    approved_entities: list[EntityProposalV1] = Field(default_factory=list)
+    approved_events: list[EventProposalV1] = Field(default_factory=list)
+    approved_state_changes: list[StateChangeProposalV1] = Field(default_factory=list)
+    approved_temporal_relations: list[TemporalRelationProposalV1] = Field(
+        default_factory=list
+    )
+    trusted_event_ids: list[StoryBibleId] = Field(default_factory=list)
+    trusted_event_order: list[StoryBibleTrustedEventOrderV1] = Field(default_factory=list)
+    trusted_evidence_refs: list[EvidenceRefV1] = Field(default_factory=list)
+    source_chunk_ids: list[StoryBibleId] = Field(default_factory=list)
+    source_chunks: list[SourceChunkV1] = Field(default_factory=list)
+    canonical_snapshot: StoryBibleCanonicalSnapshotV1
+    canonical_storybible_snapshot_hash: StoryBibleId
+
+    @field_validator(
+        "project_id",
+        "gate2_approved_bundle_id",
+        "narrative_analysis_run_id",
+        "approved_timeline_bundle_id",
+        "timeline_run_id",
+        "canonical_storybible_snapshot_hash",
+    )
+    @classmethod
+    def context_references_are_not_blank(cls, value: str) -> str:
+        return _reject_blank(value)
+
+    @model_validator(mode="after")
+    def validate_trusted_context(self) -> "StoryBibleProductionContextV1":
+        if self.canonical_snapshot.project_id != self.project_id:
+            raise ValueError("canonical snapshot must belong to the context project")
+        if self.trusted_event_ids != sorted(self.trusted_event_ids) or len(
+            self.trusted_event_ids
+        ) != len(set(self.trusted_event_ids)):
+            raise ValueError("trusted event ids must be unique and sorted")
+        approved_event_ids = {event.proposal_id for event in self.approved_events}
+        if set(self.trusted_event_ids) != approved_event_ids:
+            raise ValueError("trusted event ids must exactly match approved events")
+        order_ids = [item.event_id for item in self.trusted_event_order]
+        if order_ids != self.trusted_event_ids:
+            raise ValueError("trusted event order must cover trusted events in id order")
+        if any(
+            not set(item.strict_predecessor_event_ids).issubset(approved_event_ids)
+            for item in self.trusted_event_order
+        ):
+            raise ValueError("event order references an untrusted event")
+        if self.source_chunk_ids != sorted(self.source_chunk_ids) or len(
+            self.source_chunk_ids
+        ) != len(set(self.source_chunk_ids)):
+            raise ValueError("source chunk ids must be unique and sorted")
+        if {ref.chunk_id for ref in self.trusted_evidence_refs} != set(
+            self.source_chunk_ids
+        ):
+            raise ValueError("source chunk ids must exactly match trusted evidence")
+        chunk_ids = [chunk.chunk_id for chunk in self.source_chunks]
+        if chunk_ids != self.source_chunk_ids:
+            raise ValueError("source chunks must cover trusted chunk ids in id order")
+        if any(chunk.project_id != self.project_id for chunk in self.source_chunks):
+            raise ValueError("source chunks must belong to the context project")
+        return self
+
+
+class StoryBibleProductionRunV1(StrictBaseModel):
+    """Durable, resumable execution checkpoint for production StoryBible curation."""
+
+    schema_version: Literal["1.0", "1.1"] = "1.1"
+    run_id: StoryBibleId
+    project_id: StoryBibleId
+    gate2_approved_bundle_id: StoryBibleId
+    approved_timeline_bundle_id: StoryBibleId
+    canonical_storybible_snapshot_hash: StoryBibleId
+    input_hash: StoryBibleId
+    model_identity: StoryBibleName
+    status: StoryBibleProductionRunStatus
+    curator_proposal: StoryBibleCuratorProposalV1 | None = None
+    agent_run_id: StoryBibleId | None = None
+    provider_request_count: int = Field(default=0, ge=0)
+    error_message: str | None = None
+    failure_stage: StoryBibleProductionFailureStage | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @field_validator(
+        "run_id",
+        "project_id",
+        "gate2_approved_bundle_id",
+        "approved_timeline_bundle_id",
+        "canonical_storybible_snapshot_hash",
+        "input_hash",
+        "model_identity",
+    )
+    @classmethod
+    def run_references_are_not_blank(cls, value: str) -> str:
+        return _reject_blank(value)
+
+    @field_validator("error_message")
+    @classmethod
+    def error_is_not_blank(cls, value: str | None) -> str | None:
+        if value is not None:
+            return _reject_blank(value)
+        return value
+
+    @model_validator(mode="after")
+    def validate_execution_checkpoint(self) -> "StoryBibleProductionRunV1":
+        if self.status == StoryBibleProductionRunStatus.SUCCEEDED:
+            if self.curator_proposal is None or self.agent_run_id is None:
+                raise ValueError("SUCCEEDED run requires curator_proposal and agent_run_id")
+            if self.provider_request_count < 1:
+                raise ValueError("SUCCEEDED run requires a provider request")
+            if self.curator_proposal.project_id != self.project_id:
+                raise ValueError("curator proposal must belong to the run project")
+        elif self.curator_proposal is not None:
+            raise ValueError("only SUCCEEDED runs may contain curator output")
+        elif self.agent_run_id is not None and self.status != StoryBibleProductionRunStatus.FAILED:
+            raise ValueError("only terminal runs may contain AgentRun provenance")
+        if self.status == StoryBibleProductionRunStatus.FAILED:
+            if self.error_message is None:
+                raise ValueError("FAILED run requires error_message")
+        elif self.error_message is not None or self.failure_stage is not None:
+            raise ValueError("only FAILED runs may contain failure details")
+        if self.status == StoryBibleProductionRunStatus.RESERVED and self.provider_request_count:
+            raise ValueError("RESERVED run cannot contain provider requests")
+        return self
+
+
+class StoryBibleReviewDecision(StrEnum):
+    """Deterministic disposition of an existing StoryBible proposal."""
+
+    APPROVE = "APPROVE"
+    NEEDS_HUMAN_REVIEW = "NEEDS_HUMAN_REVIEW"
+    REJECT = "REJECT"
+
+
+class StoryBibleReviewIssueSeverity(StrEnum):
+    """Impact of a deterministic StoryBible review issue."""
+
+    REVIEW_REQUIRED = "REVIEW_REQUIRED"
+    BLOCKING = "BLOCKING"
+
+
+class StoryBibleReviewIssueV1(StrictBaseModel):
+    """Structured diagnostic found while reviewing proposal-owned facts."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    issue_id: StoryBibleId
+    category: StoryBibleName
+    severity: StoryBibleReviewIssueSeverity
+    message: str
+    affected_ids: list[StoryBibleId] = Field(default_factory=list)
+    evidence_refs: list[EvidenceRefV1] = Field(default_factory=list)
+
+    @field_validator("issue_id", "category", "message")
+    @classmethod
+    def issue_text_is_not_blank(cls, value: str) -> str:
+        return _reject_blank(value)
+
+    @field_validator("affected_ids")
+    @classmethod
+    def affected_ids_are_unique_and_sorted(cls, value: list[str]) -> list[str]:
+        if value != sorted(value) or len(value) != len(set(value)):
+            raise ValueError("affected_ids must be unique and sorted")
+        return value
+
+
+class StoryBibleEvidenceCheckV1(StrictBaseModel):
+    """Deterministic grounding outcome for one proposal evidence reference."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    check_id: StoryBibleId
+    owner_id: StoryBibleId
+    evidence_ref: EvidenceRefV1
+    valid: bool
+    message: str | None = None
+
+    @field_validator("check_id", "owner_id")
+    @classmethod
+    def check_identifiers_are_not_blank(cls, value: str) -> str:
+        return _reject_blank(value)
+
+    @model_validator(mode="after")
+    def invalid_check_has_message(self) -> "StoryBibleEvidenceCheckV1":
+        if not self.valid and self.message is None:
+            raise ValueError("invalid evidence check requires a message")
+        if self.message is not None:
+            self.message = _reject_blank(self.message)
+        return self
+
+
+class StoryBibleReviewResultV1(StrictBaseModel):
+    """Deterministic audit of exactly one persisted StoryBible production run."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    review_id: StoryBibleId
+    project_id: StoryBibleId
+    storybible_run_id: StoryBibleId
+    proposal_hash: StoryBibleId
+    decision: StoryBibleReviewDecision
+    issues: list[StoryBibleReviewIssueV1] = Field(default_factory=list)
+    evidence_checks: list[StoryBibleEvidenceCheckV1] = Field(default_factory=list)
+    validated_entities: list[StoryBibleId] = Field(default_factory=list)
+    validated_relationships: list[StoryBibleId] = Field(default_factory=list)
+    validated_world_rules: list[StoryBibleId] = Field(default_factory=list)
+    reviewed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @field_validator("review_id", "project_id", "storybible_run_id", "proposal_hash")
+    @classmethod
+    def review_references_are_not_blank(cls, value: str) -> str:
+        return _reject_blank(value)
+
+    @field_validator(
+        "validated_entities", "validated_relationships", "validated_world_rules"
+    )
+    @classmethod
+    def validated_ids_are_unique_and_sorted(cls, value: list[str]) -> list[str]:
+        if value != sorted(value) or len(value) != len(set(value)):
+            raise ValueError("validated resource ids must be unique and sorted")
+        return value
+
+    @model_validator(mode="after")
+    def decision_matches_issues(self) -> "StoryBibleReviewResultV1":
+        has_blocking = any(
+            issue.severity == StoryBibleReviewIssueSeverity.BLOCKING
+            for issue in self.issues
+        )
+        has_review_required = any(
+            issue.severity == StoryBibleReviewIssueSeverity.REVIEW_REQUIRED
+            for issue in self.issues
+        )
+        if self.decision == StoryBibleReviewDecision.APPROVE and self.issues:
+            raise ValueError("APPROVE review cannot contain issues")
+        if self.decision == StoryBibleReviewDecision.REJECT and not has_blocking:
+            raise ValueError("REJECT review requires a blocking issue")
+        if (
+            self.decision == StoryBibleReviewDecision.NEEDS_HUMAN_REVIEW
+            and (has_blocking or not has_review_required)
+        ):
+            raise ValueError(
+                "NEEDS_HUMAN_REVIEW requires non-blocking review-required issues"
+            )
+        return self
+
+
+class StoryBibleReviewContextV1(StrictBaseModel):
+    """Server-owned immutable inputs needed to run one deterministic review."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    review_id: StoryBibleId
+    project_id: StoryBibleId
+    source_storybible_run_id: StoryBibleId
+    source_approved_timeline_bundle_id: StoryBibleId
+    canonical_snapshot: StoryBibleCanonicalSnapshotV1
+    canonical_snapshot_hash: StoryBibleId
+    proposal_hash: StoryBibleId
+    reviewed_at: datetime
+
+    @field_validator(
+        "review_id",
+        "project_id",
+        "source_storybible_run_id",
+        "source_approved_timeline_bundle_id",
+        "canonical_snapshot_hash",
+        "proposal_hash",
+    )
+    @classmethod
+    def context_references_are_not_blank(cls, value: str) -> str:
+        return _reject_blank(value)
+
+    @model_validator(mode="after")
+    def validate_context_snapshot(self) -> "StoryBibleReviewContextV1":
+        if self.canonical_snapshot.project_id != self.project_id:
+            raise ValueError("review canonical snapshot belongs to another project")
+        return self
+
+
+class StoryBibleReviewMetadataV1(StrictBaseModel):
+    """Review and lineage metadata carried into the frozen bundle."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    review_id: StoryBibleId
+    decision: Literal[StoryBibleReviewDecision.APPROVE]
+    proposal_hash: StoryBibleId
+    source_approved_timeline_bundle_id: StoryBibleId
+    reviewed_at: datetime
+    frozen_at: datetime
+
+    @field_validator("review_id", "proposal_hash", "source_approved_timeline_bundle_id")
+    @classmethod
+    def metadata_references_are_not_blank(cls, value: str) -> str:
+        return _reject_blank(value)
+
+
+class ApprovedStoryBibleBundleV1(StrictBaseModel):
+    """Immutable, reviewed StoryBible snapshot trusted by comic planning."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    bundle_id: StoryBibleId
+    project_id: StoryBibleId
+    source_storybible_run_id: StoryBibleId
+    snapshot_hash: StoryBibleId
+    entities: list[StoryEntityProfileV1] = Field(default_factory=list)
+    relationships: list[StoryRelationshipV1] = Field(default_factory=list)
+    world_rules: list[WorldRuleV1] = Field(default_factory=list)
+    state_changes: list[StoryEntityStateV1] = Field(default_factory=list)
+    evidence_refs: list[EvidenceRefV1] = Field(default_factory=list)
+    review_metadata: StoryBibleReviewMetadataV1
+
+    @field_validator(
+        "bundle_id", "project_id", "source_storybible_run_id", "snapshot_hash"
+    )
+    @classmethod
+    def bundle_references_are_not_blank(cls, value: str) -> str:
+        return _reject_blank(value)
+
+    @model_validator(mode="after")
+    def validate_canonical_bundle(self) -> "ApprovedStoryBibleBundleV1":
+        collections = (
+            (self.entities, "profile_id"),
+            (self.relationships, "relationship_id"),
+            (self.world_rules, "rule_id"),
+            (self.state_changes, "state_id"),
+        )
+        for resources, id_field in collections:
+            if any(resource.project_id != self.project_id for resource in resources):
+                raise ValueError("approved StoryBible resources must belong to its project")
+            ids = [getattr(resource, id_field) for resource in resources]
+            if ids != sorted(ids) or len(ids) != len(set(ids)):
+                raise ValueError(
+                    "approved StoryBible resources must be unique and id-sorted"
+                )
+        entity_ids = {entity.profile_id for entity in self.entities}
+        if any(
+            relationship.source_profile_id not in entity_ids
+            or relationship.target_profile_id not in entity_ids
+            for relationship in self.relationships
+        ):
+            raise ValueError("approved relationships must reference bundled entities")
+        if any(state.profile_id not in entity_ids for state in self.state_changes):
+            raise ValueError("approved state changes must reference bundled entities")
+        return self
+
+
+class StoryBibleReviewRunStatus(StrEnum):
+    """Persistence lifecycle independent of StoryBible production execution."""
+
+    REVIEWED = "REVIEWED"
+    FROZEN = "FROZEN"
+
+
+class StoryBibleReviewRunV1(StrictBaseModel):
+    """Durable review result and optional insert-once frozen bundle."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    review_id: StoryBibleId
+    project_id: StoryBibleId
+    source_storybible_run_id: StoryBibleId
+    source_approved_timeline_bundle_id: StoryBibleId
+    canonical_snapshot: StoryBibleCanonicalSnapshotV1
+    canonical_snapshot_hash: StoryBibleId
+    proposal_hash: StoryBibleId
+    status: StoryBibleReviewRunStatus = StoryBibleReviewRunStatus.REVIEWED
+    review_result: StoryBibleReviewResultV1
+    approved_bundle: ApprovedStoryBibleBundleV1 | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    frozen_at: datetime | None = None
+
+    @field_validator(
+        "review_id",
+        "project_id",
+        "source_storybible_run_id",
+        "source_approved_timeline_bundle_id",
+        "canonical_snapshot_hash",
+        "proposal_hash",
+    )
+    @classmethod
+    def persisted_review_references_are_not_blank(cls, value: str) -> str:
+        return _reject_blank(value)
+
+    @model_validator(mode="after")
+    def validate_review_checkpoint(self) -> "StoryBibleReviewRunV1":
+        result = self.review_result
+        if (
+            result.review_id != self.review_id
+            or result.project_id != self.project_id
+            or result.storybible_run_id != self.source_storybible_run_id
+            or result.proposal_hash != self.proposal_hash
+        ):
+            raise ValueError("persisted review metadata does not match review result")
+        if self.status == StoryBibleReviewRunStatus.REVIEWED:
+            if self.approved_bundle is not None or self.frozen_at is not None:
+                raise ValueError("REVIEWED run cannot contain a frozen bundle")
+        else:
+            if result.decision != StoryBibleReviewDecision.APPROVE:
+                raise ValueError("only an APPROVE review may be frozen")
+            if self.approved_bundle is None or self.frozen_at is None:
+                raise ValueError("FROZEN run requires an approved bundle and frozen_at")
+            if (
+                self.approved_bundle.project_id != self.project_id
+                or self.approved_bundle.source_storybible_run_id
+                != self.source_storybible_run_id
+                or self.approved_bundle.review_metadata.review_id != self.review_id
+                or self.approved_bundle.review_metadata.proposal_hash != self.proposal_hash
+                or self.approved_bundle.review_metadata.source_approved_timeline_bundle_id
+                != self.source_approved_timeline_bundle_id
+                or self.approved_bundle.review_metadata.reviewed_at != result.reviewed_at
+                or self.approved_bundle.review_metadata.frozen_at != self.frozen_at
+            ):
+                raise ValueError("frozen bundle lineage does not match its review run")
+        return self

@@ -353,6 +353,7 @@ def test_one_click_real_llm_opt_in_missing_key_is_reported_by_durable_run(
     monkeypatch.setenv("COMIC_AGENT_ENV", "development")
     monkeypatch.setenv("COMIC_AGENT_FAKE_PIPELINE_DEMO", "false")
     monkeypatch.setenv("ENABLE_REAL_LLM", "true")
+    monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     get_settings.cache_clear()

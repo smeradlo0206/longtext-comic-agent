@@ -235,20 +235,26 @@ class _FakeTimelineRunner:
     ) -> TimelineAnalysisProposalV1:
         self.calls += 1
         self.source_bundle_ids.append(input_context.source_approved_bundle_id)
-        assert [event.proposal_id for event in input_context.event_proposals] == [
-            "event-poster",
-            "event-umbrella",
+        assert [event.summary for event in input_context.event_proposals] == [
+            "Xiaolin posts a poster.",
+            "Xiaozhou arrives with an umbrella.",
         ]
+        assert len({event.proposal_id for event in input_context.event_proposals}) == 2
+        assert all(
+            event.proposal_id.startswith("narrative-proposal_")
+            for event in input_context.event_proposals
+        )
         assert len(source_chunks) == 1
         evidence = input_context.event_proposals[0].evidence_refs
+        source_event, target_event = input_context.event_proposals
         return TimelineAnalysisProposalV1(
             proposal_id="timeline-ordered-1",
             project_id=input_context.project_id,
             temporal_relations=[
                 {
                     "proposal_id": "relation-ordered-1",
-                    "source_event_id": "event-poster",
-                    "target_event_id": "event-umbrella",
+                    "source_event_id": source_event.proposal_id,
+                    "target_event_id": target_event.proposal_id,
                     "relation": "BEFORE",
                     "evidence_refs": evidence,
                     "confidence": 0.9,
@@ -362,10 +368,10 @@ def test_whole_document_worker_uses_the_same_injected_provider_as_manual_mode(
     assert review.status_code == 200
     assert review.json()["result"]["approved_count"] == 1
     assert bundle.status_code == 200
-    assert (
-        bundle.json()["approved_proposals"][0]["source"]["proposal"]["proposal_id"]
-        == "event-whole-1"
-    )
+    normalized_id = bundle.json()["approved_proposals"][0]["source"]["proposal"][
+        "proposal_id"
+    ]
+    assert normalized_id.startswith("narrative-proposal_")
     assert windows.status_code == 200
     window = windows.json()["items"][0]
     assert window["agent_run_id"] == result.json()["events"][0]["agent_run_ids"][0]
@@ -458,7 +464,8 @@ def test_recovery_endpoint_exposes_only_fresh_approved_bundle(tmp_path, monkeypa
     assert recovery.json()["approved_bundle_available"] is True
     assert bundle.status_code == 200
     proposal = bundle.json()["approved_proposals"][0]["source"]["proposal"]
-    assert proposal["proposal_id"] == "fresh-approved"
+    assert proposal["proposal_id"].startswith("narrative-proposal_")
+    assert proposal["summary"] == "Synthetic action"
     assert "root-rejected" not in bundle.text
     assert "Synthetic sentence." not in bundle.text
     assert "raw_output" not in bundle.text

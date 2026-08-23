@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from typing import Annotated, cast
 from uuid import uuid4
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from comic_agent.agents.timeline_agent import TimelineAgent
@@ -16,9 +17,20 @@ from comic_agent.repositories.source_repository import SourceRepository
 from comic_agent.repositories.timeline_gate3_repository import TimelineGate3Repository
 from comic_agent.schemas.base import EvidenceRefV1
 from comic_agent.schemas.source import SourceChunkV1
-from comic_agent.schemas.timeline import TimelineAnalysisInputV1, TimelineAnalysisProposalV1
+from comic_agent.schemas.timeline import (
+    Gate3HumanReviewInputV1,
+    Gate3HumanReviewRequestV1,
+    Gate3HumanReviewResponseV1,
+    TimelineAnalysisInputV1,
+    TimelineAnalysisProposalV1,
+)
 from comic_agent.schemas.workflow import AgentRunStatus, AgentRunV1
 from comic_agent.services.commit_service import CommitService
+from comic_agent.services.gate3_human_review_service import (
+    Gate3HumanReviewConflictError,
+    Gate3HumanReviewNotFoundError,
+    Gate3HumanReviewService,
+)
 from comic_agent.services.id_service import checksum_text
 
 router = APIRouter()
@@ -65,7 +77,7 @@ def analyze_timeline(
         for relation in proposal.temporal_relations:
             validator.validate_temporal_relation_evidence(relation, project_id)
         stored_proposal = repository.save_timeline_analysis(proposal, input_hash)
-    except (TimeoutError, ValueError, RuntimeError) as exc:
+    except (httpx.HTTPError, TimeoutError, ValueError, RuntimeError) as exc:
         repository.save_agent_run(
             AgentRunV1(
                 agent_run_id=f"agent-run-{uuid4().hex}",
@@ -187,6 +199,52 @@ def get_approved_timeline_bundle(
     if run is None or run.approved_timeline_bundle is None:
         raise HTTPException(status_code=409, detail="Approved Timeline bundle is unavailable")
     return _safe_bundle_payload(run.approved_timeline_bundle.model_dump(mode="json"))
+
+
+@router.post(
+    "/projects/{project_id}/timeline-gate3/runs/{gate3_run_id}/review",
+    response_model=Gate3HumanReviewResponseV1,
+)
+def review_timeline_gate3_run(
+    project_id: str,
+    gate3_run_id: str,
+    review: Gate3HumanReviewRequestV1,
+    repository: TimelineGate3RepositoryDep,
+) -> Gate3HumanReviewResponseV1:
+    """Resolve and finalize the existing project-owned Gate 3 run."""
+
+    review_input = Gate3HumanReviewInputV1(
+        gate3_run_id=gate3_run_id,
+        resolution=review.resolution,
+        reviewer_id=review.reviewer_id,
+        note=review.note,
+    )
+    try:
+        run = Gate3HumanReviewService(repository).review_gate3_run(
+            review_input,
+            project_id=project_id,
+        )
+    except Gate3HumanReviewNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Timeline Gate 3 run not found") from exc
+    except Gate3HumanReviewConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Timeline Gate 3 run cannot be reviewed",
+        ) from exc
+    result = run.gate3_result
+    if result is None or result.human_review is None or result.effective_decision is None:
+        raise RuntimeError("Human-reviewed Gate 3 result is incomplete")
+    bundle = run.approved_timeline_bundle
+    return Gate3HumanReviewResponseV1(
+        gate3_run_id=run.timeline_run_id,
+        project_id=run.project_id,
+        status=run.status,
+        automated_decision=result.decision,
+        effective_decision=result.effective_decision,
+        human_review=result.human_review,
+        approved_timeline_bundle_id=bundle.bundle_id if bundle is not None else None,
+        approved_timeline_bundle_available=bundle is not None,
+    )
 
 
 def _safe_bundle_payload(payload: dict[str, object]) -> dict[str, object]:

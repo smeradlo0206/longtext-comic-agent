@@ -92,10 +92,12 @@ class TimelineAgent:
         provider: LLMProvider | None = None,
         *,
         provider_model: str = "unconfigured",
+        llm_enabled: bool = True,
         pair_selector: EventPairSelector | None = None,
     ) -> None:
         self._provider = provider
         self._provider_model = provider_model
+        self._llm_enabled = llm_enabled
         self._pair_selector = pair_selector or EventPairSelector()
         self._provider_request_count = 0
 
@@ -128,7 +130,7 @@ class TimelineAgent:
         chunks_by_id = {chunk.chunk_id: chunk for chunk in source_chunks}
         temporal_relations = (
             self._unknown_relations(input_context.event_proposals)
-            if input_context.mode == TimelineAnalysisMode.RULES_ONLY
+            if input_context.mode == TimelineAnalysisMode.RULES_ONLY or not self._llm_enabled
             else self._llm_relations(input_context.event_proposals, chunks_by_id)
         )
         return TimelineAnalysisProposalV1(

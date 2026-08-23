@@ -121,6 +121,23 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     assert (output_dir / "ProposalReviewDecisionV1.json").exists()
     assert (output_dir / "ApprovedProposalBundleV1.json").exists()
     for schema_name in (
+        "ApprovedStoryBibleBundleV1",
+        "StoryBibleReviewContextV1",
+        "StoryBibleReviewResultV1",
+        "StoryBibleReviewRunV1",
+        "StoryBibleEvidenceCheckV1",
+        "StoryBibleReviewIssueV1",
+        "StoryBibleReviewMetadataV1",
+    ):
+        assert (output_dir / f"{schema_name}.json").exists()
+
+    approved_storybible_schema = json.loads(
+        (output_dir / "ApprovedStoryBibleBundleV1.json").read_text(encoding="utf-8")
+    )
+    assert "entities" in approved_storybible_schema["properties"]
+    assert "source_storybible_run_id" in approved_storybible_schema["required"]
+    assert approved_storybible_schema["additionalProperties"] is False
+    for schema_name in (
         "SourceTextAuditSnapshotV1",
         "ReviewGate1PolicyV1",
         "ReviewGate1InputV1",

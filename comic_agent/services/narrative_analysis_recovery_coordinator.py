@@ -38,6 +38,7 @@ from comic_agent.services.narrative_analysis_proposal_sources import proposal_so
 from comic_agent.services.narrative_analysis_review_coordinator import (
     NarrativeAnalysisReviewCoordinator,
 )
+from comic_agent.services.narrative_proposal_id_normalizer import proposal_window_scope
 from comic_agent.services.review_gate2_service import (
     ReviewGate2Service,
     ReviewGate2ServiceContext,
@@ -464,7 +465,15 @@ class NarrativeAnalysisRecoveryCoordinator:
         window = self._locked_recovery_window(attempt.directive, agent_run.agent_run_id)
         sources = proposal_sources_for_window(agent_run, window)
         aggregate = aggregate_narrative_analysis(
-            sources, analysis_run_id=attempt.directive.root_analysis_run_id
+            sources,
+            analysis_run_id=attempt.directive.root_analysis_run_id,
+            source_scopes={
+                agent_run.agent_run_id: proposal_window_scope(
+                    attempt.directive.root_analysis_run_id,
+                    window.window_index,
+                    window.chunk_ids,
+                )
+            },
         )
         chunks = [
             self._source_repository.get_chunk(chunk_id)

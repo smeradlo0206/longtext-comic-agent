@@ -190,6 +190,10 @@ class StoryBibleCurator:
         "required": ["proposal_id", "project_id", "commit_plan", "evidence_refs", "confidence"],
         "definitions": {"evidence_ref": _EVIDENCE_REF_SCHEMA},
     }
+    # The provider-facing contract is generated from the schema source of truth.  Keeping the
+    # assignment beside the historical literal makes the compatibility change explicit while
+    # ensuring relationship and world-rule updates cannot drift out of the actual contract.
+    _OUTPUT_SCHEMA = StoryBibleCuratorProposalV1.model_json_schema()
 
     def _request(
         self, context: StoryBibleContextV1, chunk_texts: dict[str, str]
