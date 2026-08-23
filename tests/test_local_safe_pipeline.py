@@ -23,6 +23,7 @@ from comic_agent.providers.mocks import LocalSafeDemoProvider, MockLLMProvider
 from comic_agent.providers.openai_compatible import OpenAICompatibleLLMProvider
 from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
 from comic_agent.repositories.provider_circuit_repository import ProviderCircuitRepository
+from comic_agent.schemas.workflow import NarrativeAnalysisRunStatus
 
 _OFFICIAL_TEXT = """下午四点，小林先到学校礼堂，在公告栏张贴志愿者招募海报。
 十分钟后，天下起雨；小周撑着一把蓝色雨伞赶到礼堂。
@@ -551,5 +552,48 @@ def test_background_failure_does_not_rewrite_a_completed_narrative_run(
 
     status = client.get(f"/pipeline-runs/{run_id}").json()
     assert status["narrative"] == "SUCCEEDED"
+    assert status["pipeline_phase"] == "FAILED"
+    assert status["pipeline_safe_issue_codes"] == ["PIPELINE_WORKER_FAILED"]
+
+
+@pytest.mark.parametrize(
+    "artifact_status",
+    [
+        NarrativeAnalysisRunStatus.PARTIAL_FAILED,
+        NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION,
+    ],
+)
+def test_background_failure_preserves_nonblocking_narrative_artifact_status(
+    tmp_path,
+    monkeypatch,
+    artifact_status: NarrativeAnalysisRunStatus,
+) -> None:  # type: ignore[no-untyped-def]
+    """A downstream error must not collapse a saved partial execution into FAILED."""
+
+    client = _client(tmp_path, monkeypatch)
+    started = client.post(
+        "/projects/preserve-partial/pipeline-runs/import-and-analyze",
+        files={"file": ("official.txt", _OFFICIAL_TEXT.encode("utf-8"), "text/plain")},
+    )
+    run_id = started.json()["analysis_run_id"]
+    session = client.app.state.session_factory()
+    try:
+        repository = NarrativeAnalysisRepository(session)
+        run = repository.get_run(run_id)
+        assert run is not None
+        assert run.review_gate2_route is not None
+        assert run.review_gate2_route.narrative_execution_bundle is not None
+        repository.save_run(run.model_copy(update={"status": artifact_status}))
+    finally:
+        session.close()
+
+    _save_pipeline_failure(
+        client.app.state.session_factory,
+        run_id,
+        ["PIPELINE_WORKER_FAILED"],
+    )
+
+    status = client.get(f"/pipeline-runs/{run_id}").json()
+    assert status["narrative"] == artifact_status
     assert status["pipeline_phase"] == "FAILED"
     assert status["pipeline_safe_issue_codes"] == ["PIPELINE_WORKER_FAILED"]

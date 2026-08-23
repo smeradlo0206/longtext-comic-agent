@@ -916,6 +916,21 @@ class _FailNamedWindowProvider(_FakeProvider):
         return super().structured_generate(request, output_model)
 
 
+class _FailChunkSetProvider(_FakeProvider):
+    """Fail selected single-chunk scopes while preserving all other candidates."""
+
+    def __init__(self, failures: dict[str, BaseException]) -> None:
+        super().__init__()
+        self._failures = failures
+
+    def structured_generate(self, request, output_model):  # type: ignore[no-untyped-def]
+        input_context = request["input_context"]
+        chunk_ids = input_context["source_chunk_ids"]
+        if len(chunk_ids) == 1 and chunk_ids[0] in self._failures:
+            raise self._failures[chunk_ids[0]]
+        return super().structured_generate(request, output_model)
+
+
 class _AlwaysFailingProvider(_FakeProvider):
     def __init__(self, error: BaseException) -> None:
         super().__init__()
@@ -1560,6 +1575,119 @@ def test_partial_needs_human_action_keeps_valid_candidates_in_timeline(tmp_path:
     assert execution.status == "NEEDS_HUMAN_ACTION"
     assert execution.issues
     assert len(execution.candidates) == 1
+    assert len(timeline.routes) == 1
+
+
+def test_real_failure_shape_keeps_twenty_five_candidates_and_enters_timeline(
+    tmp_path: Path,
+) -> None:
+    """Twenty-five successes plus ten terminal schema failures remain reviewable."""
+
+    source_repository = _ApprovedFakeSourceRepository([_chunk(index) for index in range(35)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        window_size=1,
+        stride=1,
+        max_split_depth=0,
+        real_llm_requested=True,
+    )
+    timeline = _RecordingTimelineCoordinator()
+    schema_error = ProviderResponseError(
+        "LLM provider response failed schema validation",
+        {
+            "schema_error_kind": "missing",
+            "schema_error_field_paths": ["events.0.summary"],
+            "schema_error_rule_codes": ["SCHEMA_CONTRACT_INVALID"],
+            "expected_output_schema": "EventProposalBatchV1",
+        },
+    )
+    provider = _FailChunkSetProvider(
+        {f"chunk-{index}": schema_error for index in range(25, 35)}
+    )
+
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+        timeline_coordinator=timeline,  # type: ignore[arg-type]
+    ).run_pending(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
+    assert completed.review_gate2_route is not None
+    execution = completed.review_gate2_route.narrative_execution_bundle
+    assert execution is not None
+    assert len(execution.candidates) == 25
+    assert len(execution.failed_windows) == 10
+    assert all(window.status == "NEEDS_HUMAN_ACTION" for window in execution.failed_windows)
+    assert {window.failure_category for window in execution.failed_windows} == {
+        "SCHEMA_REPAIR_EXHAUSTED"
+    }
+    assert execution.issues
+    assert len(timeline.routes) == 1
+
+
+def test_timeout_and_schema_exhaustion_with_valid_candidate_do_not_block_timeline(
+    tmp_path: Path,
+) -> None:
+    source_repository = _ApprovedFakeSourceRepository([_chunk(index) for index in range(3)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        window_size=1,
+        stride=1,
+        max_call_attempts=1,
+        max_split_depth=0,
+        real_llm_requested=True,
+    )
+    timeline = _RecordingTimelineCoordinator()
+    schema_error = ProviderResponseError(
+        "LLM provider response failed schema validation",
+        {
+            "schema_error_kind": "missing",
+            "schema_error_field_paths": ["events.0.summary"],
+            "schema_error_rule_codes": ["SCHEMA_CONTRACT_INVALID"],
+            "expected_output_schema": "EventProposalBatchV1",
+        },
+    )
+    provider = _FailChunkSetProvider(
+        {
+            "chunk-1": ProviderTimeoutError(
+                "LLM provider timeout",
+                {"timeout_kind": "read", "timeout_seconds": 60},
+            ),
+            "chunk-2": schema_error,
+        }
+    )
+
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=provider,
+        timeline_coordinator=timeline,  # type: ignore[arg-type]
+    ).run_pending(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
+    assert completed.review_gate2_route is not None
+    execution = completed.review_gate2_route.narrative_execution_bundle
+    assert execution is not None
+    assert len(execution.candidates) == 1
+    assert {window.failure_category for window in execution.failed_windows} == {
+        "PROVIDER_TIMEOUT",
+        "SCHEMA_REPAIR_EXHAUSTED",
+    }
     assert len(timeline.routes) == 1
 
 

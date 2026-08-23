@@ -500,12 +500,19 @@ def _save_pipeline_failure(
         run = repository.get_run(analysis_run_id)
         if run is None:
             return
-        # A downstream orchestration failure cannot invalidate a fully saved
-        # Narrative result.  Retaining SUCCEEDED keeps Gate 2 resumable while
-        # the separate pipeline phase exposes the safe worker diagnostic.
+        # A downstream orchestration failure cannot invalidate any saved
+        # Narrative artifact.  Partial and human-action runs already contain
+        # their successful candidates, failed-window diagnostics, Gate 2 audit,
+        # and execution-bundle lineage.  Preserve that terminal Narrative status
+        # while the separate pipeline phase exposes the downstream failure.
+        artifact_statuses = {
+            NarrativeAnalysisRunStatus.SUCCEEDED,
+            NarrativeAnalysisRunStatus.PARTIAL_FAILED,
+            NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION,
+        }
         status = (
-            NarrativeAnalysisRunStatus.SUCCEEDED
-            if run.status == NarrativeAnalysisRunStatus.SUCCEEDED
+            run.status
+            if run.status in artifact_statuses
             else NarrativeAnalysisRunStatus.FAILED
         )
         repository.save_run(
