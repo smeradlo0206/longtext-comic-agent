@@ -283,7 +283,12 @@ class NarrativeAnalysisRecoveryCoordinator:
             return [self._outcome(root_analysis_run_id, "unknown", RecoveryOutcomeStatus.SKIPPED)]
         route = run.review_gate2_route
         if (
-            run.status != "SUCCEEDED"
+            run.status
+            not in {
+                "SUCCEEDED",
+                "PARTIAL_FAILED",
+                "NEEDS_HUMAN_ACTION",
+            }
             or route is None
             or route.decision != ReviewGate2RoutingDecision.REJECTED
         ):
@@ -509,6 +514,8 @@ class NarrativeAnalysisRecoveryCoordinator:
             review_result=review_result,
             windows=[window],
             review_input=review_input,
+            gate1_review_id=None,
+            execution_lineage_id=attempt.attempt_id,
         )
         status = {
             ReviewGate2RoutingDecision.APPROVED: RecoveryOutcomeStatus.APPROVED,

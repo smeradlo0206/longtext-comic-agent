@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from comic_agent.schemas.base import EvidenceRefV1, RecordStatus, StrictBaseModel
 from comic_agent.schemas.narrative import (
@@ -223,11 +223,12 @@ class TimelineGate3IssueV1(StrictBaseModel):
 class ReviewGate3ResultV1(StrictBaseModel):
     """Typed audit for exactly one Timeline candidate result."""
 
-    schema_version: Literal["1.0"] = Field(default="1.0")
+    schema_version: Literal["1.0", "1.1"] = Field(default="1.1")
     review_id: str = Field(min_length=1)
     reviewed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     project_id: str = Field(min_length=1)
-    source_approved_proposal_bundle_id: str = Field(min_length=1)
+    source_approved_proposal_bundle_id: str | None = Field(default=None, min_length=1)
+    source_narrative_execution_bundle_id: str | None = Field(default=None, min_length=1)
     timeline_run_id: str = Field(min_length=1)
     reviewer_agent_run_id: str = Field(min_length=1)
     decision: ReviewGate3Decision
@@ -246,6 +247,13 @@ class ReviewGate3ResultV1(StrictBaseModel):
             raise ValueError("reviewed_at must be UTC")
         if self.issue_count != len(self.issues):
             raise ValueError("issue_count must match issues")
+        if (
+            self.source_approved_proposal_bundle_id is None
+            and self.source_narrative_execution_bundle_id is None
+        ):
+            raise ValueError("Gate 3 result requires approved or execution source provenance")
+        if self.schema_version == "1.0" and self.source_narrative_execution_bundle_id is not None:
+            raise ValueError("schema_version=1.0 cannot contain execution-bundle provenance")
         if self.decision == ReviewGate3Decision.APPROVED and self.issues:
             raise ValueError("APPROVED Gate 3 results cannot contain issues")
         if self.decision != ReviewGate3Decision.APPROVED and not self.issues:
@@ -266,11 +274,13 @@ class ReviewGate3ResultV1(StrictBaseModel):
 class NarrativeTimelineReviewRouteV1(StrictBaseModel):
     """Safe next-step routing; only APPROVED contains a Timeline bundle."""
 
-    schema_version: Literal["1.0"] = Field(default="1.0")
+    schema_version: Literal["1.0", "1.1"] = Field(default="1.1")
     route_id: str = Field(min_length=1)
     review_id: str = Field(min_length=1)
     timeline_run_id: str = Field(min_length=1)
     route: ReviewGate3Decision
+    source_approved_proposal_bundle_id: str | None = Field(default=None, min_length=1)
+    source_narrative_execution_bundle_id: str | None = Field(default=None, min_length=1)
     approved_timeline_bundle_id: str | None = Field(default=None, min_length=1)
     approved_timeline_bundle: "ApprovedTimelineBundleV1 | None" = None
     held_issue_ids: list[str] = Field(default_factory=list)
@@ -279,14 +289,28 @@ class NarrativeTimelineReviewRouteV1(StrictBaseModel):
 
     @model_validator(mode="after")
     def validate_route(self) -> "NarrativeTimelineReviewRouteV1":
+        execution_only = (
+            self.source_narrative_execution_bundle_id is not None
+            and self.source_approved_proposal_bundle_id is None
+        )
+        if self.schema_version == "1.0" and self.source_narrative_execution_bundle_id is not None:
+            raise ValueError("schema_version=1.0 cannot contain execution-bundle provenance")
         if self.route == ReviewGate3Decision.APPROVED:
             if (
-                self.approved_timeline_bundle is None
-                or self.approved_timeline_bundle_id is None
+                (not execution_only and self.approved_timeline_bundle is None)
+                or (not execution_only and self.approved_timeline_bundle_id is None)
                 or self.held_issue_ids
             ):
                 raise ValueError("APPROVED route requires a bundle and no held issues")
-            if self.approved_timeline_bundle.bundle_id != self.approved_timeline_bundle_id:
+            if execution_only and (
+                self.approved_timeline_bundle is not None
+                or self.approved_timeline_bundle_id is not None
+            ):
+                raise ValueError("execution-only APPROVED route cannot expose an approved bundle")
+            if (
+                self.approved_timeline_bundle is not None
+                and self.approved_timeline_bundle.bundle_id != self.approved_timeline_bundle_id
+            ):
                 raise ValueError("APPROVED route bundle id must match its bundle")
         elif (
             self.approved_timeline_bundle is not None
@@ -369,7 +393,7 @@ class DuplicateCandidateV1(StrictBaseModel):
 class TimelineAnalysisInputV1(StrictBaseModel):
     """Whole-text candidate records supplied to the Timeline Agent."""
 
-    schema_version: Literal["1.0", "1.1", "1.2", "1.3"] = Field(
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4"] = Field(
         default="1.1", description="Schema version."
     )
     project_id: str = Field(description="Owning project id.")
@@ -378,6 +402,10 @@ class TimelineAnalysisInputV1(StrictBaseModel):
     )
     source_review_run_id: str | None = Field(
         default=None, description="Gate 2 review run id when built by the campus adapter."
+    )
+    source_narrative_execution_bundle_id: str | None = Field(
+        default=None,
+        description="Non-canonical Narrative execution bundle used for Timeline input.",
     )
     source_content_profile_id: str | None = Field(
         default=None, description="Approved campus profile id when built by the campus adapter."
@@ -413,7 +441,31 @@ class TimelineAnalysisInputV1(StrictBaseModel):
                 and not self.source_content_profile_id.strip()
             ):
                 raise ValueError("source_content_profile_id cannot be blank")
-        elif any(value is not None for value in provenance_ids):
+        elif self.schema_version == "1.4":
+            if any(
+                not isinstance(value, str) or not value.strip()
+                for value in (
+                    self.source_narrative_execution_bundle_id,
+                    self.source_review_run_id,
+                )
+            ):
+                raise ValueError(
+                    "schema_version=1.4 requires execution bundle and Gate 2 review ids"
+                )
+            if (
+                self.source_approved_bundle_id is not None
+                and not self.source_approved_bundle_id.strip()
+            ):
+                raise ValueError("source_approved_bundle_id cannot be blank")
+            if (
+                self.source_content_profile_id is not None
+                and not self.source_content_profile_id.strip()
+            ):
+                raise ValueError("source_content_profile_id cannot be blank")
+        elif any(
+            value is not None
+            for value in (*provenance_ids, self.source_narrative_execution_bundle_id)
+        ):
             raise ValueError("Timeline provenance ids require schema_version=1.2")
         if not (self.event_proposals or self.claim_proposals or self.state_change_proposals):
             raise ValueError("timeline analysis requires at least one proposal")
@@ -443,6 +495,73 @@ class TimelineAnalysisProposalV1(StrictBaseModel):
     confidence: float = Field(ge=0, le=1, description="Analysis confidence.")
 
 
+class TimelineReviewMaterialProvenanceV1(StrictBaseModel):
+    """Source-bounded lineage for a Timeline candidate and its Gate 3 audit."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0")
+    source_chunk_ids: list[str] = Field(default_factory=list)
+    timeline_agent_run_id: str
+    gate3_reviewer_agent_run_id: str
+
+    @field_validator("timeline_agent_run_id", "gate3_reviewer_agent_run_id")
+    @classmethod
+    def agent_run_ids_are_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("agent run id must not be blank")
+        return value
+
+    @field_validator("source_chunk_ids")
+    @classmethod
+    def source_chunk_ids_are_unique(cls, value: list[str]) -> list[str]:
+        if any(not chunk_id.strip() for chunk_id in value):
+            raise ValueError("source_chunk_ids cannot contain blank ids")
+        if len(value) != len(set(value)):
+            raise ValueError("source_chunk_ids must be unique")
+        return value
+
+
+class TimelineReviewMaterialV1(StrictBaseModel):
+    """Non-canonical Timeline candidate material plus its Gate 3 findings."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0")
+    material_id: str = Field(min_length=1)
+    project_id: str = Field(min_length=1)
+    narrative_execution_bundle_id: str = Field(min_length=1)
+    timeline_run_id: str = Field(min_length=1)
+    timeline_candidate: TimelineAnalysisProposalV1
+    temporal_relations: list[TemporalRelationProposalV1] = Field(default_factory=list)
+    review_id: str = Field(min_length=1)
+    review_status: ReviewGate3Decision
+    issues: list[TimelineGate3IssueV1] = Field(default_factory=list)
+    evidence_refs: list[EvidenceRefV1] = Field(default_factory=list)
+    provenance: TimelineReviewMaterialProvenanceV1
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @model_validator(mode="after")
+    def validate_review_material(self) -> "TimelineReviewMaterialV1":
+        if self.timeline_candidate.project_id != self.project_id:
+            raise ValueError("timeline_candidate must belong to the material project")
+        if self.temporal_relations != self.timeline_candidate.temporal_relations:
+            raise ValueError(
+                "temporal_relations must exactly match timeline_candidate temporal_relations"
+            )
+        issue_ids = [issue.issue_id for issue in self.issues]
+        if len(issue_ids) != len(set(issue_ids)):
+            raise ValueError("issues must have unique issue_id values")
+        if self.review_status == ReviewGate3Decision.APPROVED and self.issues:
+            raise ValueError("APPROVED review material cannot contain issues")
+        if self.review_status != ReviewGate3Decision.APPROVED and not self.issues:
+            raise ValueError("non-APPROVED review material requires issues")
+        required_evidence = list(self.timeline_candidate.evidence_refs) + [
+            evidence_ref for issue in self.issues for evidence_ref in issue.evidence_refs
+        ]
+        if any(evidence_ref not in self.evidence_refs for evidence_ref in required_evidence):
+            raise ValueError("evidence_refs must cover the candidate and review issues")
+        if self.created_at.tzinfo is None or self.created_at.utcoffset() != timedelta(0):
+            raise ValueError("created_at must be UTC")
+        return self
+
+
 class TimelineGate3RunStatus(StrEnum):
     RESERVED = "RESERVED"
     RUNNING = "RUNNING"
@@ -453,6 +572,14 @@ class TimelineGate3RunStatus(StrEnum):
     REJECTED = "REJECTED"
     NEEDS_HUMAN_REVIEW = "NEEDS_HUMAN_REVIEW"
     FAILED = "FAILED"
+
+
+_TIMELINE_REVIEW_TERMINAL = {
+    TimelineGate3RunStatus.APPROVED,
+    TimelineGate3RunStatus.REJECTED,
+    TimelineGate3RunStatus.NEEDS_HUMAN_REVIEW,
+    TimelineGate3RunStatus.FAILED,
+}
 
 
 class TimelineRecoveryBudgetV1(StrictBaseModel):
@@ -488,12 +615,13 @@ class TimelineProviderDiagnosticsV1(StrictBaseModel):
 
 
 class TimelineGate3RunV1(StrictBaseModel):
-    """Durable non-canonical work state for exactly one Gate 2 approved bundle."""
+    """Durable non-canonical work state for one approved or execution bundle."""
 
-    schema_version: Literal["1.0", "1.1", "1.2"] = Field(default="1.2")
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3"] = Field(default="1.2")
     timeline_run_id: str = Field(min_length=1)
     project_id: str = Field(min_length=1)
-    source_approved_proposal_bundle_id: str = Field(min_length=1)
+    source_approved_proposal_bundle_id: str | None = Field(default=None, min_length=1)
+    source_narrative_execution_bundle_id: str | None = Field(default=None, min_length=1)
     source_gate2_review_id: str = Field(min_length=1)
     source_gate2_route_id: str = Field(min_length=1)
     idempotency_key: str = Field(min_length=1)
@@ -503,6 +631,7 @@ class TimelineGate3RunV1(StrictBaseModel):
     timeline_agent_run_id: str | None = None
     gate3_result: ReviewGate3ResultV1 | None = None
     gate3_route: NarrativeTimelineReviewRouteV1 | None = None
+    timeline_review_material: TimelineReviewMaterialV1 | None = None
     approved_timeline_bundle: ApprovedTimelineBundleV1 | None = None
     provider_request_count: int = Field(default=0, ge=0)
     failure_category: ProviderFailureCategory | None = None
@@ -512,11 +641,19 @@ class TimelineGate3RunV1(StrictBaseModel):
     initial_timeline_proposal: TimelineAnalysisProposalV1 | None = None
     initial_gate3_result: ReviewGate3ResultV1 | None = None
     initial_gate3_route: NarrativeTimelineReviewRouteV1 | None = None
+    initial_timeline_review_material: TimelineReviewMaterialV1 | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @model_validator(mode="after")
     def validate_checkpoint(self) -> "TimelineGate3RunV1":
+        if (
+            self.source_approved_proposal_bundle_id is None
+            and self.source_narrative_execution_bundle_id is None
+        ):
+            raise ValueError("Timeline run requires approved or execution source provenance")
+        if self.schema_version == "1.3" and self.source_narrative_execution_bundle_id is None:
+            raise ValueError("schema_version=1.3 requires execution-bundle provenance")
         after_provider = {
             TimelineGate3RunStatus.PROVIDER_SUCCEEDED,
             TimelineGate3RunStatus.REVIEWING,
@@ -537,8 +674,11 @@ class TimelineGate3RunV1(StrictBaseModel):
                 and self.gate3_result.human_review is not None
                 and self.gate3_result.effective_decision == ReviewGate3Decision.APPROVED
             )
-            if (self.approved_timeline_bundle is None and not human_approved) or (
-                self.gate3_route is None
+            full_gate2_approval = self.source_approved_proposal_bundle_id is not None
+            if self.gate3_route is None or (
+                full_gate2_approval
+                and self.approved_timeline_bundle is None
+                and not human_approved
             ):
                 raise ValueError("APPROVED state requires a Gate 3 approval")
         elif self.approved_timeline_bundle is not None:
@@ -547,11 +687,23 @@ class TimelineGate3RunV1(StrictBaseModel):
             self.initial_timeline_proposal,
             self.initial_gate3_result,
             self.initial_gate3_route,
+            self.initial_timeline_review_material,
         )
         if any(item is not None for item in preserved) and not all(
             item is not None for item in preserved
         ):
             raise ValueError("initial rejected Timeline artifacts must be retained together")
+        if self.timeline_review_material is not None:
+            material = self.timeline_review_material
+            if (
+                material.timeline_run_id != self.timeline_run_id
+                or material.project_id != self.project_id
+                or material.timeline_candidate != self.timeline_proposal
+            ):
+                raise ValueError("Timeline review material must match the Timeline checkpoint")
+        if self.schema_version == "1.3" and self.status in _TIMELINE_REVIEW_TERMINAL:
+            if self.timeline_review_material is None:
+                raise ValueError("terminal v1.3 Timeline runs require review material")
         return self
 
 

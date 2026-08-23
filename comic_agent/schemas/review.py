@@ -138,6 +138,7 @@ class ReviewIssueCode(StrEnum):
     STATE_CHANGE_UNSUPPORTED_SEMANTICS = "STATE_CHANGE_UNSUPPORTED_SEMANTICS"
     HUMAN_DECISION_REQUIRED = "HUMAN_DECISION_REQUIRED"
     REVIEW_EXECUTION_FAILED = "REVIEW_EXECUTION_FAILED"
+    NARRATIVE_EXECUTION_INCOMPLETE = "NARRATIVE_EXECUTION_INCOMPLETE"
 
 
 type ProposalSchemaName = Literal[
@@ -592,6 +593,164 @@ class ApprovedProposalBundleV1(StrictBaseModel):
         return self
 
 
+class NarrativeExecutionStatus(StrEnum):
+    """Terminal Narrative execution states that can supply non-canonical material."""
+
+    SUCCEEDED = "SUCCEEDED"
+    PARTIAL_FAILED = "PARTIAL_FAILED"
+    NEEDS_HUMAN_ACTION = "NEEDS_HUMAN_ACTION"
+
+
+class NarrativeExecutionExcludedItemV1(StrictBaseModel):
+    """One proposal withheld from downstream execution without mutating its source."""
+
+    schema_version: Literal["1.0"] = Field(default="1.0")
+    proposal_id: str
+    proposal_schema: ProposalSchemaName
+    mode: ReviewableProposalMode
+    reason: str
+    issue_ids: list[str] = Field(default_factory=list)
+    evidence_refs: list[EvidenceRefV1] = Field(default_factory=list)
+
+    @field_validator("proposal_id", "reason")
+    @classmethod
+    def excluded_item_text_is_not_blank(cls, value: str) -> str:
+        return _require_nonblank(value, "proposal_id or reason")
+
+    @field_validator("issue_ids")
+    @classmethod
+    def excluded_item_issue_ids_are_unique(cls, value: list[str]) -> list[str]:
+        for issue_id in value:
+            _require_nonblank(issue_id, "issue_ids item")
+        _require_unique(value, "issue_ids")
+        return value
+
+
+class NarrativeExecutionFailedWindowV1(StrictBaseModel):
+    """A terminal Narrative window that produced no candidate material.
+
+    The record intentionally retains only source-free execution facts and safe
+    diagnostics. It is not a proposal and therefore cannot become Timeline input.
+    """
+
+    schema_version: Literal["1.0"] = Field(default="1.0")
+    analysis_window_id: str
+    mode: ReviewableProposalMode
+    chunk_ids: list[str] = Field(min_length=1)
+    status: Literal["FAILED", "EXHAUSTED", "NEEDS_HUMAN_ACTION"]
+    failure_category: str | None = None
+    safe_issue_codes: list[str] = Field(default_factory=list)
+    recommended_action: str | None = None
+
+    @field_validator("analysis_window_id", "failure_category", "recommended_action")
+    @classmethod
+    def failed_window_text_is_not_blank(cls, value: str | None) -> str | None:
+        if value is not None:
+            return _require_nonblank(value, "failed window text")
+        return value
+
+    @field_validator("chunk_ids", "safe_issue_codes")
+    @classmethod
+    def failed_window_ids_are_unique(cls, value: list[str]) -> list[str]:
+        for item in value:
+            _require_nonblank(item, "failed window id item")
+        _require_unique(value, "failed window ids")
+        return value
+
+
+class NarrativeExecutionProvenanceV1(StrictBaseModel):
+    """Source-bounded lineage for non-canonical Narrative execution material."""
+
+    schema_version: Literal["1.0", "1.1"] = Field(default="1.1")
+    analysis_run_id: str
+    gate1_review_id: str
+    gate2_review_run_id: str | None = None
+    recovery_attempt_id: str | None = None
+    source_chunk_ids: list[str] = Field(default_factory=list)
+    agent_run_ids: list[str] = Field(default_factory=list)
+
+    @field_validator(
+        "analysis_run_id", "gate1_review_id", "gate2_review_run_id", "recovery_attempt_id"
+    )
+    @classmethod
+    def provenance_ids_are_not_blank(cls, value: str | None) -> str | None:
+        if value is not None:
+            return _require_nonblank(value, "provenance id")
+        return value
+
+    @field_validator("source_chunk_ids", "agent_run_ids")
+    @classmethod
+    def provenance_id_collections_are_unique(cls, value: list[str]) -> list[str]:
+        for item_id in value:
+            _require_nonblank(item_id, "provenance id item")
+        _require_unique(value, "provenance ids")
+        return value
+
+
+class NarrativeExecutionBundleV1(StrictBaseModel):
+    """Non-canonical Narrative material that remains traceable after Gate 2 findings.
+
+    This deliberately differs from :class:`ApprovedProposalBundleV1`: it preserves
+    usable candidates, exclusions, and audit findings for later human review without
+    declaring the material approved for canonical StoryBible production.
+    """
+
+    schema_version: Literal["1.0", "1.1"] = Field(default="1.1")
+    bundle_id: str
+    project_id: str
+    document_id: str
+    status: NarrativeExecutionStatus
+    candidates: list[ReviewableProposalEnvelopeV1] = Field(default_factory=list)
+    issues: list[ReviewIssueV1] = Field(default_factory=list)
+    evidence_refs: list[EvidenceRefV1] = Field(default_factory=list)
+    excluded_items: list[NarrativeExecutionExcludedItemV1] = Field(default_factory=list)
+    failed_windows: list[NarrativeExecutionFailedWindowV1] = Field(default_factory=list)
+    provenance: NarrativeExecutionProvenanceV1
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @field_validator("bundle_id", "project_id", "document_id")
+    @classmethod
+    def bundle_ids_are_not_blank(cls, value: str) -> str:
+        return _require_nonblank(value, "bundle id")
+
+    @model_validator(mode="after")
+    def validate_execution_material(self) -> "NarrativeExecutionBundleV1":
+        candidate_keys = [
+            (candidate.proposal_schema, candidate.proposal.proposal_id)
+            for candidate in self.candidates
+        ]
+        if len(candidate_keys) != len(set(candidate_keys)):
+            raise ValueError("candidates must have unique proposal schema/id keys")
+        excluded_keys = [(item.proposal_schema, item.proposal_id) for item in self.excluded_items]
+        if len(excluded_keys) != len(set(excluded_keys)):
+            raise ValueError("excluded_items must have unique proposal schema/id keys")
+        if set(candidate_keys) & set(excluded_keys):
+            raise ValueError("an excluded item cannot also be a candidate")
+        _require_unique(
+            [item.analysis_window_id for item in self.failed_windows],
+            "failed_windows analysis_window_id",
+        )
+        issue_ids = [issue.issue_id for issue in self.issues]
+        _require_unique(issue_ids, "issues issue_id")
+        known_issue_ids = set(issue_ids)
+        if any(
+            issue_id not in known_issue_ids
+            for item in self.excluded_items
+            for issue_id in item.issue_ids
+        ):
+            raise ValueError("excluded item issue_ids must reference bundle issues")
+        required_evidence = [
+            evidence_ref
+            for candidate in self.candidates
+            for evidence_ref in candidate.aggregated_evidence_refs
+        ] + [evidence_ref for item in self.excluded_items for evidence_ref in item.evidence_refs]
+        if any(evidence_ref not in self.evidence_refs for evidence_ref in required_evidence):
+            raise ValueError("bundle evidence_refs must cover candidates and excluded items")
+        if self.created_at.tzinfo is None or self.created_at.utcoffset() != timedelta(0):
+            raise ValueError("created_at must be UTC")
+        return self
+
+
 class ProposalRecoveryDiagnosticV1(StrictBaseModel):
     """Safe, bounded diagnostic for a future original-mode recovery decision."""
 
@@ -627,7 +786,7 @@ class ProposalRecoveryDiagnosticV1(StrictBaseModel):
 class NarrativeAnalysisReviewRouteV1(StrictBaseModel):
     """Persisted, non-mutating Gate 2 routing record for one analysis run."""
 
-    schema_version: Literal["1.0"] = Field(default="1.0")
+    schema_version: Literal["1.0", "1.1"] = Field(default="1.1")
     analysis_run_id: str
     review_run_id: str | None = None
     decision: ReviewGate2RoutingDecision
@@ -637,6 +796,7 @@ class NarrativeAnalysisReviewRouteV1(StrictBaseModel):
     rejected_count: int = Field(ge=0)
     held_count: int = Field(ge=0)
     approved_proposal_bundle: ApprovedProposalBundleV1 | None = None
+    narrative_execution_bundle: NarrativeExecutionBundleV1 | None = None
     recovery_diagnostics: list[ProposalRecoveryDiagnosticV1] = Field(default_factory=list)
     held_proposal_ids: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -646,6 +806,10 @@ class NarrativeAnalysisReviewRouteV1(StrictBaseModel):
         _require_nonblank(self.analysis_run_id, "analysis_run_id")
         if self.review_run_id is not None:
             _require_nonblank(self.review_run_id, "review_run_id")
+        if self.narrative_execution_bundle is not None and (
+            self.narrative_execution_bundle.provenance.analysis_run_id != self.analysis_run_id
+        ):
+            raise ValueError("execution bundle analysis_run_id must match the route")
         if self.total_count != self.approved_count + self.rejected_count + self.held_count:
             raise ValueError("route counts must add up to total_count")
         _require_unique(self.held_proposal_ids, "held_proposal_ids")
@@ -654,7 +818,12 @@ class NarrativeAnalysisReviewRouteV1(StrictBaseModel):
         if self.decision == ReviewGate2RoutingDecision.NOT_READY:
             if any(
                 value is not None
-                for value in (self.review_run_id, self.review_status, self.approved_proposal_bundle)
+                for value in (
+                    self.review_run_id,
+                    self.review_status,
+                    self.approved_proposal_bundle,
+                    self.narrative_execution_bundle,
+                )
             ) or any(
                 (self.total_count, self.approved_count, self.rejected_count, self.held_count)
             ) or self.recovery_diagnostics or self.held_proposal_ids:
@@ -686,12 +855,27 @@ class NarrativeAnalysisReviewRouteV1(StrictBaseModel):
             if (
                 self.review_status != ReviewGate2RunStatus.NEEDS_HUMAN_REVIEW
                 or self.review_run_id is None
-                or not self.held_count
                 or self.approved_proposal_bundle is not None
                 or len(self.held_proposal_ids) != self.held_count
             ):
                 raise ValueError(
-                    "NEEDS_HUMAN_REVIEW route requires held proposal ids and no bundle"
+                    "NEEDS_HUMAN_REVIEW route requires matching held proposal ids and no bundle"
+                )
+            incomplete_execution = (
+                self.narrative_execution_bundle is not None
+                and self.narrative_execution_bundle.status
+                in {
+                    NarrativeExecutionStatus.PARTIAL_FAILED,
+                    NarrativeExecutionStatus.NEEDS_HUMAN_ACTION,
+                }
+                and any(
+                    issue.code == ReviewIssueCode.NARRATIVE_EXECUTION_INCOMPLETE
+                    for issue in self.narrative_execution_bundle.issues
+                )
+            )
+            if not self.held_count and not incomplete_execution:
+                raise ValueError(
+                    "NEEDS_HUMAN_REVIEW route requires held proposals or incomplete execution"
                 )
         else:
             if (
@@ -716,7 +900,7 @@ class NarrativeAnalysisReviewRouteV1(StrictBaseModel):
 class ReviewGate2ResultV1(StrictBaseModel):
     """Complete Review Gate 2 result, including an all-or-nothing approved bundle."""
 
-    schema_version: Literal["1.0"] = Field(default="1.0")
+    schema_version: Literal["1.0", "1.1"] = Field(default="1.1")
     review_run_id: str
     project_id: str
     document_id: str
@@ -772,9 +956,20 @@ class ReviewGate2ResultV1(StrictBaseModel):
             if self.approved_bundle is None:
                 raise ValueError("COMPLETED result requires an approved_bundle")
         elif self.status == ReviewGate2RunStatus.NEEDS_HUMAN_REVIEW:
-            if not self.needs_human_review_count or self.approved_bundle is not None:
+            incomplete_execution = _has_issue(
+                self.execution_issues,
+                category=ReviewIssueCategory.EXECUTION,
+                severity=ReviewIssueSeverity.REVIEW_REQUIRED,
+            ) and any(
+                issue.code == ReviewIssueCode.NARRATIVE_EXECUTION_INCOMPLETE
+                for issue in self.execution_issues
+            )
+            if (
+                (not self.needs_human_review_count and not incomplete_execution)
+                or self.approved_bundle is not None
+            ):
                 raise ValueError(
-                    "NEEDS_HUMAN_REVIEW result requires pending decisions and no bundle"
+                    "NEEDS_HUMAN_REVIEW result requires pending decisions or incomplete execution"
                 )
         else:
             if self.approved_bundle is not None:

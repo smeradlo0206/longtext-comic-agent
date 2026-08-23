@@ -20,6 +20,7 @@ from comic_agent.repositories.narrative_analysis_recovery_repository import (
     NarrativeAnalysisRecoveryRepository,
 )
 from comic_agent.repositories.narrative_analysis_repository import NarrativeAnalysisRepository
+from comic_agent.repositories.production_dossier_repository import ProductionDossierRepository
 from comic_agent.repositories.source_repository import SourceRepository
 from comic_agent.repositories.timeline_gate3_repository import TimelineGate3Repository
 from comic_agent.schemas.base import RealityLayer
@@ -36,6 +37,7 @@ from comic_agent.services.id_service import checksum_text, stable_id
 from comic_agent.services.narrative_analysis_coordinator import NarrativeAnalysisCoordinator
 from comic_agent.services.narrative_analysis_worker import NarrativeAnalysisWorker
 from comic_agent.services.narrative_timeline_coordinator import NarrativeTimelineCoordinator
+from comic_agent.services.production_dossier_materializer import ProductionDossierMaterializer
 from comic_agent.workflows.mock_event_workflow import MockEventWorkflow
 from comic_agent.workflows.narrative_analyst_workflow import NarrativeAnalystWorkflow
 from comic_agent.workflows.real_event_workflow import RealEventWorkflow
@@ -445,6 +447,12 @@ def _run_whole_document_analysis(
             allow_fake_provider=settings.fake_pipeline_demo,
         )
         worker.run_pending(analysis_run_id, real_llm_requested=real_llm_requested)
+        ProductionDossierMaterializer(
+            analysis_repository=NarrativeAnalysisRepository(session),
+            recovery_repository=NarrativeAnalysisRecoveryRepository(session),
+            timeline_repository=TimelineGate3Repository(session),
+            dossier_repository=ProductionDossierRepository(session),
+        ).materialize_terminal(analysis_run_id)
     finally:
         session.close()
 

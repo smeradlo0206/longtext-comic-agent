@@ -16,6 +16,8 @@ from comic_agent.schemas.storybible import (
     ProfileUpdateProposalV1,
     StoryBibleCanonicalSnapshotV1,
     StoryBibleCuratorProposalV1,
+    StoryBibleProductionAuthorizationKind,
+    StoryBibleProductionAuthorizationPolicy,
     StoryBibleProductionContextV1,
     StoryBibleProductionFailureStage,
     StoryBibleProductionInputV1,
@@ -57,9 +59,7 @@ def _chunk(index: int = 1) -> SourceChunkV1:
 
 def _prepared(chunk_count: int = 1) -> PreparedStoryBibleProduction:
     chunks = [_chunk(index) for index in range(1, chunk_count + 1)]
-    evidence = [
-        EvidenceRefV1(chunk_id=chunk.chunk_id, quote_text=chunk.text) for chunk in chunks
-    ]
+    evidence = [EvidenceRefV1(chunk_id=chunk.chunk_id, quote_text=chunk.text) for chunk in chunks]
     snapshot = StoryBibleCanonicalSnapshotV1(project_id="project-1")
     snapshot_hash = canonical_storybible_snapshot_hash(snapshot)
     context = StoryBibleProductionContextV1(
@@ -95,9 +95,7 @@ def _prepared(chunk_count: int = 1) -> PreparedStoryBibleProduction:
         created_at=now,
         updated_at=now,
     )
-    return PreparedStoryBibleProduction(
-        production_input=production_input, context=context, run=run
-    )
+    return PreparedStoryBibleProduction(production_input=production_input, context=context, run=run)
 
 
 def _proposal(*, conflict: bool = False) -> StoryBibleCuratorProposalV1:
@@ -252,6 +250,10 @@ def _coordinator(
     prepared: PreparedStoryBibleProduction | None = None,
     *,
     curator: _Curator | None = None,
+    authorization_policy: StoryBibleProductionAuthorizationPolicy = (
+        StoryBibleProductionAuthorizationPolicy.LEGACY_COMPAT
+    ),
+    allow_legacy_compat: bool | None = None,
 ) -> tuple[StoryBibleProductionCoordinator, _Builder, _Runs, _AgentRuns, _Curator]:
     prepared = prepared or _prepared()
     builder = _Builder(prepared)
@@ -265,6 +267,12 @@ def _coordinator(
         output_normalizer=StoryBibleProductionOutputNormalizer(),
         agent_run_repository=agents,  # type: ignore[arg-type]
         settings=Settings(_env_file=None, enable_real_llm=True),
+        authorization_policy=authorization_policy,
+        allow_legacy_compat=(
+            authorization_policy == StoryBibleProductionAuthorizationPolicy.LEGACY_COMPAT
+            if allow_legacy_compat is None
+            else allow_legacy_compat
+        ),
     )
     return coordinator, builder, runs, agents, curator
 
@@ -277,6 +285,50 @@ def _run(coordinator: StoryBibleProductionCoordinator) -> StoryBibleProductionRu
         model_identity="model-1",
         real_llm_requested=True,
     )
+
+
+def test_default_policy_refuses_legacy_v1_before_curator_execution() -> None:
+    coordinator, _, runs, _, curator = _coordinator(
+        authorization_policy=StoryBibleProductionAuthorizationPolicy.HUMAN_APPROVED_ONLY
+    )
+
+    result = _run(coordinator)
+
+    assert result.code == "PRODUCTION_AUTHORIZATION_REQUIRED"
+    assert curator.calls == 0
+    assert runs.run.status == StoryBibleProductionRunStatus.RESERVED
+
+
+def test_human_only_run_prepared_requires_human_review_and_dossier_ids() -> None:
+    legacy = _prepared()
+    malformed_input = legacy.production_input.model_copy(
+        update={
+            "authorization_kind": StoryBibleProductionAuthorizationKind.HUMAN_APPROVED,
+            "gate2_approved_bundle_id": None,
+            "approved_timeline_bundle_id": None,
+            "human_review_id": None,
+            "production_dossier_id": None,
+        }
+    )
+    malformed = legacy.__class__(malformed_input, legacy.context, legacy.run)
+    coordinator, _, _, _, curator = _coordinator(
+        malformed,
+        authorization_policy=StoryBibleProductionAuthorizationPolicy.HUMAN_APPROVED_ONLY,
+    )
+
+    result = coordinator.run_prepared(
+        prepared=malformed,
+        model_identity="model-1",
+        real_llm_requested=True,
+    )
+
+    assert result.code == "PRODUCTION_AUTHORIZATION_REQUIRED"
+    assert curator.calls == 0
+
+
+def test_legacy_compat_requires_explicit_test_or_maintenance_tool_opt_in() -> None:
+    with pytest.raises(ValueError, match="explicit test or maintenance-tool opt-in"):
+        _coordinator(allow_legacy_compat=False)
 
 
 def test_success_replay_and_business_conflict_are_successful() -> None:
@@ -472,9 +524,7 @@ def test_concurrent_duplicate_has_one_claim_and_one_curator_call() -> None:
 
 def test_failure_messages_redact_configured_secret_and_source_text() -> None:
     secret = "sk-secret-value"
-    error = RuntimeError(
-        f"Authorization: Bearer {secret}; API key {secret}; Xia Ming arrived 1."
-    )
+    error = RuntimeError(f"Authorization: Bearer {secret}; API key {secret}; Xia Ming arrived 1.")
     coordinator, _, _, agents, _ = _coordinator(curator=_Curator(error))
     coordinator._settings.llm_api_key = SecretStr(secret)  # noqa: SLF001
     result = _run(coordinator)

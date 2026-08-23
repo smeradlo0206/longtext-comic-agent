@@ -28,6 +28,10 @@ def test_alembic_upgrade_creates_storybible_production_run_table(
         "project_id",
         "gate2_approved_bundle_id",
         "approved_timeline_bundle_id",
+        "human_review_id",
+        "production_dossier_id",
+        "narrative_execution_bundle_id",
+        "timeline_review_material_id",
         "input_hash",
         "status",
         "payload",
@@ -44,5 +48,9 @@ def test_alembic_upgrade_creates_storybible_production_run_table(
         "ix_storybible_production_runs_project_id",
         "ix_storybible_production_runs_gate2_approved_bundle_id",
         "ix_storybible_production_runs_approved_timeline_bundle_id",
+        "ix_storybible_production_runs_human_review_id",
+        "ix_storybible_production_runs_production_dossier_id",
+        "ix_storybible_production_runs_narrative_execution_bundle_id",
+        "ix_storybible_production_runs_timeline_review_material_id",
     }
     get_settings.cache_clear()

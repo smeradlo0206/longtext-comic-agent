@@ -11,6 +11,7 @@ from comic_agent.agents.timeline_agent import TimelineAgent
 from comic_agent.api.agent_runs import router as agent_runs_router
 from comic_agent.api.documents import router as documents_router
 from comic_agent.api.health import router as health_router
+from comic_agent.api.human_production import router as human_production_router
 from comic_agent.api.pipeline import router as pipeline_router
 from comic_agent.api.projects import router as projects_router
 from comic_agent.api.settings import router as settings_router
@@ -68,6 +69,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(settings_router)
     app.include_router(timeline_router)
     app.include_router(pipeline_router)
+    app.include_router(human_production_router)
 
     console_path = Path(__file__).resolve().parents[1] / "web_console" / "index.html"
 

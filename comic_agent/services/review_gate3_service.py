@@ -32,7 +32,8 @@ class ReviewGate3Service:
         self,
         *,
         project_id: str,
-        source_approved_proposal_bundle_id: str,
+        source_approved_proposal_bundle_id: str | None,
+        source_narrative_execution_bundle_id: str | None = None,
         timeline_run_id: str,
         reviewer_agent_run_id: str,
         event_ids: Iterable[str],
@@ -52,6 +53,7 @@ class ReviewGate3Service:
             review_id=review_id,
             project_id=project_id,
             source_approved_proposal_bundle_id=source_approved_proposal_bundle_id,
+            source_narrative_execution_bundle_id=source_narrative_execution_bundle_id,
             timeline_run_id=timeline_run_id,
             reviewer_agent_run_id=reviewer_agent_run_id,
             decision=decision,
@@ -84,6 +86,8 @@ class ReviewGate3Service:
             review_id=review_id,
             timeline_run_id=timeline_run_id,
             route=decision,
+            source_approved_proposal_bundle_id=source_approved_proposal_bundle_id,
+            source_narrative_execution_bundle_id=source_narrative_execution_bundle_id,
             approved_timeline_bundle_id=bundle.bundle_id if bundle is not None else None,
             approved_timeline_bundle=bundle,
             held_issue_ids=(
@@ -99,7 +103,8 @@ class ReviewGate3Service:
         self,
         *,
         project_id: str,
-        source_approved_proposal_bundle_id: str,
+        source_approved_proposal_bundle_id: str | None,
+        source_narrative_execution_bundle_id: str | None = None,
         timeline_run_id: str,
         reviewer_agent_run_id: str,
     ) -> tuple[ReviewGate3ResultV1, NarrativeTimelineReviewRouteV1]:
@@ -118,6 +123,7 @@ class ReviewGate3Service:
             review_id=review_id,
             project_id=project_id,
             source_approved_proposal_bundle_id=source_approved_proposal_bundle_id,
+            source_narrative_execution_bundle_id=source_narrative_execution_bundle_id,
             timeline_run_id=timeline_run_id,
             reviewer_agent_run_id=reviewer_agent_run_id,
             decision=ReviewGate3Decision.FAILED,
@@ -130,6 +136,8 @@ class ReviewGate3Service:
             review_id=review_id,
             timeline_run_id=timeline_run_id,
             route=ReviewGate3Decision.FAILED,
+            source_approved_proposal_bundle_id=source_approved_proposal_bundle_id,
+            source_narrative_execution_bundle_id=source_narrative_execution_bundle_id,
             safe_issue_codes=[TimelineGate3IssueCode.REVIEW_EXECUTION_FAILED],
         )
 
@@ -148,7 +156,7 @@ class ReviewGate3Service:
         route_id: str,
         review_id: str,
         project_id: str,
-        source_bundle_id: str,
+        source_bundle_id: str | None,
         source_gate2_review_id: str,
         source_gate2_route_id: str,
         timeline_run_id: str,
@@ -158,7 +166,7 @@ class ReviewGate3Service:
     ) -> ApprovedTimelineBundleV1 | None:
         """Build the sole canonical approved Timeline artifact for either approval path."""
 
-        if decision != ReviewGate3Decision.APPROVED:
+        if decision != ReviewGate3Decision.APPROVED or source_bundle_id is None:
             return None
         return ApprovedTimelineBundleV1(
             bundle_id=stable_id("approved-timeline", timeline_run_id, review_id),

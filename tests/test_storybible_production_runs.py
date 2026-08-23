@@ -22,8 +22,10 @@ from comic_agent.schemas.review import ApprovedProposalBundleV1
 from comic_agent.schemas.storybible import (
     CommitPlanV1,
     ConflictV1,
+    HumanApprovedStoryBibleProductionLineageV1,
     ProfileUpdateProposalV1,
     StoryBibleCuratorProposalV1,
+    StoryBibleProductionAuthorizationKind,
     StoryBibleProductionFailureStage,
     StoryBibleProductionInputV1,
     StoryBibleProductionRunStatus,
@@ -183,7 +185,13 @@ def test_production_input_is_strict_and_contains_no_proposal_arrays() -> None:
         "project_id",
         "gate2_approved_bundle_id",
         "approved_timeline_bundle_id",
+        "human_review_id",
+        "production_dossier_id",
+        "narrative_execution_bundle_id",
+        "timeline_review_material_id",
         "canonical_storybible_snapshot_hash",
+        "authorization_kind",
+        "human_approved_lineage",
     }
     with pytest.raises(ValidationError):
         StoryBibleProductionInputV1.model_validate(
@@ -230,6 +238,48 @@ def test_reservation_is_idempotent_and_material_changes_get_new_runs(
     assert duplicate.run_id == first.run_id
     assert changed.run_id != first.run_id
     assert session.scalar(select(func.count()).select_from(StoryBibleProductionRunModel)) == 2
+
+
+def test_human_approved_reservation_persists_explicit_lineage(
+    production_repository: tuple[StoryBibleProductionRunRepository, Session],
+) -> None:
+    repository, session = production_repository
+    lineage = HumanApprovedStoryBibleProductionLineageV1(
+        human_review_id="human-review-1",
+        dossier_id="dossier-1",
+        narrative_execution_bundle_id="narrative-execution-1",
+        timeline_review_material_id="timeline-material-1",
+    )
+    production_input = StoryBibleProductionInputV1(
+        schema_version="1.2",
+        project_id="project-1",
+        human_review_id=lineage.human_review_id,
+        production_dossier_id=lineage.dossier_id,
+        narrative_execution_bundle_id=lineage.narrative_execution_bundle_id,
+        timeline_review_material_id=lineage.timeline_review_material_id,
+        canonical_storybible_snapshot_hash="snapshot-hash-1",
+        authorization_kind=StoryBibleProductionAuthorizationKind.HUMAN_APPROVED,
+        human_approved_lineage=lineage,
+    )
+
+    run = repository.reserve_human_approved_run(
+        production_input,
+        lineage=lineage,
+        model_identity="curator-model-v1",
+    )
+    restored = repository.get_run(run.run_id)
+    row = session.get(StoryBibleProductionRunModel, run.run_id)
+
+    assert restored is not None
+    assert restored.human_approved_lineage == lineage
+    assert restored.authorization_kind == StoryBibleProductionAuthorizationKind.HUMAN_APPROVED
+    assert row is not None
+    assert row.gate2_approved_bundle_id is None
+    assert row.approved_timeline_bundle_id is None
+    assert row.human_review_id == lineage.human_review_id
+    assert row.production_dossier_id == lineage.dossier_id
+    assert row.narrative_execution_bundle_id == lineage.narrative_execution_bundle_id
+    assert row.timeline_review_material_id == lineage.timeline_review_material_id
 
 
 def test_legal_transitions_and_full_proposal_round_trip(

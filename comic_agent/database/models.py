@@ -319,15 +319,57 @@ class StoryBibleProductionRunModel(Base):
 
     run_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     project_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
-    gate2_approved_bundle_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
-    approved_timeline_bundle_id: Mapped[str] = mapped_column(
-        String(128), index=True, nullable=False
+    # Legacy bundle columns remain readable for old runs only. Human-approved
+    # executions use the explicit lineage columns below instead.
+    gate2_approved_bundle_id: Mapped[str | None] = mapped_column(
+        String(128), index=True, nullable=True
+    )
+    approved_timeline_bundle_id: Mapped[str | None] = mapped_column(
+        String(128), index=True, nullable=True
+    )
+    human_review_id: Mapped[str | None] = mapped_column(String(128), index=True, nullable=True)
+    production_dossier_id: Mapped[str | None] = mapped_column(
+        String(128), index=True, nullable=True
+    )
+    narrative_execution_bundle_id: Mapped[str | None] = mapped_column(
+        String(128), index=True, nullable=True
+    )
+    timeline_review_material_id: Mapped[str | None] = mapped_column(
+        String(128), index=True, nullable=True
     )
     input_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class HumanReviewRunModel(Base):
+    """Insert-only durable human decision over one ProductionDossier."""
+
+    __tablename__ = "human_review_runs"
+    __table_args__ = (UniqueConstraint("dossier_id", name="uq_human_review_dossier"),)
+
+    review_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    dossier_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    dossier_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    decision: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ProductionDossierModel(Base):
+    """Immutable non-canonical dossier payload bound to a human review."""
+
+    __tablename__ = "production_dossiers"
+
+    dossier_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    document_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class StoryBibleReviewRunModel(Base):

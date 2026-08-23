@@ -878,7 +878,9 @@ class NarrativeAnalysisWorker:
             window.status == NarrativeAnalysisWindowStatus.SUCCEEDED for window in windows
         )
         status = (
-            NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
+            NarrativeAnalysisRunStatus.FAILED
+            if succeeded_count == 0
+            else NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
             if any(
                 window.status == NarrativeAnalysisWindowStatus.NEEDS_HUMAN_ACTION
                 for window in windows
@@ -886,14 +888,17 @@ class NarrativeAnalysisWorker:
             else NarrativeAnalysisRunStatus.SUCCEEDED
             if failed_count == 0
             else NarrativeAnalysisRunStatus.PARTIAL_FAILED
-            if succeeded_count > 0
-            else NarrativeAnalysisRunStatus.FAILED
         )
         completed = run.model_copy(update={"status": status, "updated_at": datetime.now(UTC)})
         saved = self._analysis_repository.save_run(completed)
-        if saved.status == NarrativeAnalysisRunStatus.SUCCEEDED:
+        artifact_statuses = {
+            NarrativeAnalysisRunStatus.SUCCEEDED,
+            NarrativeAnalysisRunStatus.PARTIAL_FAILED,
+            NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION,
+        }
+        if saved.status in artifact_statuses:
             self._save_aggregate_result(saved, windows)
-        if saved.status == NarrativeAnalysisRunStatus.SUCCEEDED:
+        if saved.status in artifact_statuses:
             reviewed = NarrativeAnalysisReviewCoordinator(
                 source_repository=self._source_repository,
                 analysis_repository=self._analysis_repository,
@@ -1030,18 +1035,22 @@ class NarrativeAnalysisWorker:
         *,
         source_chunk_ids: list[str] | None = None,
     ) -> None:
-        """Invoke Timeline only from the persisted, Gate 2-approved bundle boundary."""
+        """Invoke Timeline from persisted Gate 2 execution material when it is safe."""
 
-        if self._timeline_coordinator is None or run.status != NarrativeAnalysisRunStatus.SUCCEEDED:
+        if self._timeline_coordinator is None or run.status not in {
+            NarrativeAnalysisRunStatus.SUCCEEDED,
+            NarrativeAnalysisRunStatus.PARTIAL_FAILED,
+            NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION,
+        }:
             return
         route = run.review_gate2_route
-        bundle = route.approved_proposal_bundle if route is not None else None
-        if route is None or bundle is None:
+        execution = route.narrative_execution_bundle if route is not None else None
+        if route is None or execution is None:
             return
         if not any(
-            item.source.proposal_schema
+            candidate.proposal_schema
             in {"EventProposalV1", "ClaimProposalV1", "StateChangeProposalV1"}
-            for item in bundle.approved_proposals
+            for candidate in execution.candidates
         ):
             return
         used_chunk_ids = source_chunk_ids or [
@@ -1062,7 +1071,7 @@ class NarrativeAnalysisWorker:
             for chunk in self._source_repository.list_document_chunks(run.document_id)
             if chunk.chunk_id in selected_ids
         ]
-        timeline_run = self._timeline_coordinator.run_if_approved(
+        timeline_run = self._timeline_coordinator.run_if_execution_ready(
             route=route,
             source_chunks=source_chunks,
         )
@@ -1075,7 +1084,7 @@ class NarrativeAnalysisWorker:
             )
 
     def _run_recovery_timelines(self, root_analysis_run_id: str) -> None:
-        """Send only fresh Stage B-approved bundles to Timeline; retain the root rejection."""
+        """Send fresh, evidence-valid Stage B execution material to Timeline."""
 
         if self._timeline_coordinator is None or self._recovery_repository is None:
             return
@@ -1084,7 +1093,7 @@ class NarrativeAnalysisWorker:
             return
         for attempt in self._recovery_repository.list_attempts(root_analysis_run_id):
             route = attempt.fresh_route
-            if route is None or route.approved_proposal_bundle is None:
+            if route is None or route.narrative_execution_bundle is None:
                 continue
             self._run_timeline_if_approved(
                 root.model_copy(update={"review_gate2_route": route}),

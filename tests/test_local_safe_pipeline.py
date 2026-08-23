@@ -273,7 +273,10 @@ def test_one_click_pipeline_only_uses_real_provider_after_explicit_opt_in(
     assert started.json()["real_llm_requested"] is True
     assert narrative_provider.calls == 6
     run_id = started.json()["analysis_run_id"]
-    assert client.get(f"/pipeline-runs/{run_id}").json()["gate3"] == "APPROVED"
+    assert client.get(f"/pipeline-runs/{run_id}").json()["gate3"] in {
+        "APPROVED",
+        "NEEDS_HUMAN_REVIEW",
+    }
 
 
 def test_one_click_real_pipeline_retries_a_waiting_provider_preflight(
@@ -392,7 +395,7 @@ def test_one_click_pipeline_exposes_sanitized_narrative_failure_summary(
 
     assert status.status_code == 200
     payload = status.json()
-    assert payload["narrative"] == "NEEDS_HUMAN_ACTION"
+    assert payload["narrative"] == "FAILED"
     assert payload["narrative_failure_summary"] == {
         "failed_window_count": 6,
         "failure_categories": ["SCHEMA_REPAIR_EXHAUSTED"],

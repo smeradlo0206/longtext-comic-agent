@@ -14,6 +14,10 @@ from comic_agent.repositories.storybible_production_run_repository import (
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.storybible import (
     StoryBibleCuratorProposalV1,
+    StoryBibleProductionAuthorizationFailureCode,
+    StoryBibleProductionAuthorizationFailureV1,
+    StoryBibleProductionAuthorizationKind,
+    StoryBibleProductionAuthorizationPolicy,
     StoryBibleProductionFailureStage,
     StoryBibleProductionRunStatus,
     StoryBibleProductionRunV1,
@@ -77,6 +81,10 @@ class StoryBibleProductionCoordinator:
         settings: Settings,
         provider_name: str | None = None,
         input_adapter: StoryBibleCuratorInputAdapter | None = None,
+        authorization_policy: StoryBibleProductionAuthorizationPolicy = (
+            StoryBibleProductionAuthorizationPolicy.HUMAN_APPROVED_ONLY
+        ),
+        allow_legacy_compat: bool = False,
     ) -> None:
         self._builder = input_builder
         self._runs = run_repository
@@ -86,6 +94,12 @@ class StoryBibleProductionCoordinator:
         self._settings = settings
         self._provider_name = provider_name or settings.llm_provider_name
         self._adapter = input_adapter or StoryBibleCuratorInputAdapter()
+        if (
+            authorization_policy == StoryBibleProductionAuthorizationPolicy.LEGACY_COMPAT
+            and not allow_legacy_compat
+        ):
+            raise ValueError("LEGACY_COMPAT requires an explicit test or maintenance-tool opt-in")
+        self._authorization_policy = authorization_policy
 
     def run(
         self,
@@ -95,8 +109,14 @@ class StoryBibleProductionCoordinator:
         approved_timeline_bundle_id: str,
         model_identity: str,
         real_llm_requested: bool,
-    ) -> StoryBibleProductionRunV1:
-        """Execute or safely resume one canonical production input."""
+    ) -> StoryBibleProductionRunV1 | StoryBibleProductionAuthorizationFailureV1:
+        """Execute legacy input only when explicit compatibility policy permits it."""
+
+        if (
+            self._authorization_policy
+            == StoryBibleProductionAuthorizationPolicy.HUMAN_APPROVED_ONLY
+        ):
+            return self._authorization_required()
 
         if not real_llm_requested:
             raise StoryBibleProductionExecutionError(
@@ -120,6 +140,46 @@ class StoryBibleProductionCoordinator:
             raise StoryBibleProductionExecutionError(
                 StoryBibleProductionFailureStage.INPUT_ADAPTATION,
                 self._sanitize(exc, []),
+            ) from exc
+
+        return self.run_prepared(
+            prepared=prepared,
+            model_identity=model_identity,
+            real_llm_requested=real_llm_requested,
+        )
+
+    def run_prepared(
+        self,
+        *,
+        prepared: PreparedStoryBibleProduction,
+        model_identity: str,
+        real_llm_requested: bool,
+    ) -> StoryBibleProductionRunV1 | StoryBibleProductionAuthorizationFailureV1:
+        """Execute a prepared input only if it satisfies the active authorization policy."""
+
+        if (
+            self._authorization_policy
+            == StoryBibleProductionAuthorizationPolicy.HUMAN_APPROVED_ONLY
+            and (not self._has_human_approved_input(prepared))
+        ):
+            return self._authorization_required()
+
+        if not real_llm_requested:
+            raise StoryBibleProductionExecutionError(
+                StoryBibleProductionFailureStage.INPUT_ADAPTATION,
+                "real StoryBible LLM execution was not explicitly requested",
+            )
+        if not self._settings.enable_real_llm:
+            raise StoryBibleProductionExecutionError(
+                StoryBibleProductionFailureStage.INPUT_ADAPTATION,
+                "real StoryBible LLM execution is disabled by server configuration",
+            )
+        try:
+            self._validate_prepared(prepared, model_identity=model_identity)
+        except (ValueError, ValidationError) as exc:
+            raise StoryBibleProductionExecutionError(
+                StoryBibleProductionFailureStage.INPUT_ADAPTATION,
+                self._sanitize(exc, prepared.context.source_chunks),
             ) from exc
 
         run = prepared.run
@@ -163,9 +223,7 @@ class StoryBibleProductionCoordinator:
                 running, stage, exc, started_at, prepared.context.source_chunks
             )
         try:
-            normalized = self._normalizer.normalize(
-                raw, context=prepared.context, run=running
-            )
+            normalized = self._normalizer.normalize(raw, context=prepared.context, run=running)
         except Exception as exc:
             return self._record_failure(
                 running,
@@ -245,9 +303,7 @@ class StoryBibleProductionCoordinator:
         source_chunks: list[SourceChunkV1],
     ) -> StoryBibleProductionRunV1:
         message = self._sanitize(exc, source_chunks)
-        agent_run = self._failed_agent_run(
-            run, stage, message, started_at, source_chunks
-        )
+        agent_run = self._failed_agent_run(run, stage, message, started_at, source_chunks)
         agent_run_id: str | None = None
         try:
             self._agent_runs.save_agent_run(agent_run)
@@ -332,12 +388,40 @@ class StoryBibleProductionCoordinator:
 
     @staticmethod
     def _input_refs(run: StoryBibleProductionRunV1) -> list[AgentInputRefV1]:
-        return [
+        refs = [
             AgentInputRefV1(
                 object_id=run.run_id,
                 object_schema="StoryBibleProductionRunV1",
                 role="production_run",
             ),
+        ]
+        if run.authorization_kind == StoryBibleProductionAuthorizationKind.HUMAN_APPROVED:
+            lineage = run.human_approved_lineage
+            if lineage is None:
+                raise ValueError("human-approved production run lacks human-review lineage")
+            return refs + [
+                AgentInputRefV1(
+                    object_id=lineage.human_review_id,
+                    object_schema="HumanReviewRunV1",
+                    role="human_approval",
+                ),
+                AgentInputRefV1(
+                    object_id=lineage.dossier_id,
+                    object_schema="ProductionDossierV1",
+                    role="production_dossier",
+                ),
+                AgentInputRefV1(
+                    object_id=lineage.narrative_execution_bundle_id,
+                    object_schema="NarrativeExecutionBundleV1",
+                    role="narrative_execution",
+                ),
+                AgentInputRefV1(
+                    object_id=lineage.timeline_review_material_id,
+                    object_schema="TimelineReviewMaterialV1",
+                    role="timeline_review_material",
+                ),
+            ]
+        return refs + [
             AgentInputRefV1(
                 object_id=run.gate2_approved_bundle_id,
                 object_schema="ApprovedProposalBundleV1",
@@ -351,18 +435,19 @@ class StoryBibleProductionCoordinator:
         ]
 
     def _checkpoint_payload(self, run: StoryBibleProductionRunV1) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "storybible_run_id": run.run_id,
             "input_hash": run.input_hash,
             "model_identity": run.model_identity,
             "provider_name": self._provider_name,
             "output_schema": "StoryBibleCuratorProposalV1",
         }
+        if run.human_approved_lineage is not None:
+            payload["human_approved_lineage"] = run.human_approved_lineage.model_dump(mode="json")
+        return payload
 
     @staticmethod
-    def _validate_prepared(
-        prepared: PreparedStoryBibleProduction, *, model_identity: str
-    ) -> None:
+    def _validate_prepared(prepared: PreparedStoryBibleProduction, *, model_identity: str) -> None:
         run = prepared.run
         context = prepared.context
         value = prepared.production_input
@@ -371,11 +456,21 @@ class StoryBibleProductionCoordinator:
             or run.project_id != value.project_id
             or run.gate2_approved_bundle_id != context.gate2_approved_bundle_id
             or run.approved_timeline_bundle_id != context.approved_timeline_bundle_id
-            or run.canonical_storybible_snapshot_hash
-            != context.canonical_storybible_snapshot_hash
-            or run.canonical_storybible_snapshot_hash
-            != value.canonical_storybible_snapshot_hash
+            or run.human_review_id != context.human_review_id
+            or run.human_review_id != value.human_review_id
+            or run.production_dossier_id != context.production_dossier_id
+            or run.production_dossier_id != value.production_dossier_id
+            or run.narrative_execution_bundle_id != context.narrative_execution_bundle_id
+            or run.narrative_execution_bundle_id != value.narrative_execution_bundle_id
+            or run.timeline_review_material_id != context.timeline_review_material_id
+            or run.timeline_review_material_id != value.timeline_review_material_id
+            or run.canonical_storybible_snapshot_hash != context.canonical_storybible_snapshot_hash
+            or run.canonical_storybible_snapshot_hash != value.canonical_storybible_snapshot_hash
             or run.model_identity != model_identity
+            or run.authorization_kind != context.authorization_kind
+            or run.authorization_kind != value.authorization_kind
+            or run.human_approved_lineage != context.human_approved_lineage
+            or run.human_approved_lineage != value.human_approved_lineage
         ):
             raise ValueError("stale or mismatched StoryBible production context")
 
@@ -398,6 +493,25 @@ class StoryBibleProductionCoordinator:
         if run is None:
             raise RuntimeError("StoryBible production reservation disappeared")
         return run
+
+    def _authorization_required(self) -> StoryBibleProductionAuthorizationFailureV1:
+        return StoryBibleProductionAuthorizationFailureV1(
+            code=StoryBibleProductionAuthorizationFailureCode.PRODUCTION_AUTHORIZATION_REQUIRED,
+            authorization_policy=self._authorization_policy,
+        )
+
+    @staticmethod
+    def _has_human_approved_input(prepared: PreparedStoryBibleProduction) -> bool:
+        """Reject obviously incomplete human-approved calls before execution work."""
+
+        value = prepared.production_input
+        return (
+            value.authorization_kind == StoryBibleProductionAuthorizationKind.HUMAN_APPROVED
+            and value.human_review_id is not None
+            and value.human_review_id.strip() != ""
+            and value.production_dossier_id is not None
+            and value.production_dossier_id.strip() != ""
+        )
 
     def _sanitize(self, exc: Exception, chunks: list[SourceChunkV1]) -> str:
         message = sanitize_error_message(

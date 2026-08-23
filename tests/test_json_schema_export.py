@@ -121,6 +121,27 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     assert (output_dir / "ProposalReviewDecisionV1.json").exists()
     assert (output_dir / "ApprovedProposalBundleV1.json").exists()
     for schema_name in (
+        "NarrativeExecutionBundleV1",
+        "NarrativeExecutionExcludedItemV1",
+        "NarrativeExecutionFailedWindowV1",
+        "NarrativeExecutionProvenanceV1",
+        "TimelineReviewMaterialV1",
+        "TimelineReviewMaterialProvenanceV1",
+        "ProductionDossierV1",
+        "ProductionDossierProvenanceV1",
+        "StoryBibleProductionInputV2",
+        "StoryBibleProductionInputBuildResultV1",
+        "HumanReviewLineageV1",
+        "HumanReviewSubmissionV1",
+        "HumanReviewRunV1",
+        "HumanReviewResultV1",
+        "HumanApprovedStoryBibleProductionContextV1",
+        "HumanApprovedStoryBibleProductionLineageV1",
+        "StoryBibleProductionAuthorizationFailureV1",
+        "ComicPlanningInputV1",
+    ):
+        assert (output_dir / f"{schema_name}.json").exists()
+    for schema_name in (
         "ApprovedStoryBibleBundleV1",
         "StoryBibleReviewContextV1",
         "StoryBibleReviewResultV1",
@@ -309,7 +330,7 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
     assert gate1_policy_schema["properties"]["schema_version"]["enum"] == ["1.0", "1.1"]
     assert "max_warning_whitespace_run" in gate1_policy_schema["properties"]
     assert "review_required_whitespace_run" in gate1_policy_schema["properties"]
-    assert review_result_schema["properties"]["schema_version"]["const"] == "1.0"
+    assert review_result_schema["properties"]["schema_version"]["enum"] == ["1.0", "1.1"]
     review_text = json.dumps(review_envelope_schema, ensure_ascii=False)
     for proposal_name in (
         "EventProposalV1",

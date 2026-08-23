@@ -46,7 +46,17 @@ class TimelineGate3Repository:
     def reserve_run(self, run: TimelineGate3RunV1) -> TimelineGate3RunV1:
         """Create once, returning the durable winner after a uniqueness race."""
 
-        existing = self.get_by_bundle(run.project_id, run.source_approved_proposal_bundle_id)
+        # Preserve the existing lookup key for fully-approved Gate 2 runs.  The
+        # pipeline status API and legacy recovery paths query by the approved
+        # bundle ID; execution-only runs (non-blocking Gate 2 outcomes) have no
+        # such bundle and therefore use their execution-bundle ID instead.
+        source_bundle_id = (
+            run.source_approved_proposal_bundle_id
+            or run.source_narrative_execution_bundle_id
+        )
+        if source_bundle_id is None:
+            raise ValueError("Timeline Gate 3 run requires source bundle provenance")
+        existing = self.get_by_bundle(run.project_id, source_bundle_id)
         if existing is not None:
             return existing
         try:
@@ -54,7 +64,7 @@ class TimelineGate3Repository:
                 TimelineGate3RunModel(
                     timeline_run_id=run.timeline_run_id,
                     project_id=run.project_id,
-                    source_bundle_id=run.source_approved_proposal_bundle_id,
+                    source_bundle_id=source_bundle_id,
                     idempotency_key=run.idempotency_key,
                     status=str(run.status),
                     payload=run.model_dump(mode="json"),
@@ -66,7 +76,7 @@ class TimelineGate3Repository:
             return run
         except IntegrityError:
             self._session.rollback()
-            existing = self.get_by_bundle(run.project_id, run.source_approved_proposal_bundle_id)
+            existing = self.get_by_bundle(run.project_id, source_bundle_id)
             if existing is None:
                 raise
             return existing
@@ -135,6 +145,7 @@ class TimelineGate3Repository:
                 "initial_timeline_proposal": run.timeline_proposal,
                 "initial_gate3_result": run.gate3_result,
                 "initial_gate3_route": run.gate3_route,
+                "initial_timeline_review_material": run.timeline_review_material,
                 "updated_at": datetime.now(UTC),
             }
         )

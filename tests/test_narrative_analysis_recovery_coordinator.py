@@ -295,6 +295,7 @@ def test_provider_success_is_durable_before_gate2_and_resume_only_reviews(tmp_pa
     original_result = analysis.run.review_gate2_result
     original_route = analysis.run.review_gate2_route
     assert original_route is not None and original_route.decision == "REJECTED"
+    assert original_route.narrative_execution_bundle is not None
 
     engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'recovery-e2e.db'}")
     Base.metadata.create_all(engine)
@@ -349,6 +350,15 @@ def test_provider_success_is_durable_before_gate2_and_resume_only_reviews(tmp_pa
     assert attempts[0].status == RecoveryAttemptStatus.COMPLETED
     assert attempts[0].fresh_route is not None
     assert attempts[0].fresh_route.decision == "APPROVED"
+    assert attempts[0].fresh_route.narrative_execution_bundle is not None
+    assert (
+        attempts[0].fresh_route.narrative_execution_bundle.provenance.recovery_attempt_id
+        == attempts[0].attempt_id
+    )
+    assert (
+        attempts[0].fresh_route.narrative_execution_bundle.bundle_id
+        != original_route.narrative_execution_bundle.bundle_id
+    )
     assert analysis.run.status == NarrativeAnalysisRunStatus.SUCCEEDED
     assert analysis.run.review_gate2_result == original_result
     assert analysis.run.review_gate2_route == original_route

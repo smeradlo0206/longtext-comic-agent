@@ -681,6 +681,20 @@ class _FakeSourceRepository:
         return []
 
 
+class _ApprovedFakeSourceRepository(_FakeSourceRepository):
+    """Test-only Gate 1 boundary for worker-to-Timeline integration coverage."""
+
+    def get_review_gate1(self, document_id: str):
+        approved = [
+            chunk.chunk_id
+            for chunk in self.list_document_chunks(document_id)
+        ]
+        return SimpleNamespace(
+            review_id="gate1-review-1",
+            approved_chunk_bundle=SimpleNamespace(chunk_ids=approved),
+        )
+
+
 def test_analysis_run_idempotency_keeps_dry_run_and_real_opt_in_separate(
     tmp_path: Path,
 ) -> None:
@@ -885,6 +899,39 @@ class _FailSecondWindowProvider(_FakeProvider):
         if self.calls:
             raise self._error
         return super().structured_generate(request, output_model)
+
+
+class _FailNamedWindowProvider(_FakeProvider):
+    """Keep successful windows intact while one bounded source scope fails."""
+
+    def __init__(self, failed_chunk_id: str, error: BaseException) -> None:
+        super().__init__()
+        self._failed_chunk_id = failed_chunk_id
+        self._error = error
+
+    def structured_generate(self, request, output_model):  # type: ignore[no-untyped-def]
+        input_context = request["input_context"]
+        if input_context["source_chunk_ids"] == [self._failed_chunk_id]:
+            raise self._error
+        return super().structured_generate(request, output_model)
+
+
+class _AlwaysFailingProvider(_FakeProvider):
+    def __init__(self, error: BaseException) -> None:
+        super().__init__()
+        self._error = error
+
+    def structured_generate(self, request, output_model):  # type: ignore[no-untyped-def]
+        raise self._error
+
+
+class _RecordingTimelineCoordinator:
+    def __init__(self) -> None:
+        self.routes = []
+
+    def run_if_execution_ready(self, *, route, source_chunks):  # type: ignore[no-untyped-def]
+        self.routes.append((route, source_chunks))
+        return None
 
 
 class _RetryingWindowProvider(_FakeProvider):
@@ -1392,11 +1439,128 @@ def test_worker_persists_sanitized_workflow_failure_details(
         assert result is None
     else:
         assert completed.status == NarrativeAnalysisRunStatus.PARTIAL_FAILED
-        assert result is None
+        assert result is not None
     assert failed_window.failure_category == expected_category
     assert failed_window.recommended_action is not None
     assert failed_window.provider_error_diagnostics == expected_diagnostics
     assert "synthetic source" not in (failed_window.error_message or "")
+
+
+def test_partial_execution_keeps_nine_valid_windows_in_gate2_timeline_and_resume_lineage(
+    tmp_path: Path,
+) -> None:
+    """One terminal window does not discard nine valid, isolated window outputs."""
+
+    source_repository = _ApprovedFakeSourceRepository([_chunk(index) for index in range(10)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        window_size=1,
+        stride=1,
+        real_llm_requested=True,
+    )
+    timeline = _RecordingTimelineCoordinator()
+    worker = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=_FailNamedWindowProvider("chunk-9", RuntimeError("synthetic failure")),
+        timeline_coordinator=timeline,  # type: ignore[arg-type]
+    )
+
+    first = worker.run_pending(run.analysis_run_id)
+    first_route = first.review_gate2_route
+    assert first.status == NarrativeAnalysisRunStatus.PARTIAL_FAILED
+    assert first_route is not None
+    first_bundle = first_route.narrative_execution_bundle
+    assert first_bundle is not None
+    assert len(first_bundle.candidates) == 9
+    assert [window.analysis_window_id for window in first_bundle.failed_windows]
+    assert first_route.decision == "NEEDS_HUMAN_REVIEW"
+    assert len(timeline.routes) == 1
+
+    resumed = worker.run_pending(run.analysis_run_id)
+    resumed_route = resumed.review_gate2_route
+    assert resumed.status == NarrativeAnalysisRunStatus.PARTIAL_FAILED
+    assert resumed_route is not None
+    assert resumed_route.narrative_execution_bundle is not None
+    assert resumed_route.narrative_execution_bundle.bundle_id == first_bundle.bundle_id
+
+
+def test_all_terminal_windows_without_candidates_stop_before_timeline(tmp_path: Path) -> None:
+    source_repository = _ApprovedFakeSourceRepository([_chunk(index) for index in range(2)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        window_size=1,
+        stride=1,
+        real_llm_requested=True,
+    )
+    timeline = _RecordingTimelineCoordinator()
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=_AlwaysFailingProvider(RuntimeError("synthetic failure")),
+        timeline_coordinator=timeline,  # type: ignore[arg-type]
+    ).run_pending(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.FAILED
+    assert analysis_repository.get_result(run.analysis_run_id) is None
+    assert timeline.routes == []
+
+
+def test_partial_needs_human_action_keeps_valid_candidates_in_timeline(tmp_path: Path) -> None:
+    source_repository = _ApprovedFakeSourceRepository([_chunk(index) for index in range(2)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        window_size=1,
+        stride=1,
+        max_split_depth=0,
+        real_llm_requested=True,
+    )
+    timeline = _RecordingTimelineCoordinator()
+    schema_error = ProviderResponseError(
+        "LLM provider response failed schema validation",
+        {
+            "schema_error_kind": "missing",
+            "schema_error_field_paths": ["events.0.summary"],
+            "schema_error_rule_codes": ["SCHEMA_CONTRACT_INVALID"],
+            "expected_output_schema": "EventProposalBatchV1",
+        },
+    )
+    completed = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=_FailNamedWindowProvider("chunk-1", schema_error),
+        timeline_coordinator=timeline,  # type: ignore[arg-type]
+    ).run_pending(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
+    assert completed.review_gate2_route is not None
+    execution = completed.review_gate2_route.narrative_execution_bundle
+    assert execution is not None
+    assert execution.status == "NEEDS_HUMAN_ACTION"
+    assert execution.issues
+    assert len(execution.candidates) == 1
+    assert len(timeline.routes) == 1
 
 
 class _FailingAgentRunRepository(_FakeAgentRunRepository):
@@ -2459,7 +2623,7 @@ def test_worker_does_not_convert_source_only_state_change_rejection_to_success(
     result = analysis_repository.get_result(run.analysis_run_id)
     failed_window = analysis_repository.list_windows(run.analysis_run_id)[0]
 
-    assert completed.status == NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
+    assert completed.status == NarrativeAnalysisRunStatus.FAILED
     assert provider.calls == ["state_change_extraction"] * 2
     assert result is None
     assert failed_window.status == NarrativeAnalysisWindowStatus.NEEDS_HUMAN_ACTION
@@ -3369,7 +3533,7 @@ def test_schema_repair_exhaustion_is_explicit_and_never_enters_gate2(tmp_path: P
     ).run_pending(run.analysis_run_id)
 
     window = analysis_repository.list_windows(run.analysis_run_id)[0]
-    assert completed.status == NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
+    assert completed.status == NarrativeAnalysisRunStatus.FAILED
     assert window.status == NarrativeAnalysisWindowStatus.NEEDS_HUMAN_ACTION
     assert window.failure_category == "SCHEMA_REPAIR_EXHAUSTED"
     assert window.provider_request_count == 2

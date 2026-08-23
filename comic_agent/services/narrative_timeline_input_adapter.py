@@ -1,4 +1,4 @@
-"""Build bounded Timeline input exclusively from Gate 2 approved Narrative output."""
+"""Build bounded Timeline input from non-canonical, evidence-safe Narrative material."""
 
 from collections.abc import Sequence
 
@@ -10,6 +10,7 @@ from comic_agent.schemas import (
     ClaimType,
     EventProposalV1,
     NarrativeAnalysisReviewRouteV1,
+    NarrativeExecutionBundleV1,
     ReviewGate2RoutingDecision,
     SourceChunkV1,
     StateChangeProposalV1,
@@ -92,6 +93,94 @@ class NarrativeTimelineInputAdapter:
             state_change_proposals=changes,
         )
 
+    def build_from_execution_bundle(
+        self,
+        *,
+        route: NarrativeAnalysisReviewRouteV1,
+        source_chunks: Sequence[SourceChunkV1],
+        mode: TimelineAnalysisMode = TimelineAnalysisMode.RULES_ONLY,
+    ) -> TimelineAnalysisInputV1:
+        """Build Timeline input from Gate 2 audit material, never raw aggregates.
+
+        The execution bundle contains only candidates that Gate 2 established as
+        schema-, provenance-, evidence-, and mode-boundary safe. Its excluded items
+        and all Gate 2 issues remain on the bundle for later review, not in Timeline
+        facts.
+        """
+
+        if not isinstance(route, NarrativeAnalysisReviewRouteV1):
+            raise ValueError("NarrativeTimelineInputAdapter accepts only a Gate 2 route")
+        execution = route.narrative_execution_bundle
+        if execution is None:
+            raise ValueError("NarrativeTimelineInputAdapter requires an execution bundle")
+        return self._from_execution_bundle(
+            bundle=execution,
+            gate2_review_run_id=route.review_run_id,
+            approved_bundle_id=(
+                route.approved_proposal_bundle.bundle_id
+                if route.approved_proposal_bundle is not None
+                else None
+            ),
+            source_chunks=source_chunks,
+            mode=mode,
+        )
+
+    @staticmethod
+    def has_timeline_candidates(bundle: NarrativeExecutionBundleV1) -> bool:
+        """Whether the safely selected execution material contains Timeline-relevant facts."""
+
+        return any(
+            isinstance(
+                candidate.proposal,
+                (EventProposalV1, ClaimProposalV1, StateChangeProposalV1),
+            )
+            for candidate in bundle.candidates
+        )
+
+    def _from_execution_bundle(
+        self,
+        *,
+        bundle: NarrativeExecutionBundleV1,
+        gate2_review_run_id: str | None,
+        approved_bundle_id: str | None,
+        source_chunks: Sequence[SourceChunkV1],
+        mode: TimelineAnalysisMode,
+    ) -> TimelineAnalysisInputV1:
+        if not isinstance(gate2_review_run_id, str) or not gate2_review_run_id:
+            raise ValueError("execution bundle requires a Gate 2 review run id")
+        chunks = {chunk.chunk_id: chunk for chunk in source_chunks}
+        if len(chunks) != len(source_chunks):
+            raise ValueError("NarrativeTimelineInputAdapter source chunk ids must be unique")
+        events: list[EventProposalV1] = []
+        claims: list[ClaimProposalV1] = []
+        changes: list[StateChangeProposalV1] = []
+        for candidate in bundle.candidates:
+            proposal = candidate.proposal
+            # Gate 2 normally moves evidence-invalid proposals into
+            # ``excluded_items`` before this boundary.  Keep this individual
+            # recheck as defense in depth, but do not let one malformed
+            # candidate discard unrelated evidence-valid Timeline facts.
+            if not self._evidence_is_in_scope(proposal.evidence_refs, chunks):
+                continue
+            if isinstance(proposal, EventProposalV1):
+                events.append(proposal)
+            elif isinstance(proposal, ClaimProposalV1):
+                if proposal.claim_type == ClaimType.FACTUAL_ASSERTION:
+                    claims.append(proposal)
+            elif isinstance(proposal, StateChangeProposalV1):
+                changes.append(proposal)
+        return TimelineAnalysisInputV1(
+            schema_version="1.4",
+            project_id=bundle.project_id,
+            source_approved_bundle_id=approved_bundle_id,
+            source_review_run_id=gate2_review_run_id,
+            source_narrative_execution_bundle_id=bundle.bundle_id,
+            mode=mode,
+            event_proposals=events,
+            claim_proposals=claims,
+            state_change_proposals=changes,
+        )
+
     @staticmethod
     def _event_with_gate2_links(item: ApprovedProposalItemV1) -> EventProposalV1:
         """Materialize only Gate 2's explicit, audited entity links for Timeline."""
@@ -134,6 +223,19 @@ class NarrativeTimelineInputAdapter:
                 raise ValueError(
                     "Approved proposal evidence must be present in supplied source provenance"
                 )
+
+    @staticmethod
+    def _evidence_is_in_scope(
+        evidence_refs: Sequence[object],
+        chunks: dict[str, SourceChunkV1],
+    ) -> bool:
+        """Return whether one execution candidate remains source-evidence safe."""
+
+        try:
+            NarrativeTimelineInputAdapter._validate_evidence_scope(evidence_refs, chunks)
+        except ValueError:
+            return False
+        return True
 
     @staticmethod
     def _from_bundle(

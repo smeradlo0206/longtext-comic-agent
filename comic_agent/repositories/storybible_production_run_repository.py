@@ -15,7 +15,9 @@ from comic_agent.database.models import (
 )
 from comic_agent.schemas.review import ApprovedProposalBundleV1
 from comic_agent.schemas.storybible import (
+    HumanApprovedStoryBibleProductionLineageV1,
     StoryBibleCuratorProposalV1,
+    StoryBibleProductionAuthorizationKind,
     StoryBibleProductionFailureStage,
     StoryBibleProductionInputV1,
     StoryBibleProductionRunStatus,
@@ -43,8 +45,48 @@ class StoryBibleProductionRunRepository:
         """Validate approved lineage and create-or-return its deterministic run."""
 
         self.validate_approved_lineage(production_input)
+        return self._reserve(
+            production_input,
+            model_identity=model_identity,
+            human_approved_lineage=None,
+        )
+
+    def reserve_human_approved_run(
+        self,
+        production_input: StoryBibleProductionInputV1,
+        *,
+        lineage: HumanApprovedStoryBibleProductionLineageV1,
+        model_identity: str,
+    ) -> StoryBibleProductionRunV1:
+        """Reserve from a validated human-approved context without Gate 2/3 rechecks.
+
+        Human-authorized checkpoints use explicit lineage columns. Legacy approved
+        bundle columns remain available only for historical compatibility reads.
+        """
+
+        if (
+            production_input.authorization_kind
+            != StoryBibleProductionAuthorizationKind.HUMAN_APPROVED
+            or production_input.human_approved_lineage != lineage
+        ):
+            raise ValueError("human-approved production input has invalid authorization")
+        return self._reserve(
+            production_input,
+            model_identity=model_identity,
+            human_approved_lineage=lineage,
+        )
+
+    def _reserve(
+        self,
+        production_input: StoryBibleProductionInputV1,
+        *,
+        model_identity: str,
+        human_approved_lineage: HumanApprovedStoryBibleProductionLineageV1 | None,
+    ) -> StoryBibleProductionRunV1:
         input_hash = storybible_production_input_hash(
-            production_input, model_identity=model_identity
+            production_input,
+            model_identity=model_identity,
+            human_approved_lineage=human_approved_lineage,
         )
         existing = self.get_by_input_hash(production_input.project_id, input_hash)
         if existing is not None:
@@ -55,12 +97,18 @@ class StoryBibleProductionRunRepository:
             project_id=production_input.project_id,
             gate2_approved_bundle_id=production_input.gate2_approved_bundle_id,
             approved_timeline_bundle_id=production_input.approved_timeline_bundle_id,
+            human_review_id=production_input.human_review_id,
+            production_dossier_id=production_input.production_dossier_id,
+            narrative_execution_bundle_id=production_input.narrative_execution_bundle_id,
+            timeline_review_material_id=production_input.timeline_review_material_id,
             canonical_storybible_snapshot_hash=(
                 production_input.canonical_storybible_snapshot_hash
             ),
             input_hash=input_hash,
             model_identity=model_identity,
             status=StoryBibleProductionRunStatus.RESERVED,
+            authorization_kind=production_input.authorization_kind,
+            human_approved_lineage=human_approved_lineage,
             created_at=now,
             updated_at=now,
         )
@@ -71,6 +119,10 @@ class StoryBibleProductionRunRepository:
                     project_id=run.project_id,
                     gate2_approved_bundle_id=run.gate2_approved_bundle_id,
                     approved_timeline_bundle_id=run.approved_timeline_bundle_id,
+                    human_review_id=run.human_review_id,
+                    production_dossier_id=run.production_dossier_id,
+                    narrative_execution_bundle_id=run.narrative_execution_bundle_id,
+                    timeline_review_material_id=run.timeline_review_material_id,
                     input_hash=run.input_hash,
                     status=str(run.status),
                     payload=run.model_dump(mode="json"),
@@ -187,6 +239,14 @@ class StoryBibleProductionRunRepository:
 
     def validate_approved_lineage(self, production_input: StoryBibleProductionInputV1) -> None:
         """Reject cross-project or unrelated persisted Gate 2/Timeline artifacts."""
+
+        if (
+            production_input.authorization_kind
+            != StoryBibleProductionAuthorizationKind.LEGACY_APPROVED
+            or production_input.gate2_approved_bundle_id is None
+            or production_input.approved_timeline_bundle_id is None
+        ):
+            raise ValueError("legacy approval validation requires legacy approved bundle ids")
 
         gate2_found = False
         narrative_rows = self._session.scalars(select(NarrativeAnalysisRunModel)).all()

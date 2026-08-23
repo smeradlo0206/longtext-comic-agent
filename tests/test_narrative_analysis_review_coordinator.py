@@ -112,6 +112,22 @@ def _window() -> NarrativeAnalysisWindowV1:
     )
 
 
+def _failed_window(
+    status: NarrativeAnalysisWindowStatus = NarrativeAnalysisWindowStatus.EXHAUSTED,
+) -> NarrativeAnalysisWindowV1:
+    return NarrativeAnalysisWindowV1(
+        analysis_window_id="window-failed-1",
+        analysis_run_id="analysis-1",
+        mode="event_extraction",
+        window_index=1,
+        chunk_ids=["chunk-1"],
+        owned_chunk_ids=["chunk-1"],
+        status=status,
+        failure_category="PROVIDER_TIMEOUT",
+        recommended_action="Wait for the configured retry window or request human action.",
+    )
+
+
 def test_completed_analysis_automatically_persists_one_idempotent_approved_gate2_route() -> None:
     chunk = _chunk()
     repository = _AnalysisRepository(
@@ -137,12 +153,12 @@ def test_completed_analysis_automatically_persists_one_idempotent_approved_gate2
     assert repository.saves == 1
 
 
-def test_unsuccessful_analysis_does_not_trigger_gate2_review() -> None:
+def test_partial_analysis_persists_execution_bundle_and_gate2_audit() -> None:
     chunk = _chunk()
     repository = _AnalysisRepository(
         _run(NarrativeAnalysisRunStatus.PARTIAL_FAILED),
         NarrativeAnalysisResultV1(analysis_run_id="analysis-1"),
-        [_window()],
+        [_window(), _failed_window()],
     )
     service = _CountingReviewService()
 
@@ -152,9 +168,38 @@ def test_unsuccessful_analysis_does_not_trigger_gate2_review() -> None:
         review_service=service,
     ).review_if_ready("analysis-1")
 
-    assert reviewed.review_gate2_result is None
-    assert reviewed.review_gate2_route is None
-    assert service.calls == 0
+    assert reviewed.review_gate2_result is not None
+    assert reviewed.review_gate2_route is not None
+    assert reviewed.review_gate2_route.decision == "NEEDS_HUMAN_REVIEW"
+    execution = reviewed.review_gate2_route.narrative_execution_bundle
+    assert execution is not None
+    assert execution.status == "PARTIAL_FAILED"
+    assert [item.analysis_window_id for item in execution.failed_windows] == ["window-failed-1"]
+    assert any(issue.code == "NARRATIVE_EXECUTION_INCOMPLETE" for issue in execution.issues)
+    assert service.calls == 1
+
+
+def test_needs_human_action_analysis_persists_execution_bundle_and_gate2_audit() -> None:
+    chunk = _chunk()
+    repository = _AnalysisRepository(
+        _run(NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION),
+        NarrativeAnalysisResultV1(analysis_run_id="analysis-1"),
+        [
+            _window(),
+            _failed_window(NarrativeAnalysisWindowStatus.NEEDS_HUMAN_ACTION),
+        ],
+    )
+
+    reviewed = NarrativeAnalysisReviewCoordinator(
+        source_repository=_SourceRepository([chunk], [chunk.chunk_id]),
+        analysis_repository=repository,  # type: ignore[arg-type]
+    ).review_if_ready("analysis-1")
+
+    assert reviewed.review_gate2_route is not None
+    execution = reviewed.review_gate2_route.narrative_execution_bundle
+    assert execution is not None
+    assert execution.status == "NEEDS_HUMAN_ACTION"
+    assert execution.failed_windows[0].status == "NEEDS_HUMAN_ACTION"
 
 
 def test_rejected_evidence_is_persisted_as_a_safe_route_diagnostic() -> None:
@@ -188,6 +233,13 @@ def test_rejected_evidence_is_persisted_as_a_safe_route_diagnostic() -> None:
     assert reviewed.review_gate2_route is not None
     assert reviewed.review_gate2_route.decision == "REJECTED"
     assert reviewed.review_gate2_route.approved_proposal_bundle is None
+    assert reviewed.review_gate2_route.narrative_execution_bundle is not None
+    assert reviewed.review_gate2_route.narrative_execution_bundle.candidates == []
+    assert [
+        item.proposal_id
+        for item in reviewed.review_gate2_route.narrative_execution_bundle.excluded_items
+    ] == ["event-1"]
+    assert reviewed.review_gate2_route.narrative_execution_bundle.issues
     assert reviewed.review_gate2_route.recovery_diagnostics[0].issue_codes == [
         "EVIDENCE_QUOTE_NOT_FOUND"
     ]
