@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from comic_agent.database.models import TimelineGate3RunModel
 from comic_agent.schemas.timeline import (
+    ReviewGate3Decision,
     TimelineAnalysisInputV1,
     TimelineGate3RunStatus,
     TimelineGate3RunV1,
@@ -183,3 +184,58 @@ class TimelineGate3Repository:
         row.updated_at = run.updated_at
         self._session.commit()
         return run
+
+    def apply_human_review(self, run: TimelineGate3RunV1) -> bool:
+        """Atomically resolve exactly one held Gate 3 run through explicit human review."""
+
+        if run.status not in {
+            TimelineGate3RunStatus.APPROVED,
+            TimelineGate3RunStatus.REJECTED,
+        }:
+            raise ValueError("Human review must resolve Gate 3 to APPROVED or REJECTED")
+        if (
+            run.gate3_result is None
+            or run.gate3_result.human_review is None
+            or run.gate3_result.effective_decision != str(run.status)
+        ):
+            raise ValueError("Human review metadata must match the resolved Gate 3 status")
+        result = self._session.execute(
+            update(TimelineGate3RunModel)
+            .where(
+                TimelineGate3RunModel.timeline_run_id == run.timeline_run_id,
+                TimelineGate3RunModel.status
+                == str(TimelineGate3RunStatus.NEEDS_HUMAN_REVIEW),
+            )
+            .values(
+                status=str(run.status),
+                payload=run.model_dump(mode="json"),
+                updated_at=run.updated_at,
+            )
+        )
+        self._session.commit()
+        return cast(CursorResult[object], result).rowcount == 1
+
+    def finalize_human_approval(self, run: TimelineGate3RunV1) -> bool:
+        """Persist a missing canonical bundle for an already human-approved run."""
+
+        if (
+            run.status != TimelineGate3RunStatus.APPROVED
+            or run.approved_timeline_bundle is None
+            or run.gate3_result is None
+            or run.gate3_result.human_review is None
+            or run.gate3_result.effective_decision != str(ReviewGate3Decision.APPROVED)
+        ):
+            raise ValueError("Only a human-approved Gate 3 run can be finalized")
+        result = self._session.execute(
+            update(TimelineGate3RunModel)
+            .where(
+                TimelineGate3RunModel.timeline_run_id == run.timeline_run_id,
+                TimelineGate3RunModel.status == str(TimelineGate3RunStatus.APPROVED),
+            )
+            .values(
+                payload=run.model_dump(mode="json"),
+                updated_at=run.updated_at,
+            )
+        )
+        self._session.commit()
+        return cast(CursorResult[object], result).rowcount == 1

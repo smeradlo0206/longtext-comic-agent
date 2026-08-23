@@ -305,3 +305,53 @@ class ProviderCircuitStateModel(Base):
     status: Mapped[str] = mapped_column(String(64), nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class StoryBibleProductionRunModel(Base):
+    """Idempotent non-canonical production StoryBible execution checkpoint."""
+
+    __tablename__ = "storybible_production_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "input_hash", name="uq_storybible_production_project_input"
+        ),
+    )
+
+    run_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    gate2_approved_bundle_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    approved_timeline_bundle_id: Mapped[str] = mapped_column(
+        String(128), index=True, nullable=False
+    )
+    input_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class StoryBibleReviewRunModel(Base):
+    """Deterministic review checkpoint with an optional insert-once frozen bundle."""
+
+    __tablename__ = "storybible_review_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_storybible_run_id",
+            name="uq_storybible_review_source_run",
+        ),
+        UniqueConstraint("bundle_id", name="uq_storybible_review_bundle"),
+    )
+
+    review_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    source_storybible_run_id: Mapped[str] = mapped_column(
+        String(128), index=True, nullable=False
+    )
+    proposal_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    bundle_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    snapshot_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    frozen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

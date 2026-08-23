@@ -66,7 +66,7 @@ class ReviewGate3Service:
             checked_temporal_relation_ids=[relation.proposal_id for relation in relations],
             evidence_refs=evidence,
         )
-        bundle = self._approved_bundle(
+        bundle = self.build_approved_bundle(
             decision=decision,
             route_id=route_id,
             review_id=review_id,
@@ -142,7 +142,7 @@ class ReviewGate3Service:
         return ReviewGate3Decision.APPROVED
 
     @staticmethod
-    def _approved_bundle(
+    def build_approved_bundle(
         *,
         decision: ReviewGate3Decision,
         route_id: str,
@@ -156,6 +156,8 @@ class ReviewGate3Service:
         event_ids: list[str],
         evidence: list[EvidenceRefV1],
     ) -> ApprovedTimelineBundleV1 | None:
+        """Build the sole canonical approved Timeline artifact for either approval path."""
+
         if decision != ReviewGate3Decision.APPROVED:
             return None
         return ApprovedTimelineBundleV1(

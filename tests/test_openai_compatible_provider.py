@@ -96,6 +96,32 @@ def test_openai_provider_validates_message_content_through_output_model() -> Non
         )
 
 
+def test_openai_provider_retries_one_http_failure_when_configured() -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx.Response(503, request=request)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"answer":"ok"}'}}]},
+            request=request,
+        )
+
+    provider = OpenAICompatibleProvider(
+        base_url="https://api.example/v1",
+        api_key=SecretStr("test-api-key"),
+        model="deepseek-v4-pro",
+        max_retries=1,
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert provider.structured_generate({"messages": []}, OutputModel) == OutputModel(answer="ok")
+    assert attempts == 2
+
+
 def test_settings_load_openai_compatible_provider_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -108,6 +134,8 @@ def test_settings_load_openai_compatible_provider_environment(
     assert settings.llm_api_key.get_secret_value() == "test-api-key"
     assert settings.storybible_model == "deepseek-v4-pro"
     assert settings.llm_timeout_seconds == 60.0
+    assert settings.timeline_llm_enabled is False
+    assert settings.timeline_llm_max_retries == 1
 
 
 def test_llm_output_token_budget_defaults_to_8000_and_honors_environment(
@@ -628,6 +656,55 @@ def test_openai_compatible_provider_adds_fixed_schema_recovery_instruction() -> 
     assert "exactly one EventProposalBatchV1 JSON object" in user_message
     assert "events may be empty" in user_message
     assert "actor_resolution_status" in user_message
+
+
+def test_event_actor_validation_exposes_safe_rule_code() -> None:
+    invalid = _event_batch_json()
+    invalid["events"][0].update(
+        {
+            "actor_resolution_status": "KNOWN",
+            "participant_ids": [],
+            "unresolved_actor_ref_id": None,
+        }
+    )
+    provider = OpenAICompatibleLLMProvider(
+        api_key="secret-test-key",
+        http_client=FakeHttpClient(response=_chat_response(json.dumps(invalid))),
+    )
+
+    with pytest.raises(ProviderResponseError) as exc_info:
+        provider.structured_generate({}, EventProposalBatchV1)
+
+    diagnostics = exc_info.value.diagnostics
+    assert diagnostics["schema_error_rule_codes"] == [
+        "EVENT_KNOWN_ACTOR_REQUIRES_PARTICIPANT_IDS"
+    ]
+    assert "participant_ids" not in str(diagnostics.get("schema_error_rule_codes"))
+
+
+def test_event_actor_schema_recovery_includes_exact_safe_truth_table() -> None:
+    client = FakeHttpClient(
+        response=_chat_response(json.dumps(_event_batch_json(), ensure_ascii=False))
+    )
+    provider = OpenAICompatibleLLMProvider(api_key="secret-test-key", http_client=client)
+
+    provider.structured_generate(
+        {
+            "input_context": {
+                "output_recovery": "schema_validation",
+                "schema_error_rule_codes": [
+                    "EVENT_KNOWN_ACTOR_REQUIRES_PARTICIPANT_IDS"
+                ],
+            }
+        },
+        EventProposalBatchV1,
+    )
+
+    user_message = client.requests[0]["json"]["messages"][1]["content"]
+    assert "EVENT_KNOWN_ACTOR_REQUIRES_PARTICIPANT_IDS" in user_message
+    assert "KNOWN requires a non-empty participant_ids" in user_message
+    assert "UNRESOLVED requires empty participant_ids" in user_message
+    assert "non-null unresolved_actor_ref_id" in user_message
 
 
 def test_state_change_schema_recovery_instruction_is_numeric_and_source_free() -> None:
