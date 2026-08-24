@@ -4,6 +4,8 @@ import re
 from datetime import UTC, datetime
 from typing import Protocol, cast
 
+from pydantic import ValidationError
+
 from comic_agent.providers.openai_compatible import (
     ProviderHttpError,
     ProviderNetworkError,
@@ -12,6 +14,7 @@ from comic_agent.providers.openai_compatible import (
 )
 from comic_agent.repositories.agent_run_repository import AgentRunRepository
 from comic_agent.repositories.timeline_gate3_repository import TimelineGate3Repository
+from comic_agent.schemas.base import EvidenceRefV1
 from comic_agent.schemas.reliability import ProviderFailureCategory
 from comic_agent.schemas.review import (
     NarrativeAnalysisReviewRouteV1,
@@ -24,11 +27,14 @@ from comic_agent.schemas.timeline import (
     TimelineAnalysisInputV1,
     TimelineAnalysisMode,
     TimelineAnalysisProposalV1,
+    TimelineFailureOrigin,
+    TimelineFailureSummaryV1,
     TimelineGate3RunStatus,
     TimelineGate3RunV1,
     TimelineProviderDiagnosticsV1,
     TimelineReviewMaterialProvenanceV1,
     TimelineReviewMaterialV1,
+    TimelineValidationErrorV1,
 )
 from comic_agent.schemas.workflow import AgentRunStatus, AgentRunV1
 from comic_agent.services.id_service import stable_id
@@ -128,21 +134,15 @@ class NarrativeTimelineCoordinator:
         try:
             proposal = self._timeline_runner.run(timeline_input, source_chunks=source_chunks)
         except (RuntimeError, TimeoutError, ValueError) as exc:
-            failure_category, safe_issue_codes = _safe_failure_diagnostics(exc)
-            failed = running.model_copy(
-                update={
-                    "status": TimelineGate3RunStatus.FAILED,
-                    "failure_category": failure_category,
-                    "safe_issue_codes": safe_issue_codes,
-                    "provider_request_count": (
-                        running.provider_request_count
-                        + _provider_request_count(self._timeline_runner)
-                    ),
-                    "provider_diagnostics": _safe_provider_diagnostics(exc),
-                    "updated_at": datetime.now(UTC),
-                }
+            return self._persist_failure(
+                running=running,
+                timeline_input=timeline_input,
+                exc=exc,
+                provider_request_count=(
+                    running.provider_request_count
+                    + _provider_request_count(self._timeline_runner)
+                ),
             )
-            return self._repository.save_transition(failed)
 
         agent_run_id = stable_id("timeline-agent-run", running.timeline_run_id)
         self._agent_runs.save_agent_run(
@@ -252,21 +252,14 @@ class NarrativeTimelineCoordinator:
         try:
             proposal = self._timeline_runner.run(timeline_input, source_chunks=source_chunks)
         except (RuntimeError, TimeoutError, ValueError) as exc:
-            failure_category, safe_issue_codes = _safe_failure_diagnostics(exc)
-            return self._repository.save_transition(
-                running.model_copy(
-                    update={
-                        "status": TimelineGate3RunStatus.FAILED,
-                        "failure_category": failure_category,
-                        "safe_issue_codes": safe_issue_codes,
-                        "provider_request_count": (
-                            running.provider_request_count
-                            + _provider_request_count(self._timeline_runner)
-                        ),
-                        "provider_diagnostics": _safe_provider_diagnostics(exc),
-                        "updated_at": datetime.now(UTC),
-                    }
-                )
+            return self._persist_failure(
+                running=running,
+                timeline_input=timeline_input,
+                exc=exc,
+                provider_request_count=(
+                    running.provider_request_count
+                    + _provider_request_count(self._timeline_runner)
+                ),
             )
         agent_run_id = stable_id("timeline-agent-run", running.timeline_run_id)
         self._agent_runs.save_agent_run(
@@ -341,16 +334,15 @@ class NarrativeTimelineCoordinator:
                 source_chunks=source_chunks,
             )
         except (RuntimeError, TimeoutError, ValueError) as exc:
-            failure_category, safe_issue_codes = _safe_failure_diagnostics(exc)
-            failed = recovering.model_copy(
-                update={
-                    "status": TimelineGate3RunStatus.FAILED,
-                    "failure_category": failure_category,
-                    "safe_issue_codes": safe_issue_codes,
-                    "updated_at": datetime.now(UTC),
-                }
+            return self._persist_failure(
+                running=recovering,
+                timeline_input=recovering.timeline_input,
+                exc=exc,
+                provider_request_count=(
+                    recovering.provider_request_count
+                    + _provider_request_count(self._timeline_runner)
+                ),
             )
-            return self._repository.save_transition(failed)
         attempt_number = recovering.recovery_budget.attempts_used
         agent_run_id = stable_id(
             "timeline-agent-recovery-run",
@@ -476,6 +468,155 @@ class NarrativeTimelineCoordinator:
             )
         )
 
+    def _persist_failure(
+        self,
+        *,
+        running: TimelineGate3RunV1,
+        timeline_input: TimelineAnalysisInputV1,
+        exc: Exception,
+        provider_request_count: int,
+    ) -> TimelineGate3RunV1:
+        """Persist a readable, source-free terminal Timeline failure artifact.
+
+        Timeline v1.3 requires terminal review material.  A Provider or local
+        validation failure has no valid inferred relation, so this records an
+        empty, evidence-backed candidate and a failed Gate 3 audit rather than
+        manufacturing a Timeline fact or leaving an unreadable checkpoint.
+        """
+
+        failure_category, safe_issue_codes = _safe_failure_diagnostics(exc)
+        diagnostics = _safe_provider_diagnostics(exc)
+        timeline_agent_run_id = stable_id(
+            "timeline-agent-failure-run", running.timeline_run_id
+        )
+        reviewer_agent_run_id = stable_id(
+            "gate3-agent-failure-run", running.timeline_run_id
+        )
+        failure_origin = (
+            str(diagnostics.failure_origin) if diagnostics and diagnostics.failure_origin else None
+        )
+        self._agent_runs.save_agent_run(
+            AgentRunV1(
+                agent_run_id=timeline_agent_run_id,
+                project_id=running.project_id,
+                agent_name="timeline-agent",
+                input_chunk_ids=self._chunk_ids(timeline_input),
+                output_schema="TimelineAnalysisProposalV1",
+                status=AgentRunStatus.FAILED,
+                error_message="Timeline execution failed",
+                payload={
+                    "timeline_run_id": running.timeline_run_id,
+                    "failure_origin": failure_origin,
+                },
+            )
+        )
+        self._agent_runs.save_agent_run(
+            AgentRunV1(
+                agent_run_id=reviewer_agent_run_id,
+                project_id=running.project_id,
+                agent_name="review-gate-3",
+                input_chunk_ids=self._chunk_ids(timeline_input),
+                output_schema="ReviewGate3ResultV1",
+                status=AgentRunStatus.FAILED,
+                error_message="Timeline review not run after execution failure",
+                payload={
+                    "timeline_run_id": running.timeline_run_id,
+                    "failure_origin": failure_origin,
+                },
+            )
+        )
+        result, route = self._review_service.failed(
+            project_id=running.project_id,
+            source_approved_proposal_bundle_id=running.source_approved_proposal_bundle_id,
+            source_narrative_execution_bundle_id=(
+                running.source_narrative_execution_bundle_id
+            ),
+            timeline_run_id=running.timeline_run_id,
+            reviewer_agent_run_id=reviewer_agent_run_id,
+        )
+        proposal = self._failed_timeline_proposal(running, timeline_input)
+        material = TimelineReviewMaterialV1(
+            material_id=stable_id(
+                "timeline-review-material", running.timeline_run_id, result.review_id
+            ),
+            project_id=running.project_id,
+            narrative_execution_bundle_id=(
+                running.source_narrative_execution_bundle_id
+                or stable_id(
+                    "legacy-approved-bundle-execution",
+                    running.source_approved_proposal_bundle_id,
+                )
+            ),
+            timeline_run_id=running.timeline_run_id,
+            timeline_candidate=proposal,
+            temporal_relations=[],
+            review_id=result.review_id,
+            review_status=result.decision,
+            issues=result.issues,
+            evidence_refs=[*proposal.evidence_refs, *result.evidence_refs],
+            provenance=TimelineReviewMaterialProvenanceV1(
+                source_chunk_ids=self._chunk_ids(timeline_input),
+                timeline_agent_run_id=timeline_agent_run_id,
+                gate3_reviewer_agent_run_id=reviewer_agent_run_id,
+            ),
+            failure_summary=TimelineFailureSummaryV1(
+                category=failure_category,
+                error_origin=(diagnostics.failure_origin if diagnostics else None),
+                field_path=(
+                    diagnostics.validation_errors[0].field_path
+                    if diagnostics and diagnostics.validation_errors
+                    else None
+                ),
+            ),
+        )
+        return self._repository.save_transition(
+            running.model_copy(
+                update={
+                    "status": TimelineGate3RunStatus.FAILED,
+                    "timeline_proposal": proposal,
+                    "timeline_agent_run_id": timeline_agent_run_id,
+                    "gate3_result": result,
+                    "gate3_route": route,
+                    "timeline_review_material": material,
+                    "failure_category": failure_category,
+                    "safe_issue_codes": safe_issue_codes,
+                    "provider_request_count": provider_request_count,
+                    "provider_diagnostics": diagnostics,
+                    "updated_at": datetime.now(UTC),
+                }
+            )
+        )
+
+    @staticmethod
+    def _failed_timeline_proposal(
+        running: TimelineGate3RunV1,
+        timeline_input: TimelineAnalysisInputV1,
+    ) -> TimelineAnalysisProposalV1:
+        """Build an empty, source-backed candidate solely for failure review material."""
+
+        evidence_refs: list[EvidenceRefV1] = []
+
+        def add_evidence(source_evidence: list[EvidenceRefV1]) -> None:
+            for evidence_ref in source_evidence:
+                if evidence_ref not in evidence_refs:
+                    evidence_refs.append(evidence_ref)
+
+        for event_proposal in timeline_input.event_proposals:
+            add_evidence(event_proposal.evidence_refs)
+        for claim_proposal in timeline_input.claim_proposals:
+            add_evidence(claim_proposal.evidence_refs)
+        for state_change_proposal in timeline_input.state_change_proposals:
+            add_evidence(state_change_proposal.evidence_refs)
+        return TimelineAnalysisProposalV1(
+            proposal_id=stable_id("timeline-failure-proposal", running.timeline_run_id),
+            project_id=running.project_id,
+            temporal_relations=[],
+            conflicts=[],
+            duplicate_candidates=[],
+            evidence_refs=evidence_refs,
+            confidence=0,
+        )
+
     @staticmethod
     def _chunk_ids(timeline_input: TimelineAnalysisInputV1) -> list[str]:
         proposals = [
@@ -512,9 +653,21 @@ def _provider_request_count(runner: TimelineRunner) -> int:
 
 
 def _safe_provider_diagnostics(exc: Exception) -> TimelineProviderDiagnosticsV1 | None:
-    """Copy only typed, source-free Provider diagnostics into the Timeline run."""
+    """Return typed, source-free validation diagnostics when available."""
 
+    if isinstance(exc, ValidationError):
+        validation_errors = _validation_errors_from_pydantic(exc)
+        return TimelineProviderDiagnosticsV1(
+            failure_origin=TimelineFailureOrigin.LOCAL_ARTIFACT_CONSTRUCTION_ERROR,
+            validation_errors=validation_errors,
+            schema_error_field_paths=[item.field_path for item in validation_errors],
+            schema_error_rule_codes=[item.error_type.upper() for item in validation_errors],
+        )
     if not isinstance(exc, ProviderResponseError):
+        if isinstance(exc, ValueError):
+            return TimelineProviderDiagnosticsV1(
+                failure_origin=TimelineFailureOrigin.CONTRACT_VALIDATION_ERROR,
+            )
         return None
     diagnostics = exc.diagnostics
 
@@ -541,15 +694,84 @@ def _safe_provider_diagnostics(exc: Exception) -> TimelineProviderDiagnosticsV1 
         and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", finish_reason)
         else None
     )
-    return TimelineProviderDiagnosticsV1(
-        expected_output_schema=safe_expected,
-        schema_error_field_paths=safe_strings(
-            "schema_error_field_paths", 32, r"[A-Za-z0-9_.\[\]-]{1,256}"
-        ),
-        schema_error_rule_codes=safe_strings(
-            "schema_error_rule_codes", 32, r"[A-Z][A-Z0-9_]{0,255}"
-        ),
-        finish_reason=(
-            safe_finish
-        ),
+    field_paths = safe_strings(
+        "schema_error_field_paths", 32, r"[A-Za-z0-9_.\[\]-]{1,256}"
     )
+    rule_codes = safe_strings(
+        "schema_error_rule_codes", 32, r"[A-Z][A-Z0-9_]{0,255}"
+    )
+    error_kind = diagnostics.get("schema_error_kind")
+    safe_error_type = (
+        error_kind[:128]
+        if isinstance(error_kind, str)
+        and re.fullmatch(r"[a-z][a-z0-9_]{0,127}", error_kind)
+        else "provider_response_error"
+    )
+    return TimelineProviderDiagnosticsV1(
+        failure_origin=TimelineFailureOrigin.LLM_OUTPUT_SCHEMA_INVALID,
+        expected_output_schema=safe_expected,
+        schema_error_field_paths=field_paths,
+        schema_error_rule_codes=rule_codes,
+        finish_reason=safe_finish,
+        validation_errors=[
+            TimelineValidationErrorV1(
+                field_path=field_path,
+                error_type=safe_error_type,
+                message_type=_message_type(safe_error_type),
+            )
+            for field_path in field_paths
+        ],
+    )
+
+
+def _validation_errors_from_pydantic(exc: ValidationError) -> list[TimelineValidationErrorV1]:
+    """Convert Pydantic locations into a bounded allowlist without input values."""
+
+    validation_errors: list[TimelineValidationErrorV1] = []
+    for error in exc.errors(include_input=False)[:32]:
+        field_path = _safe_field_path(error.get("loc"))
+        error_type = error.get("type")
+        if field_path is None or not isinstance(error_type, str):
+            continue
+        if not re.fullmatch(r"[a-z][a-z0-9_]{0,127}", error_type):
+            continue
+        validation_errors.append(
+            TimelineValidationErrorV1(
+                field_path=field_path,
+                error_type=error_type,
+                message_type=_message_type(error_type),
+            )
+        )
+    return validation_errors
+
+
+def _safe_field_path(location: object) -> str | None:
+    if not isinstance(location, tuple) or not location:
+        return None
+    parts: list[str] = []
+    for item in location:
+        if isinstance(item, int) and item >= 0:
+            parts.append(f"[{item}]")
+        elif isinstance(item, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", item):
+            parts.append(item)
+        else:
+            return None
+    path = "".join(
+        part if part.startswith("[") or index == 0 else f".{part}"
+        for index, part in enumerate(parts)
+    )
+    return path if re.fullmatch(r"[A-Za-z0-9_.\[\]-]{1,256}", path) else None
+
+
+def _message_type(error_type: str) -> str:
+    if error_type == "literal_error":
+        return "enum_error"
+    if error_type == "missing":
+        return "missing_field"
+    if error_type == "extra_forbidden":
+        return "extra_field"
+    if error_type.endswith("_type"):
+        return "type_error"
+    if error_type == "value_error":
+        return "value_error"
+    return "validation_error"

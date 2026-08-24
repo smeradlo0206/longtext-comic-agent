@@ -520,10 +520,34 @@ class TimelineReviewMaterialProvenanceV1(StrictBaseModel):
         return value
 
 
+class TimelineFailureOrigin(StrEnum):
+    """Source of a sanitized Timeline execution validation failure."""
+
+    LLM_OUTPUT_SCHEMA_INVALID = "LLM_OUTPUT_SCHEMA_INVALID"
+    LOCAL_ARTIFACT_CONSTRUCTION_ERROR = "LOCAL_ARTIFACT_CONSTRUCTION_ERROR"
+    CONTRACT_VALIDATION_ERROR = "CONTRACT_VALIDATION_ERROR"
+
+
+class TimelineValidationErrorV1(StrictBaseModel):
+    """One source-free Pydantic validation finding persisted for diagnosis."""
+
+    field_path: str = Field(min_length=1, max_length=256)
+    error_type: str = Field(min_length=1, max_length=128)
+    message_type: str = Field(min_length=1, max_length=128)
+
+
+class TimelineFailureSummaryV1(StrictBaseModel):
+    """Minimal failure summary surfaced with a failed Timeline review material."""
+
+    category: ProviderFailureCategory
+    error_origin: TimelineFailureOrigin | None = None
+    field_path: str | None = Field(default=None, min_length=1, max_length=256)
+
+
 class TimelineReviewMaterialV1(StrictBaseModel):
     """Non-canonical Timeline candidate material plus its Gate 3 findings."""
 
-    schema_version: Literal["1.0"] = Field(default="1.0")
+    schema_version: Literal["1.0", "1.1"] = Field(default="1.1")
     material_id: str = Field(min_length=1)
     project_id: str = Field(min_length=1)
     narrative_execution_bundle_id: str = Field(min_length=1)
@@ -535,6 +559,7 @@ class TimelineReviewMaterialV1(StrictBaseModel):
     issues: list[TimelineGate3IssueV1] = Field(default_factory=list)
     evidence_refs: list[EvidenceRefV1] = Field(default_factory=list)
     provenance: TimelineReviewMaterialProvenanceV1
+    failure_summary: TimelineFailureSummaryV1 | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @model_validator(mode="after")
@@ -552,6 +577,11 @@ class TimelineReviewMaterialV1(StrictBaseModel):
             raise ValueError("APPROVED review material cannot contain issues")
         if self.review_status != ReviewGate3Decision.APPROVED and not self.issues:
             raise ValueError("non-APPROVED review material requires issues")
+        if self.schema_version == "1.1" and self.review_status == ReviewGate3Decision.FAILED:
+            if self.failure_summary is None:
+                raise ValueError("failed review material requires failure_summary")
+        elif self.failure_summary is not None and self.review_status != ReviewGate3Decision.FAILED:
+            raise ValueError("only failed review material may include failure_summary")
         required_evidence = list(self.timeline_candidate.evidence_refs) + [
             evidence_ref for issue in self.issues for evidence_ref in issue.evidence_refs
         ]
@@ -605,15 +635,23 @@ class TimelineRecoveryBudgetV1(StrictBaseModel):
 
 
 class TimelineProviderDiagnosticsV1(StrictBaseModel):
-    """Allowlisted, source-free diagnostics for a failed Timeline Provider call."""
+    """Allowlisted, source-free diagnostics for a failed Timeline execution.
 
-    schema_version: Literal["1.0"] = Field(default="1.0")
+    The original v1.0 fields remain provider-oriented for backwards-compatible
+    reads.  v1.1 adds only typed validation metadata; it deliberately never
+    retains a provider response, prompt, source text, or exception body.
+    """
+
+    schema_version: Literal["1.0", "1.1"] = Field(default="1.1")
     expected_output_schema: str | None = Field(default=None, min_length=1, max_length=128)
     schema_error_field_paths: list[str] = Field(default_factory=list, max_length=32)
     schema_error_rule_codes: list[str] = Field(default_factory=list, max_length=32)
     finish_reason: str | None = Field(default=None, min_length=1, max_length=64)
-
-
+    failure_origin: TimelineFailureOrigin | None = None
+    validation_errors: list[TimelineValidationErrorV1] = Field(
+        default_factory=list,
+        max_length=32,
+    )
 class TimelineGate3RunV1(StrictBaseModel):
     """Durable non-canonical work state for one approved or execution bundle."""
 

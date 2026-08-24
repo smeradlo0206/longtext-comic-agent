@@ -11,7 +11,10 @@ from comic_agent.providers.openai_compatible import ProviderResponseError
 from comic_agent.repositories.agent_run_repository import AgentRunRepository
 from comic_agent.repositories.timeline_gate3_repository import TimelineGate3Repository
 from comic_agent.schemas.base import EvidenceRefV1, RealityLayer
-from comic_agent.schemas.narrative import EventProposalV1, TemporalRelationProposalV1
+from comic_agent.schemas.narrative import (
+    EventProposalV1,
+    TemporalRelationProposalV1,
+)
 from comic_agent.schemas.review import (
     ApprovedProposalBundleV1,
     ApprovedProposalItemV1,
@@ -24,6 +27,8 @@ from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.timeline import (
     TimelineAnalysisInputV1,
     TimelineAnalysisProposalV1,
+    TimelineConflictV1,
+    TimelineFailureOrigin,
     TimelineGate3RunStatus,
 )
 from comic_agent.services.id_service import checksum_text
@@ -177,6 +182,55 @@ class _SchemaFailureRunner:
         )
 
 
+class _InvalidRelationProviderRunner:
+    def run(
+        self,
+        input_context: TimelineAnalysisInputV1,
+        *,
+        source_chunks: list[SourceChunkV1],
+    ) -> TimelineAnalysisProposalV1:
+        raise ProviderResponseError(
+            "sanitized timeline schema failure",
+            diagnostics={
+                "schema_error_kind": "literal_error",
+                "schema_error_field_paths": ["temporal_relations[0].relation"],
+                "schema_error_rule_codes": ["TIMELINE_PAIR_SCHEMA_INVALID"],
+                "expected_output_schema": "TimelinePairInferenceV1",
+                "raw_response": "must not persist",
+            },
+        )
+
+
+class _LocalConstructionFailureRunner:
+    def run(
+        self,
+        input_context: TimelineAnalysisInputV1,
+        *,
+        source_chunks: list[SourceChunkV1],
+    ) -> TimelineAnalysisProposalV1:
+        TimelineConflictV1.model_validate(
+            {
+                "conflict_id": "conflict-1",
+                "project_id": input_context.project_id,
+                "category": "CONTRADICTORY_CLAIMS",
+                "summary": "safe local construction fixture",
+                "affected_proposal_ids": [None],
+                "evidence_refs": input_context.event_proposals[0].evidence_refs,
+            }
+        )
+        raise AssertionError("model validation must have raised")
+
+
+class _ContractFailureRunner:
+    def run(
+        self,
+        input_context: TimelineAnalysisInputV1,
+        *,
+        source_chunks: list[SourceChunkV1],
+    ) -> TimelineAnalysisProposalV1:
+        raise ValueError("unsafe internal contract detail")
+
+
 def _coordinator(session: Session, runner: _BlockingRunner) -> NarrativeTimelineCoordinator:
     return NarrativeTimelineCoordinator(
         repository=TimelineGate3Repository(session),
@@ -262,6 +316,10 @@ def test_timeline_timeout_persists_only_safe_failure_diagnostics(tmp_path) -> No
     assert failed.status == TimelineGate3RunStatus.FAILED
     assert str(failed.failure_category) == "PROVIDER_TIMEOUT"
     assert failed.safe_issue_codes == ["TIMELINE_PROVIDER_TIMEOUT"]
+    assert failed.timeline_review_material is not None
+    assert failed.timeline_review_material.review_status == "FAILED"
+    assert failed.timeline_review_material.failure_summary is not None
+    assert failed.timeline_review_material.failure_summary.category == "PROVIDER_TIMEOUT"
 
 
 def test_timeline_schema_failure_persists_only_typed_safe_diagnostics(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -282,7 +340,101 @@ def test_timeline_schema_failure_persists_only_typed_safe_diagnostics(tmp_path) 
     assert failed.provider_diagnostics.schema_error_rule_codes == [
         "TIMELINE_EVIDENCE_INDEX_INVALID"
     ]
+    assert (
+        failed.provider_diagnostics.failure_origin
+        == TimelineFailureOrigin.LLM_OUTPUT_SCHEMA_INVALID
+    )
+    assert failed.timeline_review_material is not None
+    assert failed.gate3_result is not None
+    assert failed.timeline_review_material.failure_summary is not None
+    assert failed.timeline_review_material.failure_summary.field_path == "evidence_indexes.0"
     assert "unsafe_response" not in failed.model_dump_json()
+
+
+def test_invalid_llm_relation_records_sanitized_field_path_and_enum_category(tmp_path) -> None:
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'timeline-gate3.db'}")
+    Base.metadata.create_all(engine)
+    coordinator = NarrativeTimelineCoordinator(
+        repository=TimelineGate3Repository(Session(engine)),
+        timeline_runner=_InvalidRelationProviderRunner(),
+        agent_run_repository=AgentRunRepository(Session(engine)),
+    )
+
+    failed = coordinator.run_if_approved(route=_route(), source_chunks=[_chunk()])
+
+    assert failed is not None
+    assert failed.provider_diagnostics is not None
+    assert (
+        failed.provider_diagnostics.failure_origin
+        == TimelineFailureOrigin.LLM_OUTPUT_SCHEMA_INVALID
+    )
+    assert failed.provider_diagnostics.validation_errors[0].field_path == (
+        "temporal_relations[0].relation"
+    )
+    assert failed.provider_diagnostics.validation_errors[0].error_type == "literal_error"
+    assert failed.provider_diagnostics.validation_errors[0].message_type == "enum_error"
+    assert failed.timeline_review_material is not None
+    assert failed.timeline_review_material.failure_summary is not None
+    assert (
+        failed.timeline_review_material.failure_summary.field_path
+        == "temporal_relations[0].relation"
+    )
+    assert "raw_response" not in failed.model_dump_json()
+
+
+def test_local_timeline_construction_validation_is_diagnosed_and_materialized(tmp_path) -> None:
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'timeline-gate3.db'}")
+    Base.metadata.create_all(engine)
+    coordinator = NarrativeTimelineCoordinator(
+        repository=TimelineGate3Repository(Session(engine)),
+        timeline_runner=_LocalConstructionFailureRunner(),
+        agent_run_repository=AgentRunRepository(Session(engine)),
+    )
+
+    failed = coordinator.run_if_approved(route=_route(), source_chunks=[_chunk()])
+
+    assert failed is not None
+    assert failed.status == TimelineGate3RunStatus.FAILED
+    assert failed.provider_diagnostics is not None
+    assert (
+        failed.provider_diagnostics.failure_origin
+        == TimelineFailureOrigin.LOCAL_ARTIFACT_CONSTRUCTION_ERROR
+    )
+    assert failed.provider_diagnostics.validation_errors[0].field_path == (
+        "affected_proposal_ids[0]"
+    )
+    assert failed.provider_diagnostics.validation_errors[0].message_type == "type_error"
+    assert failed.timeline_review_material is not None
+    assert failed.timeline_review_material.failure_summary is not None
+    assert (
+        failed.timeline_review_material.failure_summary.error_origin
+        == TimelineFailureOrigin.LOCAL_ARTIFACT_CONSTRUCTION_ERROR
+    )
+    persisted = TimelineGate3Repository(Session(engine)).get_run(failed.timeline_run_id)
+    assert persisted is not None
+    assert persisted.timeline_review_material is not None
+
+
+def test_contract_validation_failure_has_a_source_free_origin(tmp_path) -> None:
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'timeline-gate3.db'}")
+    Base.metadata.create_all(engine)
+    coordinator = NarrativeTimelineCoordinator(
+        repository=TimelineGate3Repository(Session(engine)),
+        timeline_runner=_ContractFailureRunner(),
+        agent_run_repository=AgentRunRepository(Session(engine)),
+    )
+
+    failed = coordinator.run_if_approved(route=_route(), source_chunks=[_chunk()])
+
+    assert failed is not None
+    assert failed.provider_diagnostics is not None
+    assert (
+        failed.provider_diagnostics.failure_origin
+        == TimelineFailureOrigin.CONTRACT_VALIDATION_ERROR
+    )
+    assert failed.timeline_review_material is not None
+    assert failed.timeline_review_material.failure_summary is not None
+    assert "unsafe internal contract detail" not in failed.model_dump_json()
 
 
 def test_recovery_uses_same_approved_scope_and_preserves_rejected_artifacts(tmp_path) -> None:
@@ -299,6 +451,9 @@ def test_recovery_uses_same_approved_scope_and_preserves_rejected_artifacts(tmp_
     assert rejected is not None
     assert rejected.status == TimelineGate3RunStatus.REJECTED
     assert rejected.approved_timeline_bundle is None
+    assert rejected.timeline_review_material is not None
+    assert rejected.gate3_result is not None
+    assert rejected.gate3_result.issues[0].issue_code == "UNKNOWN_EVENT_REFERENCE"
     assert runner.calls == 1
 
     recovered = coordinator.recover(

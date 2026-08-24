@@ -242,6 +242,8 @@ from comic_agent.schemas.timeline import (
     TimelineAnalysisMode,
     TimelineAnalysisProposalV1,
     TimelineConflictV1,
+    TimelineFailureOrigin,
+    TimelineFailureSummaryV1,
     TimelineGate3IssueCode,
     TimelineGate3IssueSeverity,
     TimelineGate3IssueV1,
@@ -252,6 +254,7 @@ from comic_agent.schemas.timeline import (
     TimelineRecoveryBudgetV1,
     TimelineReviewMaterialProvenanceV1,
     TimelineReviewMaterialV1,
+    TimelineValidationErrorV1,
 )
 from comic_agent.schemas.visual import PanelSpecV1
 from comic_agent.schemas.workflow import (
@@ -535,6 +538,8 @@ __all__ = [
     "TimelineAnalysisMode",
     "TimelineAnalysisProposalV1",
     "TimelineConflictV1",
+    "TimelineFailureOrigin",
+    "TimelineFailureSummaryV1",
     "WorldRuleUpdateProposalV1",
     "WorldRuleV1",
     "VerificationStatus",
@@ -558,4 +563,5 @@ __all__ = [
     "TimelineRecoveryBudgetV1",
     "TimelineReviewMaterialProvenanceV1",
     "TimelineReviewMaterialV1",
+    "TimelineValidationErrorV1",
 ]
