@@ -274,7 +274,12 @@ def test_event_extraction_prompt_matches_actor_resolution_validator_contract() -
         "unresolved_actor_ref_id",
     ):
         assert token in prompt
-    assert "KNOWN: participant_ids MUST contain at least one" in prompt
-    assert "UNKNOWN: participant_ids MUST be empty" in prompt
-    assert "UNRESOLVED: participant_ids MUST be empty" in prompt
-    assert "unresolved_actor_ref_id MUST be non-null" in prompt
+    assert "KNOWN: include at least one participant_ids OR participant_mentions value" in prompt
+    assert "UNKNOWN: participant_ids and participant_mentions MUST both be empty" in prompt
+    assert "UNRESOLVED: participant_ids and participant_mentions MUST both be empty" in prompt
+    assert "unresolved_actor_ref_id MUST be a non-null ID already supplied" in prompt
+    assert "participant_mentions may be present or may both be empty" in prompt
+    assert (
+        "Never invent EntityProposal ids, location ids, or unresolved_actor_ref_id values."
+        in prompt
+    )

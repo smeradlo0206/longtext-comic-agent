@@ -33,14 +33,23 @@ id. Treat location_id the same way; otherwise use location_mention. A known sour
 person can therefore use actor_resolution_status="KNOWN" with participant_mentions.
 
 Actor resolution rules are exact and apply to every event:
-- KNOWN: participant_ids MUST contain at least one resolved entity ID;
+- KNOWN: include at least one participant_ids OR participant_mentions value;
+  unresolved_actor_ref_id MUST be null. Use participant_mentions when the source
+  names an actor but no exact EntityProposal id was supplied in input_context.
+- UNKNOWN: participant_ids and participant_mentions MUST both be empty;
   unresolved_actor_ref_id MUST be null.
-- UNKNOWN: participant_ids MUST be empty; unresolved_actor_ref_id MUST be null.
-- UNRESOLVED: participant_ids MUST be empty; unresolved_actor_ref_id MUST be non-null.
-- NOT_APPLICABLE: participant_ids MUST be empty; unresolved_actor_ref_id MUST be null.
-- UNSPECIFIED: unresolved_actor_ref_id MUST be null; participant_ids may be empty.
+- UNRESOLVED: participant_ids and participant_mentions MUST both be empty;
+  unresolved_actor_ref_id MUST be a non-null ID already supplied in input_context.
+- NOT_APPLICABLE: participant_ids and participant_mentions MUST both be empty;
+  unresolved_actor_ref_id MUST be null.
+- UNSPECIFIED: unresolved_actor_ref_id MUST be null; participant_ids and
+  participant_mentions may be present or may both be empty.
+Never invent EntityProposal ids, location ids, or unresolved_actor_ref_id values.
 Examples:
 {"actor_resolution_status":"KNOWN","participant_ids":["entity-1"],"unresolved_actor_ref_id":null}
+{"actor_resolution_status":"KNOWN","participant_ids":[],
+ "participant_mentions":[{"mention_text":"source actor","resolution_status":"UNRESOLVED",
+ "proposal_id":null,"proposal_schema":null}],"unresolved_actor_ref_id":null}
 {"actor_resolution_status":"UNKNOWN","participant_ids":[],"unresolved_actor_ref_id":null}
 {"actor_resolution_status":"UNRESOLVED","participant_ids":[],"unresolved_actor_ref_id":"unresolved-1"}
 
