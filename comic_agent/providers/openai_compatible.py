@@ -4,6 +4,7 @@ import json
 import re
 import socket
 import ssl
+import time
 from collections.abc import Mapping
 from typing import Any, Protocol, TypeVar
 
@@ -195,16 +196,24 @@ class OpenAICompatibleLLMProvider:
             payload["response_format"] = response_format
 
         request_attempts = 1
+        attempt_outcomes: list[dict[str, object]] = []
         try:
-            response, request_attempts = self._post_with_one_timeout_retry(payload)
+            (
+                response,
+                request_attempts,
+                attempt_outcomes,
+            ) = self._post_with_one_timeout_retry(payload)
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
+            diagnostics: ProviderDiagnostics = {
+                "http_status_code": exc.response.status_code,
+                "request_attempts": request_attempts,
+            }
+            if len(attempt_outcomes) > 1:
+                diagnostics["attempt_outcomes"] = attempt_outcomes
             raise ProviderHttpError(
                 self._classify_http_status_error(exc.response.status_code),
-                diagnostics={
-                    "http_status_code": exc.response.status_code,
-                    "request_attempts": request_attempts,
-                },
+                diagnostics=diagnostics,
             ) from exc
         except httpx.ConnectError as exc:
             raise ProviderNetworkError(
@@ -429,16 +438,19 @@ class OpenAICompatibleLLMProvider:
             "max_tokens": 1024 if output_model is not ProviderPreflightResponseV1 else 32,
             "response_format": self._response_format_for(mode, output_model),
         }
-        response, attempts = self._post_with_one_timeout_retry(payload)
+        response, attempts, attempt_outcomes = self._post_with_one_timeout_retry(payload)
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
+            diagnostics: ProviderDiagnostics = {
+                "http_status_code": exc.response.status_code,
+                "request_attempts": attempts,
+            }
+            if len(attempt_outcomes) > 1:
+                diagnostics["attempt_outcomes"] = attempt_outcomes
             raise ProviderHttpError(
                 self._classify_http_status_error(exc.response.status_code),
-                diagnostics={
-                    "http_status_code": exc.response.status_code,
-                    "request_attempts": attempts,
-                },
+                diagnostics=diagnostics,
             ) from exc
         response_payload = response.json()
         content = response_payload["choices"][0]["message"]["content"]
@@ -683,14 +695,18 @@ class OpenAICompatibleLLMProvider:
                 return code
         return None
 
-    def _post_with_one_timeout_retry(self, payload: dict[str, Any]) -> tuple[httpx.Response, int]:
+    def _post_with_one_timeout_retry(
+        self, payload: dict[str, Any]
+    ) -> tuple[httpx.Response, int, list[dict[str, object]]]:
         """Retry one timeout, connection failure, or transient HTTP response safely."""
 
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self._api_key}",
         }
+        attempt_outcomes: list[dict[str, object]] = []
         for request_attempt in range(1, MAX_TIMEOUT_ATTEMPTS + 1):
+            started_at_ns = time.perf_counter_ns()
             try:
                 response = self._http_client.post(
                     f"{self._base_url}/chat/completions",
@@ -698,26 +714,59 @@ class OpenAICompatibleLLMProvider:
                     json=payload,
                     timeout=self._timeout_seconds,
                 )
+                duration_ms = max(0, (time.perf_counter_ns() - started_at_ns) // 1_000_000)
+                outcome = {
+                    "attempt": request_attempt,
+                    "duration_ms": duration_ms,
+                    "http_status_code": response.status_code,
+                    "outcome": "RESPONSE",
+                }
                 if self._is_retryable_http_status(response.status_code):
+                    outcome["outcome"] = "HTTP_ERROR"
+                    attempt_outcomes.append(outcome)
                     if request_attempt < MAX_TIMEOUT_ATTEMPTS:
                         continue
-                return response, request_attempt
+                else:
+                    attempt_outcomes.append(outcome)
+                return response, request_attempt, attempt_outcomes
             except httpx.TimeoutException as exc:
+                duration_ms = max(0, (time.perf_counter_ns() - started_at_ns) // 1_000_000)
+                timeout_kind = self._timeout_kind(exc)
+                attempt_outcomes.append(
+                    {
+                        "attempt": request_attempt,
+                        "duration_ms": duration_ms,
+                        "outcome": "TIMEOUT",
+                        "timeout_kind": timeout_kind,
+                        "timeout_seconds": self._timeout_seconds,
+                    }
+                )
                 if request_attempt == MAX_TIMEOUT_ATTEMPTS:
-                    timeout_kind = self._timeout_kind(exc)
                     raise ProviderTimeoutError(
                         (f"LLM provider {timeout_kind} timeout after {request_attempt} attempts"),
                         diagnostics={
                             "timeout_kind": timeout_kind,
                             "timeout_seconds": self._timeout_seconds,
                             "request_attempts": request_attempt,
+                            "attempt_outcomes": attempt_outcomes,
                         },
                     ) from exc
             except httpx.ConnectError as exc:
+                duration_ms = max(0, (time.perf_counter_ns() - started_at_ns) // 1_000_000)
+                attempt_outcomes.append(
+                    {
+                        "attempt": request_attempt,
+                        "duration_ms": duration_ms,
+                        "outcome": "NETWORK_ERROR",
+                    }
+                )
                 if request_attempt == MAX_TIMEOUT_ATTEMPTS:
                     raise ProviderNetworkError(
                         self._classify_connect_error(exc),
-                        diagnostics={"request_attempts": request_attempt},
+                        diagnostics={
+                            "request_attempts": request_attempt,
+                            "attempt_outcomes": attempt_outcomes,
+                        },
                     ) from exc
         raise AssertionError("timeout retry loop exited unexpectedly")
 

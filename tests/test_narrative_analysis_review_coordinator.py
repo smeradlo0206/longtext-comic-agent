@@ -69,12 +69,16 @@ class _AnalysisRepository:
 
 
 class _CountingReviewService(ReviewGate2Service):
-    def __init__(self) -> None:
+    def __init__(self, *, status_override: str | None = None) -> None:
         self.calls = 0
+        self.status_override = status_override
 
     def review(self, *args, **kwargs):  # type: ignore[no-untyped-def]
         self.calls += 1
-        return super().review(*args, **kwargs)
+        result = super().review(*args, **kwargs)
+        if self.status_override is not None:
+            return result.model_copy(update={"status": self.status_override})
+        return result
 
 
 def _chunk() -> SourceChunkV1:
@@ -160,7 +164,7 @@ def test_partial_analysis_persists_execution_bundle_and_gate2_audit() -> None:
         NarrativeAnalysisResultV1(analysis_run_id="analysis-1"),
         [_window(), _failed_window()],
     )
-    service = _CountingReviewService()
+    service = _CountingReviewService(status_override="COMPLETED")
 
     reviewed = NarrativeAnalysisReviewCoordinator(
         source_repository=_SourceRepository([chunk], [chunk.chunk_id]),
@@ -174,6 +178,7 @@ def test_partial_analysis_persists_execution_bundle_and_gate2_audit() -> None:
     execution = reviewed.review_gate2_route.narrative_execution_bundle
     assert execution is not None
     assert execution.status == "PARTIAL_FAILED"
+    assert reviewed.review_gate2_route.review_status == "NEEDS_HUMAN_REVIEW"
     assert [item.analysis_window_id for item in execution.failed_windows] == ["window-failed-1"]
     assert any(issue.code == "NARRATIVE_EXECUTION_INCOMPLETE" for issue in execution.issues)
     assert service.calls == 1

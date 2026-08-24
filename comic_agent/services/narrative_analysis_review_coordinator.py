@@ -238,11 +238,18 @@ class NarrativeGate2HandoffCoordinator:
             decision = ReviewGate2RoutingDecision.APPROVED
             bundle = review_result.approved_bundle
             counts = (review_result.total_count, review_result.approved_count, 0, 0)
+        route_review_status = (
+            ReviewGate2RunStatus.NEEDS_HUMAN_REVIEW
+            if decision == ReviewGate2RoutingDecision.NEEDS_HUMAN_REVIEW
+            and incomplete_execution
+            and review_result.status == ReviewGate2RunStatus.COMPLETED
+            else review_result.status
+        )
         return NarrativeAnalysisReviewRouteV1(
             analysis_run_id=run.analysis_run_id,
             review_run_id=review_result.review_run_id,
             decision=decision,
-            review_status=review_result.status,
+            review_status=route_review_status,
             total_count=counts[0],
             approved_count=counts[1],
             rejected_count=counts[2],

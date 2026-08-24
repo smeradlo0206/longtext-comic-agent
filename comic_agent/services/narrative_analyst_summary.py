@@ -86,6 +86,7 @@ SANITIZED_DIAGNOSTIC_KEYS = {
     "capability_state",
     "schema_recovery_attempt_count",
     "split_depth",
+    "attempt_outcomes",
 }
 
 
@@ -911,9 +912,40 @@ def sanitize_provider_diagnostics(diagnostics: object) -> dict[str, object] | No
 
     if not isinstance(diagnostics, dict):
         return None
-    sanitized = {
-        key: value for key, value in diagnostics.items() if key in SANITIZED_DIAGNOSTIC_KEYS
+    sanitized: dict[str, object] = {
+        key: value
+        for key, value in diagnostics.items()
+        if key in SANITIZED_DIAGNOSTIC_KEYS and key != "attempt_outcomes"
     }
+    outcomes = diagnostics.get("attempt_outcomes")
+    if isinstance(outcomes, list):
+        safe_outcomes: list[dict[str, object]] = []
+        for outcome in outcomes:
+            if not isinstance(outcome, dict):
+                continue
+            safe: dict[str, object] = {}
+            attempt = outcome.get("attempt")
+            duration_ms = outcome.get("duration_ms")
+            result = outcome.get("outcome")
+            if isinstance(attempt, int) and attempt > 0:
+                safe["attempt"] = attempt
+            if isinstance(duration_ms, int) and duration_ms >= 0:
+                safe["duration_ms"] = duration_ms
+            if result in {"RESPONSE", "HTTP_ERROR", "TIMEOUT", "NETWORK_ERROR"}:
+                safe["outcome"] = result
+            status_code = outcome.get("http_status_code")
+            if isinstance(status_code, int) and 100 <= status_code <= 599:
+                safe["http_status_code"] = status_code
+            timeout_kind = outcome.get("timeout_kind")
+            if timeout_kind in {"connect", "read", "write", "pool", "unknown"}:
+                safe["timeout_kind"] = timeout_kind
+            timeout_seconds = outcome.get("timeout_seconds")
+            if isinstance(timeout_seconds, (int, float)) and timeout_seconds > 0:
+                safe["timeout_seconds"] = timeout_seconds
+            if safe:
+                safe_outcomes.append(safe)
+        if safe_outcomes:
+            sanitized["attempt_outcomes"] = safe_outcomes
     return sanitized or None
 
 

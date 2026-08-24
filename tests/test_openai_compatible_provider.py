@@ -547,7 +547,12 @@ def test_openai_compatible_provider_reports_tls_failure_after_bounded_retry() ->
     with pytest.raises(ProviderNetworkError, match="TLS handshake") as captured:
         provider.structured_generate({}, EventProposalV1)
 
-    assert captured.value.diagnostics == {"request_attempts": 2}
+    diagnostics = captured.value.diagnostics
+    assert diagnostics["request_attempts"] == 2
+    outcomes = diagnostics["attempt_outcomes"]
+    assert isinstance(outcomes, list)
+    assert len(outcomes) == 2
+    assert [item["outcome"] for item in outcomes] == ["NETWORK_ERROR", "NETWORK_ERROR"]
     assert len(client.requests) == 2
 
 
@@ -1233,7 +1238,23 @@ def test_openai_compatible_provider_keeps_final_http_diagnostics_sanitized() -> 
     with pytest.raises(ProviderHttpError) as exc_info:
         provider.structured_generate({}, EventProposalV1)
 
-    assert exc_info.value.diagnostics == {"http_status_code": 429, "request_attempts": 2}
+    diagnostics = exc_info.value.diagnostics
+    assert diagnostics["http_status_code"] == 429
+    assert diagnostics["request_attempts"] == 2
+    assert diagnostics["attempt_outcomes"] == [
+        {
+            "attempt": 1,
+            "duration_ms": diagnostics["attempt_outcomes"][0]["duration_ms"],
+            "http_status_code": 429,
+            "outcome": "HTTP_ERROR",
+        },
+        {
+            "attempt": 2,
+            "duration_ms": diagnostics["attempt_outcomes"][1]["duration_ms"],
+            "http_status_code": 429,
+            "outcome": "HTTP_ERROR",
+        },
+    ]
     assert "secret-test-key" not in str(exc_info.value)
     assert len(client.requests) == 2
 
@@ -1283,11 +1304,43 @@ def test_openai_compatible_provider_reports_exhausted_timeout_diagnostics() -> N
         provider.structured_generate({}, EventProposalV1)
 
     assert str(exc_info.value) == "LLM provider read timeout after 2 attempts"
-    assert exc_info.value.diagnostics == {
-        "timeout_kind": "read",
-        "timeout_seconds": 123,
-        "request_attempts": 2,
-    }
+    diagnostics = exc_info.value.diagnostics
+    assert diagnostics["timeout_kind"] == "read"
+    assert diagnostics["timeout_seconds"] == 123
+    assert diagnostics["request_attempts"] == 2
+    outcomes = diagnostics["attempt_outcomes"]
+    assert isinstance(outcomes, list)
+    assert len(outcomes) == 2
+    assert [item["outcome"] for item in outcomes] == ["TIMEOUT", "TIMEOUT"]
+    assert [item["timeout_kind"] for item in outcomes] == ["read", "read"]
+    assert [item["timeout_seconds"] for item in outcomes] == [123, 123]
+    assert "secret-test-key" not in str(exc_info.value)
+
+
+def test_openai_compatible_provider_records_timeout_then_http_error() -> None:
+    provider = OpenAICompatibleLLMProvider(
+        api_key="secret-test-key",
+        timeout_seconds=123,
+        http_client=SequenceHttpClient(
+            [httpx.ReadTimeout("timed out"), FakeResponse(503, {})]
+        ),
+    )
+
+    with pytest.raises(ProviderHttpError) as exc_info:
+        provider.structured_generate({}, EventProposalV1)
+
+    diagnostics = exc_info.value.diagnostics
+    assert diagnostics["http_status_code"] == 503
+    assert diagnostics["request_attempts"] == 2
+    outcomes = diagnostics["attempt_outcomes"]
+    assert isinstance(outcomes, list)
+    assert len(outcomes) == 2
+    assert outcomes[0]["outcome"] == "TIMEOUT"
+    assert outcomes[0]["timeout_kind"] == "read"
+    assert outcomes[0]["timeout_seconds"] == 123
+    assert outcomes[1]["outcome"] == "HTTP_ERROR"
+    assert outcomes[1]["http_status_code"] == 503
+    assert all(isinstance(item["duration_ms"], int) for item in outcomes)
     assert "secret-test-key" not in str(exc_info.value)
 
 
