@@ -1,5 +1,6 @@
 """Deterministic, bounded structural review for Timeline candidate output."""
 
+import re
 from collections import defaultdict
 from collections.abc import Iterable
 
@@ -13,6 +14,11 @@ from comic_agent.schemas.timeline import (
     TimelineGate3IssueCode,
     TimelineGate3IssueSeverity,
     TimelineGate3IssueV1,
+)
+from comic_agent.schemas.timeline_execution import (
+    TimelineExecutionBundleV1,
+    TimelineExecutionStatus,
+    TimelineInputAvailability,
 )
 from comic_agent.services.id_service import stable_id
 
@@ -41,27 +47,43 @@ class ReviewGate3Service:
         evidence_refs: Iterable[EvidenceRefV1],
         source_gate2_review_id: str = "gate2-review-unknown",
         source_gate2_route_id: str = "gate2-route-unknown",
+        timeline_execution_bundle: TimelineExecutionBundleV1 | None = None,
     ) -> tuple[ReviewGate3ResultV1, NarrativeTimelineReviewRouteV1]:
         ids = list(dict.fromkeys(event_ids))
         relations = list(temporal_relations)
         evidence = list(evidence_refs)
         issues = self._issues(ids, relations, evidence)
+        if timeline_execution_bundle is not None:
+            self._validate_execution_bundle(
+                bundle=timeline_execution_bundle,
+                project_id=project_id,
+                timeline_run_id=timeline_run_id,
+                source_approved_proposal_bundle_id=source_approved_proposal_bundle_id,
+                source_narrative_execution_bundle_id=source_narrative_execution_bundle_id,
+                relations=relations,
+            )
+            if timeline_execution_bundle.status != TimelineExecutionStatus.SUCCEEDED:
+                issues.append(self._execution_failure_issue(timeline_execution_bundle))
         decision = self._decision(issues)
         review_id = stable_id("review-gate-3", timeline_run_id)
         route_id = stable_id("review-gate-3-route", timeline_run_id)
         result = ReviewGate3ResultV1(
+            schema_version=("1.2" if timeline_execution_bundle is not None else "1.1"),
             review_id=review_id,
             project_id=project_id,
             source_approved_proposal_bundle_id=source_approved_proposal_bundle_id,
             source_narrative_execution_bundle_id=source_narrative_execution_bundle_id,
+            timeline_execution_bundle_id=(
+                timeline_execution_bundle.bundle_id
+                if timeline_execution_bundle is not None
+                else None
+            ),
             timeline_run_id=timeline_run_id,
             reviewer_agent_run_id=reviewer_agent_run_id,
             decision=decision,
             issues=issues,
             safe_summary=(
-                "Timeline structure approved"
-                if not issues
-                else "Timeline review requires action"
+                "Timeline structure approved" if not issues else "Timeline review requires action"
             ),
             issue_count=len(issues),
             checked_event_ids=ids,
@@ -82,12 +104,18 @@ class ReviewGate3Service:
             evidence=evidence,
         )
         route = NarrativeTimelineReviewRouteV1(
+            schema_version=("1.2" if timeline_execution_bundle is not None else "1.1"),
             route_id=route_id,
             review_id=review_id,
             timeline_run_id=timeline_run_id,
             route=decision,
             source_approved_proposal_bundle_id=source_approved_proposal_bundle_id,
             source_narrative_execution_bundle_id=source_narrative_execution_bundle_id,
+            timeline_execution_bundle_id=(
+                timeline_execution_bundle.bundle_id
+                if timeline_execution_bundle is not None
+                else None
+            ),
             approved_timeline_bundle_id=bundle.bundle_id if bundle is not None else None,
             approved_timeline_bundle=bundle,
             held_issue_ids=(
@@ -141,6 +169,107 @@ class ReviewGate3Service:
             safe_issue_codes=[TimelineGate3IssueCode.REVIEW_EXECUTION_FAILED],
         )
 
+    def execution_failed(
+        self,
+        *,
+        timeline_execution_bundle: TimelineExecutionBundleV1,
+        reviewer_agent_run_id: str,
+    ) -> tuple[ReviewGate3ResultV1, NarrativeTimelineReviewRouteV1]:
+        """Review an execution failure through the ordinary Gate 3 contract.
+
+        The execution bundle is the sole source of the failure summary.  This
+        keeps the normal issue-to-decision policy in one place and never turns
+        an execution failure into a Timeline fact.
+        """
+
+        return self.review(
+            project_id=timeline_execution_bundle.project_id,
+            source_approved_proposal_bundle_id=(
+                timeline_execution_bundle.input_reference.source_approved_proposal_bundle_id
+            ),
+            source_narrative_execution_bundle_id=(
+                timeline_execution_bundle.input_reference.source_narrative_execution_bundle_id
+            ),
+            timeline_run_id=timeline_execution_bundle.timeline_run_id,
+            reviewer_agent_run_id=reviewer_agent_run_id,
+            event_ids=timeline_execution_bundle.input_reference.event_proposal_ids,
+            temporal_relations=timeline_execution_bundle.candidate_relations,
+            evidence_refs=timeline_execution_bundle.evidence_refs,
+            source_gate2_review_id=(
+                timeline_execution_bundle.input_reference.source_gate2_review_id
+            ),
+            source_gate2_route_id=(timeline_execution_bundle.input_reference.source_gate2_route_id),
+            timeline_execution_bundle=timeline_execution_bundle,
+        )
+
+    @staticmethod
+    def _validate_execution_bundle(
+        *,
+        bundle: TimelineExecutionBundleV1,
+        project_id: str,
+        timeline_run_id: str,
+        source_approved_proposal_bundle_id: str | None,
+        source_narrative_execution_bundle_id: str | None,
+        relations: list[TemporalRelationProposalV1],
+    ) -> None:
+        """Reject a mismatched handoff before Gate 3 sees execution metadata."""
+
+        source = bundle.input_reference
+        if bundle.project_id != project_id or bundle.timeline_run_id != timeline_run_id:
+            raise ValueError("Timeline execution bundle does not match Gate 3 run")
+        if (
+            source.source_approved_proposal_bundle_id != source_approved_proposal_bundle_id
+            or source.source_narrative_execution_bundle_id != source_narrative_execution_bundle_id
+        ):
+            raise ValueError("Timeline execution bundle provenance does not match Gate 3")
+        if bundle.candidate_relations != relations:
+            raise ValueError("Timeline execution relations do not match Gate 3 input")
+
+    @staticmethod
+    def _execution_failure_issue(
+        bundle: TimelineExecutionBundleV1,
+    ) -> TimelineGate3IssueV1:
+        """Map safe execution diagnostics to one human-reviewable Gate 3 issue."""
+
+        failed_items = bundle.failed_items
+        pair_ids = _safe_identifiers(item.pair_id for item in failed_items)
+        categories = list(dict.fromkeys(item.failure_category for item in failed_items))
+        field_paths = _safe_identifiers(
+            value
+            for value in (
+                [item.field_path for item in failed_items]
+                + [diagnostic.field_path for diagnostic in bundle.diagnostics]
+            )
+            if value is not None
+        )
+        if bundle.input_availability != TimelineInputAvailability.AVAILABLE:
+            summary = bundle.input_availability_summary
+            incomplete_modes = ",".join(summary.incomplete_modes) or "none"
+            sanitized_message = (
+                "Timeline input requires human review: "
+                f"outcome={bundle.input_availability}; "
+                f"entity_candidates={summary.entity_proposal_count}; "
+                f"excluded_timeline_candidates={summary.excluded_timeline_candidate_count}; "
+                f"incomplete_modes={incomplete_modes}; "
+                f"provider_calls={bundle.provider_request_count}"
+            )
+        else:
+            sanitized_message = (
+                f"Timeline execution requires human review: failed_items={len(failed_items)}"
+            )
+        return TimelineGate3IssueV1(
+            schema_version="1.1",
+            issue_id=stable_id("gate3-issue", "timeline-execution", bundle.bundle_id),
+            issue_code=TimelineGate3IssueCode.REVIEW_EXECUTION_FAILED,
+            severity=TimelineGate3IssueSeverity.REVIEW_REQUIRED,
+            related_pair_ids=pair_ids,
+            execution_failure_categories=categories,
+            execution_diagnostic_field_paths=field_paths,
+            failed_item_count=len(failed_items),
+            recoverable=False,
+            sanitized_message=sanitized_message,
+        )
+
     @staticmethod
     def _decision(issues: list[TimelineGate3IssueV1]) -> ReviewGate3Decision:
         if any(issue.severity == TimelineGate3IssueSeverity.BLOCKING for issue in issues):
@@ -190,8 +319,7 @@ class ReviewGate3Service:
     ) -> list[TimelineGate3IssueV1]:
         known = set(event_ids)
         allowed = {
-            (ref.chunk_id, ref.quote_start, ref.quote_end, ref.quote_text)
-            for ref in evidence
+            (ref.chunk_id, ref.quote_start, ref.quote_end, ref.quote_text) for ref in evidence
         }
         issues: list[TimelineGate3IssueV1] = []
         graph: dict[str, set[str]] = defaultdict(set)
@@ -296,3 +424,15 @@ class ReviewGate3Service:
             return found
 
         return any(visit(node) for node in graph)
+
+
+def _safe_identifiers(values: Iterable[str]) -> list[str]:
+    """Keep only bounded identifier-like diagnostics for human review."""
+
+    return list(
+        dict.fromkeys(
+            value
+            for value in values
+            if len(value) <= 256 and re.fullmatch(r"[A-Za-z0-9_.:-]+", value)
+        )
+    )

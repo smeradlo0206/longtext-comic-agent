@@ -8,10 +8,16 @@ from comic_agent.providers.openai_compatible import ProviderResponseError
 from comic_agent.repositories.agent_run_repository import AgentRunRepository
 from comic_agent.repositories.timeline_gate3_repository import TimelineGate3Repository
 from comic_agent.schemas.base import EvidenceRefV1, RealityLayer
-from comic_agent.schemas.narrative import EventProposalV1, TemporalRelationProposalV1
+from comic_agent.schemas.narrative import (
+    EntityProposalV1,
+    EventProposalV1,
+    TemporalRelationProposalV1,
+)
 from comic_agent.schemas.review import (
     NarrativeAnalysisReviewRouteV1,
     NarrativeExecutionBundleV1,
+    NarrativeExecutionExcludedItemV1,
+    NarrativeExecutionFailedWindowV1,
     NarrativeExecutionProvenanceV1,
     NarrativeExecutionStatus,
     ProposalRecoveryDiagnosticV1,
@@ -29,6 +35,7 @@ from comic_agent.schemas.timeline import (
     TimelineAnalysisProposalV1,
     TimelineGate3RunStatus,
 )
+from comic_agent.schemas.timeline_execution import TimelineInputAvailability
 from comic_agent.services.id_service import checksum_text
 from comic_agent.services.narrative_timeline_coordinator import NarrativeTimelineCoordinator
 
@@ -57,19 +64,36 @@ def _event() -> EventProposalV1:
     )
 
 
+def _entity() -> EntityProposalV1:
+    return EntityProposalV1(
+        proposal_id="entity-1",
+        entity_type="CHARACTER",
+        canonical_name="Student",
+        evidence_refs=[EvidenceRefV1(chunk_id="chunk-1", quote_text="bell")],
+        confidence=0.9,
+    )
+
+
 def _execution_bundle(
-    *, candidates: list[ReviewableProposalEnvelopeV1]
+    *,
+    candidates: list[ReviewableProposalEnvelopeV1],
+    status: NarrativeExecutionStatus = NarrativeExecutionStatus.SUCCEEDED,
+    excluded_items: list[NarrativeExecutionExcludedItemV1] | None = None,
+    failed_windows: list[NarrativeExecutionFailedWindowV1] | None = None,
 ) -> NarrativeExecutionBundleV1:
+    excluded_items = excluded_items or []
     evidence_refs = [
         evidence for candidate in candidates for evidence in candidate.aggregated_evidence_refs
-    ]
+    ] + [evidence for item in excluded_items for evidence in item.evidence_refs]
     return NarrativeExecutionBundleV1(
         bundle_id="execution-bundle-1",
         project_id="project-1",
         document_id="document-1",
-        status=NarrativeExecutionStatus.SUCCEEDED,
+        status=status,
         candidates=candidates,
         evidence_refs=evidence_refs,
+        excluded_items=excluded_items,
+        failed_windows=failed_windows or [],
         provenance=NarrativeExecutionProvenanceV1(
             analysis_run_id="analysis-1",
             gate1_review_id="gate1-review-1",
@@ -84,6 +108,9 @@ def _route(
     *,
     decision: ReviewGate2RoutingDecision,
     candidates: list[ReviewableProposalEnvelopeV1],
+    status: NarrativeExecutionStatus = NarrativeExecutionStatus.SUCCEEDED,
+    excluded_items: list[NarrativeExecutionExcludedItemV1] | None = None,
+    failed_windows: list[NarrativeExecutionFailedWindowV1] | None = None,
 ) -> NarrativeAnalysisReviewRouteV1:
     held = decision == ReviewGate2RoutingDecision.NEEDS_HUMAN_REVIEW
     rejected = decision == ReviewGate2RoutingDecision.REJECTED
@@ -111,7 +138,12 @@ def _route(
             if rejected
             else []
         ),
-        narrative_execution_bundle=_execution_bundle(candidates=candidates),
+        narrative_execution_bundle=_execution_bundle(
+            candidates=candidates,
+            status=status,
+            excluded_items=excluded_items,
+            failed_windows=failed_windows,
+        ),
     )
 
 
@@ -205,6 +237,155 @@ def test_gate2_needs_human_review_still_enters_timeline(tmp_path) -> None:
     assert runner.calls == 1
     assert timeline_run.timeline_input is not None
     assert timeline_run.timeline_input.source_narrative_execution_bundle_id == "execution-bundle-1"
+    assert timeline_run.timeline_execution_bundle is not None
+    assert timeline_run.timeline_execution_bundle.input_availability == "AVAILABLE"
+
+
+def test_no_timeline_content_persists_zero_provider_execution_artifact(tmp_path) -> None:
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'no-timeline-content.db'}")
+    Base.metadata.create_all(engine)
+    entity = _entity()
+    route = _route(
+        decision=ReviewGate2RoutingDecision.NEEDS_HUMAN_REVIEW,
+        candidates=[
+            ReviewableProposalEnvelopeV1(
+                mode="entity_extraction",
+                proposal_schema="EntityProposalV1",
+                proposal=entity,
+                agent_run_ids=["narrative-agent-1"],
+                aggregated_evidence_refs=entity.evidence_refs,
+            )
+        ],
+    )
+
+    runner = _Runner()
+
+    timeline_run = _coordinator(Session(engine), runner).run_if_execution_ready(
+        route=route,
+        source_chunks=[_chunk()],
+    )
+
+    assert timeline_run is not None
+    assert runner.calls == 0
+    assert timeline_run.status == TimelineGate3RunStatus.NEEDS_HUMAN_REVIEW
+    assert timeline_run.timeline_execution_bundle is not None
+    assert (
+        timeline_run.timeline_execution_bundle.input_availability
+        == TimelineInputAvailability.NO_TIMELINE_CONTENT
+    )
+    assert timeline_run.timeline_execution_bundle.provider_request_count == 0
+    assert timeline_run.timeline_execution_bundle.candidate_relations == []
+    assert timeline_run.timeline_review_material is not None
+    assert timeline_run.timeline_review_material.review_status == "NEEDS_HUMAN_REVIEW"
+    assert (
+        "outcome=NO_TIMELINE_CONTENT"
+        in timeline_run.timeline_review_material.issues[0].sanitized_message
+    )
+    assert "provider_calls=0" in timeline_run.timeline_review_material.issues[0].sanitized_message
+
+
+def test_incomplete_narrative_timeline_input_is_reviewable_without_provider(tmp_path) -> None:
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'timeline-input-incomplete.db'}")
+    Base.metadata.create_all(engine)
+    entity = _entity()
+    excluded_event = _event()
+    route = _route(
+        decision=ReviewGate2RoutingDecision.NEEDS_HUMAN_REVIEW,
+        status=NarrativeExecutionStatus.NEEDS_HUMAN_ACTION,
+        candidates=[
+            ReviewableProposalEnvelopeV1(
+                mode="entity_extraction",
+                proposal_schema="EntityProposalV1",
+                proposal=entity,
+                agent_run_ids=["narrative-agent-1"],
+                aggregated_evidence_refs=entity.evidence_refs,
+            )
+        ],
+        excluded_items=[
+            NarrativeExecutionExcludedItemV1(
+                proposal_id=excluded_event.proposal_id,
+                proposal_schema="EventProposalV1",
+                mode="event_extraction",
+                reason="Gate 2 withheld an incomplete event candidate",
+                evidence_refs=excluded_event.evidence_refs,
+            )
+        ],
+        failed_windows=[
+            NarrativeExecutionFailedWindowV1(
+                analysis_window_id=f"{mode}-window-1",
+                mode=mode,
+                chunk_ids=["chunk-1"],
+                status="FAILED",
+                failure_category="PROVIDER_HTTP_ERROR",
+            )
+            for mode in ("event_extraction", "claim_extraction", "state_change_extraction")
+        ],
+    )
+    runner = _Runner()
+
+    timeline_run = _coordinator(Session(engine), runner).run_if_execution_ready(
+        route=route,
+        source_chunks=[_chunk()],
+    )
+
+    assert timeline_run is not None
+    assert runner.calls == 0
+    assert timeline_run.timeline_execution_bundle is not None
+    assert timeline_run.timeline_execution_bundle.status == "NEEDS_HUMAN_ACTION"
+    assert (
+        timeline_run.timeline_execution_bundle.input_availability
+        == TimelineInputAvailability.INPUT_INCOMPLETE
+    )
+    assert timeline_run.timeline_execution_bundle.input_availability_summary.incomplete_modes == [
+        "claim_extraction",
+        "event_extraction",
+        "state_change_extraction",
+    ]
+    assert timeline_run.timeline_review_material is not None
+    assert timeline_run.timeline_review_material.review_status == "NEEDS_HUMAN_REVIEW"
+    assert (
+        "outcome=INPUT_INCOMPLETE"
+        in timeline_run.timeline_review_material.issues[0].sanitized_message
+    )
+    assert (
+        "PROVIDER_HTTP_ERROR"
+        not in timeline_run.timeline_review_material.issues[0].sanitized_message
+    )
+
+
+def test_gate2_excluded_timeline_candidates_are_reviewable_without_provider(tmp_path) -> None:
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'timeline-input-excluded.db'}")
+    Base.metadata.create_all(engine)
+    event = _event()
+    excluded = NarrativeExecutionExcludedItemV1(
+        proposal_id=event.proposal_id,
+        proposal_schema="EventProposalV1",
+        mode="event_extraction",
+        reason="Gate 2 withheld the candidate",
+        evidence_refs=event.evidence_refs,
+    )
+    route = _route(
+        decision=ReviewGate2RoutingDecision.REJECTED,
+        candidates=[],
+        excluded_items=[excluded],
+    )
+    runner = _Runner()
+
+    timeline_run = _coordinator(Session(engine), runner).run_if_execution_ready(
+        route=route,
+        source_chunks=[_chunk()],
+    )
+
+    assert timeline_run is not None
+    assert runner.calls == 0
+    assert timeline_run.timeline_execution_bundle is not None
+    assert (
+        timeline_run.timeline_execution_bundle.input_availability
+        == TimelineInputAvailability.INPUT_EXCLUDED
+    )
+    assert timeline_run.timeline_execution_bundle.provider_request_count == 0
+    assert timeline_run.timeline_review_material is not None
+    assert timeline_run.timeline_review_material.review_status == "NEEDS_HUMAN_REVIEW"
 
 
 def test_gate3_needs_human_review_still_persists_timeline_review_material(tmp_path) -> None:
@@ -242,7 +423,7 @@ def test_gate3_needs_human_review_still_persists_timeline_review_material(tmp_pa
     assert timeline_run.timeline_review_material.issues
 
 
-def test_execution_bundle_timeline_failure_persists_v13_review_material(tmp_path) -> None:
+def test_execution_bundle_timeline_failure_persists_v15_review_material(tmp_path) -> None:
     engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'gate3-failure-material.db'}")
     Base.metadata.create_all(engine)
     event = _event()
@@ -265,9 +446,21 @@ def test_execution_bundle_timeline_failure_persists_v13_review_material(tmp_path
     )
 
     assert timeline_run is not None
-    assert timeline_run.schema_version == "1.3"
-    assert timeline_run.status == TimelineGate3RunStatus.FAILED
+    assert timeline_run.schema_version == "1.6"
+    assert timeline_run.status == TimelineGate3RunStatus.NEEDS_HUMAN_REVIEW
     assert timeline_run.timeline_review_material is not None
+    assert timeline_run.timeline_execution_bundle is not None
+    assert timeline_run.timeline_execution_bundle.status == "FAILED"
+    assert timeline_run.timeline_execution_bundle.failed_items
+    assert timeline_run.gate3_result is not None
+    assert (
+        timeline_run.gate3_result.timeline_execution_bundle_id
+        == timeline_run.timeline_execution_bundle.bundle_id
+    )
+    assert timeline_run.gate3_result.issues[0].failed_item_count == 1
+    assert timeline_run.timeline_review_material.timeline_execution_bundle_id == (
+        timeline_run.timeline_execution_bundle.bundle_id
+    )
     persisted = TimelineGate3Repository(Session(engine)).get_run(timeline_run.timeline_run_id)
     assert persisted is not None
     assert persisted.timeline_review_material is not None
@@ -281,9 +474,7 @@ def test_invalid_evidence_candidate_is_removed_while_valid_candidates_enter_time
     runner = _Runner()
     invalid_event = _event().model_copy(
         update={
-            "evidence_refs": [
-                EvidenceRefV1(chunk_id="chunk-1", quote_text="not present in source")
-            ]
+            "evidence_refs": [EvidenceRefV1(chunk_id="chunk-1", quote_text="not present in source")]
         }
     )
     valid_event = _event().model_copy(update={"proposal_id": "event-2"})

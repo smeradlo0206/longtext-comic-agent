@@ -36,6 +36,16 @@ from comic_agent.schemas.timeline import (
     TimelineReviewMaterialV1,
     TimelineValidationErrorV1,
 )
+from comic_agent.schemas.timeline_execution import (
+    TimelineExecutionBundleV1,
+    TimelineExecutionDiagnosticV1,
+    TimelineExecutionFailedItemV1,
+    TimelineExecutionInputReferenceV1,
+    TimelineExecutionIssueV1,
+    TimelineExecutionProvenanceV1,
+    TimelineExecutionStatus,
+    TimelineInputAvailability,
+)
 from comic_agent.schemas.workflow import AgentRunStatus, AgentRunV1
 from comic_agent.services.id_service import stable_id
 from comic_agent.services.narrative_timeline_input_adapter import NarrativeTimelineInputAdapter
@@ -100,6 +110,7 @@ class NarrativeTimelineCoordinator:
         key = stable_id("timeline-gate3-key", bundle.project_id, bundle.bundle_id)
         reserved = self._repository.reserve_run(
             TimelineGate3RunV1(
+                schema_version="1.5",
                 timeline_run_id=stable_id("timeline-gate3-run", key),
                 project_id=bundle.project_id,
                 source_approved_proposal_bundle_id=bundle.bundle_id,
@@ -139,8 +150,7 @@ class NarrativeTimelineCoordinator:
                 timeline_input=timeline_input,
                 exc=exc,
                 provider_request_count=(
-                    running.provider_request_count
-                    + _provider_request_count(self._timeline_runner)
+                    running.provider_request_count + _provider_request_count(self._timeline_runner)
                 ),
             )
 
@@ -163,6 +173,12 @@ class NarrativeTimelineCoordinator:
                     "status": TimelineGate3RunStatus.PROVIDER_SUCCEEDED,
                     "timeline_proposal": proposal,
                     "timeline_agent_run_id": agent_run_id,
+                    "timeline_execution_bundle": self._succeeded_execution_bundle(
+                        running=running,
+                        timeline_input=timeline_input,
+                        proposal=proposal,
+                        timeline_agent_run_id=agent_run_id,
+                    ),
                     "provider_request_count": (
                         running.provider_request_count
                         + _provider_request_count(self._timeline_runner)
@@ -182,8 +198,15 @@ class NarrativeTimelineCoordinator:
         """Run Timeline from Gate 2 execution material regardless of audit decision."""
 
         execution = route.narrative_execution_bundle
-        if execution is None or not self._adapter.has_timeline_candidates(execution):
+        if execution is None:
             return None
+        input_availability = self._adapter.classify_execution_input(execution)
+        if input_availability != TimelineInputAvailability.AVAILABLE:
+            return self._persist_input_unavailable(
+                route=route,
+                execution=execution,
+                input_availability=input_availability,
+            )
         try:
             timeline_input = self._adapter.build_from_execution_bundle(
                 route=route,
@@ -192,7 +215,13 @@ class NarrativeTimelineCoordinator:
             )
         except ValueError:
             # A candidate whose evidence cannot be located is never a Timeline fact.
-            return None
+            # Persist the audited exclusion outcome instead of silently breaking
+            # the Narrative -> Timeline handoff.
+            return self._persist_input_unavailable(
+                route=route,
+                execution=execution,
+                input_availability=TimelineInputAvailability.INPUT_EXCLUDED,
+            )
         return self._run_execution_bundle(
             route=route,
             execution=execution,
@@ -208,34 +237,9 @@ class NarrativeTimelineCoordinator:
         timeline_input: TimelineAnalysisInputV1,
         source_chunks: list[SourceChunkV1],
     ) -> TimelineGate3RunV1 | None:
-        gate2_review_id = route.review_run_id
-        if not isinstance(gate2_review_id, str) or not gate2_review_id:
+        reserved = self._reserve_execution_run(route=route, execution=execution)
+        if reserved is None:
             return None
-        approved_bundle_id = (
-            route.approved_proposal_bundle.bundle_id
-            if route.approved_proposal_bundle is not None
-            else None
-        )
-        # A recovered all-green Gate 2 route is a distinct audited handoff from
-        # an earlier execution-only route, even when Gate 2's deterministic
-        # review ID is reused.  Keep the approved-bundle key for the former so
-        # legacy status/recovery lookups remain stable; execution-only routes
-        # use their execution-bundle identity.
-        timeline_source_id = approved_bundle_id or execution.bundle_id
-        key = stable_id("timeline-gate3-key", execution.project_id, timeline_source_id)
-        reserved = self._repository.reserve_run(
-            TimelineGate3RunV1(
-                schema_version="1.3",
-                timeline_run_id=stable_id("timeline-gate3-run", key),
-                project_id=execution.project_id,
-                source_approved_proposal_bundle_id=approved_bundle_id,
-                source_narrative_execution_bundle_id=execution.bundle_id,
-                source_gate2_review_id=gate2_review_id,
-                source_gate2_route_id=route.analysis_run_id,
-                idempotency_key=key,
-                status=TimelineGate3RunStatus.RESERVED,
-            )
-        )
         if reserved.status in _TERMINAL or reserved.status == TimelineGate3RunStatus.RUNNING:
             return reserved
         if reserved.status in {
@@ -257,8 +261,7 @@ class NarrativeTimelineCoordinator:
                 timeline_input=timeline_input,
                 exc=exc,
                 provider_request_count=(
-                    running.provider_request_count
-                    + _provider_request_count(self._timeline_runner)
+                    running.provider_request_count + _provider_request_count(self._timeline_runner)
                 ),
             )
         agent_run_id = stable_id("timeline-agent-run", running.timeline_run_id)
@@ -281,6 +284,12 @@ class NarrativeTimelineCoordinator:
                     "timeline_proposal": proposal,
                     "timeline_agent_run_id": agent_run_id,
                     "timeline_review_material": None,
+                    "timeline_execution_bundle": self._succeeded_execution_bundle(
+                        running=running,
+                        timeline_input=timeline_input,
+                        proposal=proposal,
+                        timeline_agent_run_id=agent_run_id,
+                    ),
                     "provider_request_count": (
                         running.provider_request_count
                         + _provider_request_count(self._timeline_runner)
@@ -290,6 +299,180 @@ class NarrativeTimelineCoordinator:
             )
         )
         return self._review(succeeded)
+
+    def _persist_input_unavailable(
+        self,
+        *,
+        route: NarrativeAnalysisReviewRouteV1,
+        execution: NarrativeExecutionBundleV1,
+        input_availability: TimelineInputAvailability,
+    ) -> TimelineGate3RunV1 | None:
+        """Persist a zero-provider Timeline outcome when audited input is unavailable.
+
+        This path records no temporal relation and never calls ``TimelineRunner``.
+        It exists solely to carry the source-free input classification through the
+        ordinary Gate 3 and Human Review artifacts.
+        """
+
+        reserved = self._reserve_execution_run(route=route, execution=execution)
+        if reserved is None:
+            return None
+        if reserved.status in _TERMINAL or reserved.status == TimelineGate3RunStatus.RUNNING:
+            return reserved
+
+        timeline_agent_run_id = stable_id(
+            "timeline-input-classification-run", reserved.timeline_run_id
+        )
+        reviewer_agent_run_id = stable_id(
+            "gate3-agent-input-unavailable-run", reserved.timeline_run_id
+        )
+        evidence_refs: list[EvidenceRefV1] = []
+        for evidence_ref in execution.evidence_refs:
+            if evidence_ref not in evidence_refs:
+                evidence_refs.append(evidence_ref)
+        if not evidence_refs:
+            raise ValueError("Timeline input-unavailable artifact requires Narrative evidence")
+        execution_bundle = TimelineExecutionBundleV1(
+            schema_version="1.1",
+            bundle_id=stable_id("timeline-execution", reserved.timeline_run_id),
+            project_id=reserved.project_id,
+            timeline_run_id=reserved.timeline_run_id,
+            status=TimelineExecutionStatus.NEEDS_HUMAN_ACTION,
+            input_reference=self._input_reference_from_execution(
+                running=reserved,
+                execution=execution,
+            ),
+            input_availability=input_availability,
+            input_availability_summary=self._adapter.execution_input_summary(execution),
+            candidate_relations=[],
+            issues=[
+                TimelineExecutionIssueV1(
+                    issue_id=stable_id(
+                        "timeline-input-unavailable-issue",
+                        reserved.timeline_run_id,
+                        str(input_availability),
+                    ),
+                    issue_code=f"TIMELINE_{input_availability}",
+                    severity="WARNING",
+                    evidence_refs=evidence_refs,
+                )
+            ],
+            evidence_refs=evidence_refs,
+            provenance=TimelineExecutionProvenanceV1(
+                source_chunk_ids=list(execution.provenance.source_chunk_ids),
+                timeline_agent_run_id=timeline_agent_run_id,
+                gate3_reviewer_agent_run_id=reviewer_agent_run_id,
+            ),
+            provider_request_count=0,
+        )
+        proposal = self._input_unavailable_timeline_proposal(
+            running=reserved,
+            evidence_refs=evidence_refs,
+        )
+        self._agent_runs.save_agent_run(
+            AgentRunV1(
+                agent_run_id=timeline_agent_run_id,
+                project_id=reserved.project_id,
+                agent_name="timeline-input-classifier",
+                input_chunk_ids=list(execution.provenance.source_chunk_ids),
+                output_proposal_ids=[proposal.proposal_id],
+                output_schema="TimelineAnalysisProposalV1",
+                status=AgentRunStatus.SUCCEEDED,
+                payload={
+                    "timeline_run_id": reserved.timeline_run_id,
+                    "input_availability": str(input_availability),
+                    "provider_request_count": 0,
+                },
+            )
+        )
+        result, gate3_route = self._review_service.execution_failed(
+            timeline_execution_bundle=execution_bundle,
+            reviewer_agent_run_id=reviewer_agent_run_id,
+        )
+        self._agent_runs.save_agent_run(
+            AgentRunV1(
+                agent_run_id=reviewer_agent_run_id,
+                project_id=reserved.project_id,
+                agent_name="review-gate-3",
+                input_chunk_ids=list(execution.provenance.source_chunk_ids),
+                output_proposal_ids=[result.review_id],
+                output_schema="ReviewGate3ResultV1",
+                status=AgentRunStatus.SUCCEEDED,
+                payload={
+                    "timeline_run_id": reserved.timeline_run_id,
+                    "input_availability": str(input_availability),
+                    "provider_request_count": 0,
+                },
+            )
+        )
+        material = TimelineReviewMaterialV1(
+            schema_version="1.3",
+            material_id=stable_id(
+                "timeline-review-material", reserved.timeline_run_id, result.review_id
+            ),
+            project_id=reserved.project_id,
+            narrative_execution_bundle_id=execution.bundle_id,
+            timeline_run_id=reserved.timeline_run_id,
+            timeline_execution_bundle_id=execution_bundle.bundle_id,
+            timeline_candidate=proposal,
+            temporal_relations=[],
+            review_id=result.review_id,
+            review_status=result.decision,
+            issues=result.issues,
+            evidence_refs=[*proposal.evidence_refs, *result.evidence_refs],
+            provenance=TimelineReviewMaterialProvenanceV1(
+                source_chunk_ids=list(execution.provenance.source_chunk_ids),
+                timeline_agent_run_id=timeline_agent_run_id,
+                gate3_reviewer_agent_run_id=reviewer_agent_run_id,
+            ),
+        )
+        return self._repository.save_transition(
+            reserved.model_copy(
+                update={
+                    "status": TimelineGate3RunStatus.NEEDS_HUMAN_REVIEW,
+                    "timeline_proposal": proposal,
+                    "timeline_agent_run_id": timeline_agent_run_id,
+                    "gate3_result": result,
+                    "gate3_route": gate3_route,
+                    "timeline_review_material": material,
+                    "timeline_execution_bundle": execution_bundle,
+                    "provider_request_count": 0,
+                    "updated_at": datetime.now(UTC),
+                }
+            )
+        )
+
+    def _reserve_execution_run(
+        self,
+        *,
+        route: NarrativeAnalysisReviewRouteV1,
+        execution: NarrativeExecutionBundleV1,
+    ) -> TimelineGate3RunV1 | None:
+        """Reserve the existing Timeline/Gate 3 checkpoint for an execution bundle."""
+
+        gate2_review_id = route.review_run_id
+        if not isinstance(gate2_review_id, str) or not gate2_review_id:
+            return None
+        approved_bundle_id = (
+            route.approved_proposal_bundle.bundle_id
+            if route.approved_proposal_bundle is not None
+            else None
+        )
+        timeline_source_id = approved_bundle_id or execution.bundle_id
+        key = stable_id("timeline-gate3-key", execution.project_id, timeline_source_id)
+        return self._repository.reserve_run(
+            TimelineGate3RunV1(
+                schema_version="1.6",
+                timeline_run_id=stable_id("timeline-gate3-run", key),
+                project_id=execution.project_id,
+                source_approved_proposal_bundle_id=approved_bundle_id,
+                source_narrative_execution_bundle_id=execution.bundle_id,
+                source_gate2_review_id=gate2_review_id,
+                source_gate2_route_id=route.analysis_run_id,
+                idempotency_key=key,
+                status=TimelineGate3RunStatus.RESERVED,
+            )
+        )
 
     def resume(self, timeline_run_id: str) -> TimelineGate3RunV1 | None:
         """Resume only post-Provider review checkpoints; never repeat the Provider."""
@@ -371,6 +554,12 @@ class NarrativeTimelineCoordinator:
                     "timeline_proposal": proposal,
                     "timeline_agent_run_id": agent_run_id,
                     "timeline_review_material": None,
+                    "timeline_execution_bundle": self._succeeded_execution_bundle(
+                        running=recovering,
+                        timeline_input=recovering.timeline_input,
+                        proposal=proposal,
+                        timeline_agent_run_id=agent_run_id,
+                    ),
                     "provider_request_count": recovering.provider_request_count + 1,
                     "updated_at": datetime.now(UTC),
                 }
@@ -412,6 +601,7 @@ class NarrativeTimelineCoordinator:
                 evidence_refs=run.timeline_proposal.evidence_refs,
                 source_gate2_review_id=run.source_gate2_review_id,
                 source_gate2_route_id=run.source_gate2_route_id,
+                timeline_execution_bundle=run.timeline_execution_bundle,
             )
         except (RuntimeError, TimeoutError, ValueError):
             result, route = self._review_service.failed(
@@ -431,6 +621,7 @@ class NarrativeTimelineCoordinator:
         if reviewing is None:
             raise RuntimeError("Timeline Gate 3 review checkpoint disappeared")
         material = TimelineReviewMaterialV1(
+            schema_version=("1.3" if run.timeline_execution_bundle is not None else "1.1"),
             material_id=stable_id(
                 "timeline-review-material", run.timeline_run_id, result.review_id
             ),
@@ -443,6 +634,11 @@ class NarrativeTimelineCoordinator:
                 )
             ),
             timeline_run_id=run.timeline_run_id,
+            timeline_execution_bundle_id=(
+                run.timeline_execution_bundle.bundle_id
+                if run.timeline_execution_bundle is not None
+                else None
+            ),
             timeline_candidate=run.timeline_proposal,
             temporal_relations=run.timeline_proposal.temporal_relations,
             review_id=result.review_id,
@@ -486,14 +682,19 @@ class NarrativeTimelineCoordinator:
 
         failure_category, safe_issue_codes = _safe_failure_diagnostics(exc)
         diagnostics = _safe_provider_diagnostics(exc)
-        timeline_agent_run_id = stable_id(
-            "timeline-agent-failure-run", running.timeline_run_id
-        )
-        reviewer_agent_run_id = stable_id(
-            "gate3-agent-failure-run", running.timeline_run_id
-        )
+        timeline_agent_run_id = stable_id("timeline-agent-failure-run", running.timeline_run_id)
+        reviewer_agent_run_id = stable_id("gate3-agent-failure-run", running.timeline_run_id)
         failure_origin = (
             str(diagnostics.failure_origin) if diagnostics and diagnostics.failure_origin else None
+        )
+        execution_bundle = self._failed_execution_bundle(
+            running=running,
+            timeline_input=timeline_input,
+            timeline_agent_run_id=timeline_agent_run_id,
+            reviewer_agent_run_id=reviewer_agent_run_id,
+            failure_category=failure_category,
+            safe_issue_codes=safe_issue_codes,
+            diagnostics=diagnostics,
         )
         self._agent_runs.save_agent_run(
             AgentRunV1(
@@ -510,32 +711,28 @@ class NarrativeTimelineCoordinator:
                 },
             )
         )
+        result, route = self._review_service.execution_failed(
+            timeline_execution_bundle=execution_bundle,
+            reviewer_agent_run_id=reviewer_agent_run_id,
+        )
         self._agent_runs.save_agent_run(
             AgentRunV1(
                 agent_run_id=reviewer_agent_run_id,
                 project_id=running.project_id,
                 agent_name="review-gate-3",
                 input_chunk_ids=self._chunk_ids(timeline_input),
+                output_proposal_ids=[result.review_id],
                 output_schema="ReviewGate3ResultV1",
-                status=AgentRunStatus.FAILED,
-                error_message="Timeline review not run after execution failure",
+                status=AgentRunStatus.SUCCEEDED,
                 payload={
                     "timeline_run_id": running.timeline_run_id,
                     "failure_origin": failure_origin,
                 },
             )
         )
-        result, route = self._review_service.failed(
-            project_id=running.project_id,
-            source_approved_proposal_bundle_id=running.source_approved_proposal_bundle_id,
-            source_narrative_execution_bundle_id=(
-                running.source_narrative_execution_bundle_id
-            ),
-            timeline_run_id=running.timeline_run_id,
-            reviewer_agent_run_id=reviewer_agent_run_id,
-        )
         proposal = self._failed_timeline_proposal(running, timeline_input)
         material = TimelineReviewMaterialV1(
+            schema_version="1.3",
             material_id=stable_id(
                 "timeline-review-material", running.timeline_run_id, result.review_id
             ),
@@ -548,6 +745,7 @@ class NarrativeTimelineCoordinator:
                 )
             ),
             timeline_run_id=running.timeline_run_id,
+            timeline_execution_bundle_id=execution_bundle.bundle_id,
             timeline_candidate=proposal,
             temporal_relations=[],
             review_id=result.review_id,
@@ -572,12 +770,13 @@ class NarrativeTimelineCoordinator:
         return self._repository.save_transition(
             running.model_copy(
                 update={
-                    "status": TimelineGate3RunStatus.FAILED,
+                    "status": TimelineGate3RunStatus.NEEDS_HUMAN_REVIEW,
                     "timeline_proposal": proposal,
                     "timeline_agent_run_id": timeline_agent_run_id,
                     "gate3_result": result,
                     "gate3_route": route,
                     "timeline_review_material": material,
+                    "timeline_execution_bundle": execution_bundle,
                     "failure_category": failure_category,
                     "safe_issue_codes": safe_issue_codes,
                     "provider_request_count": provider_request_count,
@@ -585,6 +784,161 @@ class NarrativeTimelineCoordinator:
                     "updated_at": datetime.now(UTC),
                 }
             )
+        )
+
+    @staticmethod
+    def _input_reference(
+        running: TimelineGate3RunV1,
+        timeline_input: TimelineAnalysisInputV1,
+    ) -> TimelineExecutionInputReferenceV1:
+        """Describe Timeline input identity without retaining source text."""
+
+        return TimelineExecutionInputReferenceV1(
+            source_approved_proposal_bundle_id=(running.source_approved_proposal_bundle_id),
+            source_narrative_execution_bundle_id=(running.source_narrative_execution_bundle_id),
+            source_gate2_review_id=running.source_gate2_review_id,
+            source_gate2_route_id=running.source_gate2_route_id,
+            event_proposal_ids=[item.proposal_id for item in timeline_input.event_proposals],
+            claim_proposal_ids=[item.proposal_id for item in timeline_input.claim_proposals],
+            state_change_proposal_ids=[
+                item.proposal_id for item in timeline_input.state_change_proposals
+            ],
+        )
+
+    @staticmethod
+    def _input_reference_from_execution(
+        *,
+        running: TimelineGate3RunV1,
+        execution: NarrativeExecutionBundleV1,
+    ) -> TimelineExecutionInputReferenceV1:
+        """Retain only handoff identity when no candidate reaches Timeline."""
+
+        return TimelineExecutionInputReferenceV1(
+            source_approved_proposal_bundle_id=(running.source_approved_proposal_bundle_id),
+            source_narrative_execution_bundle_id=(running.source_narrative_execution_bundle_id),
+            source_gate2_review_id=running.source_gate2_review_id,
+            source_gate2_route_id=running.source_gate2_route_id,
+        )
+
+    @staticmethod
+    def _input_unavailable_timeline_proposal(
+        *,
+        running: TimelineGate3RunV1,
+        evidence_refs: list[EvidenceRefV1],
+    ) -> TimelineAnalysisProposalV1:
+        """Create empty review material without asserting a temporal relation."""
+
+        return TimelineAnalysisProposalV1(
+            proposal_id=stable_id("timeline-input-unavailable-proposal", running.timeline_run_id),
+            project_id=running.project_id,
+            temporal_relations=[],
+            conflicts=[],
+            duplicate_candidates=[],
+            evidence_refs=evidence_refs,
+            confidence=0,
+        )
+
+    def _succeeded_execution_bundle(
+        self,
+        *,
+        running: TimelineGate3RunV1,
+        timeline_input: TimelineAnalysisInputV1,
+        proposal: TimelineAnalysisProposalV1,
+        timeline_agent_run_id: str,
+    ) -> TimelineExecutionBundleV1:
+        return TimelineExecutionBundleV1(
+            bundle_id=stable_id("timeline-execution", running.timeline_run_id),
+            project_id=running.project_id,
+            timeline_run_id=running.timeline_run_id,
+            status=TimelineExecutionStatus.SUCCEEDED,
+            input_reference=self._input_reference(running, timeline_input),
+            candidate_relations=proposal.temporal_relations,
+            evidence_refs=proposal.evidence_refs,
+            provenance=TimelineExecutionProvenanceV1(
+                source_chunk_ids=self._chunk_ids(timeline_input),
+                timeline_agent_run_id=timeline_agent_run_id,
+            ),
+        )
+
+    def _failed_execution_bundle(
+        self,
+        *,
+        running: TimelineGate3RunV1,
+        timeline_input: TimelineAnalysisInputV1,
+        timeline_agent_run_id: str,
+        reviewer_agent_run_id: str,
+        failure_category: ProviderFailureCategory,
+        safe_issue_codes: list[str],
+        diagnostics: TimelineProviderDiagnosticsV1 | None,
+    ) -> TimelineExecutionBundleV1:
+        """Persist a source-free failed unit without manufacturing a relation."""
+
+        first_error = (
+            diagnostics.validation_errors[0]
+            if (diagnostics and diagnostics.validation_errors)
+            else None
+        )
+        failure_origin = (
+            str(diagnostics.failure_origin)
+            if diagnostics and diagnostics.failure_origin is not None
+            else None
+        )
+        pair_id = stable_id("timeline-failed-unit", running.timeline_run_id)
+        issue_code = safe_issue_codes[0] if safe_issue_codes else "TIMELINE_EXECUTION_FAILED"
+        issue_id = stable_id("timeline-execution-issue", running.timeline_run_id, issue_code)
+        source_evidence = self._failed_timeline_proposal(running, timeline_input).evidence_refs
+        execution_status = (
+            TimelineExecutionStatus.NEEDS_HUMAN_ACTION
+            if failure_category
+            in {
+                ProviderFailureCategory.TIMEOUT,
+                ProviderFailureCategory.CONNECTION,
+                ProviderFailureCategory.SERVER,
+            }
+            else TimelineExecutionStatus.FAILED
+        )
+        return TimelineExecutionBundleV1(
+            bundle_id=stable_id("timeline-execution", running.timeline_run_id),
+            project_id=running.project_id,
+            timeline_run_id=running.timeline_run_id,
+            status=execution_status,
+            input_reference=self._input_reference(running, timeline_input),
+            failed_items=[
+                TimelineExecutionFailedItemV1(
+                    pair_id=pair_id,
+                    failure_category=failure_category,
+                    field_path=(first_error.field_path if first_error else None),
+                    failure_origin=failure_origin,
+                    safe_issue_codes=safe_issue_codes,
+                )
+            ],
+            issues=[
+                TimelineExecutionIssueV1(
+                    issue_id=issue_id,
+                    issue_code=issue_code,
+                    failed_pair_id=pair_id,
+                    evidence_refs=source_evidence,
+                )
+            ],
+            diagnostics=(
+                [
+                    TimelineExecutionDiagnosticV1(
+                        failure_origin=failure_origin,
+                        field_path=item.field_path,
+                        error_type=item.error_type,
+                        message_type=item.message_type,
+                    )
+                    for item in diagnostics.validation_errors
+                ]
+                if diagnostics
+                else []
+            ),
+            evidence_refs=source_evidence,
+            provenance=TimelineExecutionProvenanceV1(
+                source_chunk_ids=self._chunk_ids(timeline_input),
+                timeline_agent_run_id=timeline_agent_run_id,
+                gate3_reviewer_agent_run_id=reviewer_agent_run_id,
+            ),
         )
 
     @staticmethod
@@ -626,9 +980,7 @@ class NarrativeTimelineCoordinator:
         ]
         return list(
             dict.fromkeys(
-                evidence.chunk_id
-                for proposal in proposals
-                for evidence in proposal.evidence_refs
+                evidence.chunk_id for proposal in proposals for evidence in proposal.evidence_refs
             )
         )
 
@@ -694,17 +1046,12 @@ def _safe_provider_diagnostics(exc: Exception) -> TimelineProviderDiagnosticsV1 
         and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", finish_reason)
         else None
     )
-    field_paths = safe_strings(
-        "schema_error_field_paths", 32, r"[A-Za-z0-9_.\[\]-]{1,256}"
-    )
-    rule_codes = safe_strings(
-        "schema_error_rule_codes", 32, r"[A-Z][A-Z0-9_]{0,255}"
-    )
+    field_paths = safe_strings("schema_error_field_paths", 32, r"[A-Za-z0-9_.\[\]-]{1,256}")
+    rule_codes = safe_strings("schema_error_rule_codes", 32, r"[A-Z][A-Z0-9_]{0,255}")
     error_kind = diagnostics.get("schema_error_kind")
     safe_error_type = (
         error_kind[:128]
-        if isinstance(error_kind, str)
-        and re.fullmatch(r"[a-z][a-z0-9_]{0,127}", error_kind)
+        if isinstance(error_kind, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,127}", error_kind)
         else "provider_response_error"
     )
     return TimelineProviderDiagnosticsV1(

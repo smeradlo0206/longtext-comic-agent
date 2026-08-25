@@ -8,6 +8,7 @@ import httpx
 import pytest
 from pydantic import BaseModel, SecretStr, ValidationError
 
+from comic_agent.agents.timeline_output_normalizer import TIMELINE_PAIR_OUTPUT_NORMALIZER
 from comic_agent.config import Settings
 from comic_agent.providers.openai_compatible import (
     OpenAICompatibleLLMProvider,
@@ -28,6 +29,7 @@ from comic_agent.schemas.narrative import (
     StateChangeProposalBatchV1,
 )
 from comic_agent.schemas.reliability import StructuredOutputPolicy
+from comic_agent.schemas.timeline import TimelinePairInferenceV1
 
 
 class OutputModel(BaseModel):
@@ -175,6 +177,27 @@ def test_provider_without_cached_capability_profile_uses_json_object_not_prompt_
 
     assert provider.structured_generate({}, OutputModel) == OutputModel(answer="ok")
     assert client.requests[0]["json"]["response_format"] == {"type": "json_object"}
+
+
+def test_real_provider_preserves_agent_messages_without_appending_output_contract() -> None:
+    client = FakeHttpClient(
+        FakeResponse(200, {"choices": [{"message": {"content": '{"answer":"ok"}'}}]})
+    )
+    provider = OpenAICompatibleLLMProvider(
+        api_key="secret",
+        http_client=client,
+        structured_output_policy=StructuredOutputPolicy.JSON_OBJECT_ONLY,
+    )
+    agent_messages = [
+        {"role": "system", "content": "Use the supplied pairwise contract."},
+        {"role": "user", "content": "Return the requested answer."},
+    ]
+
+    assert provider.structured_generate({"messages": agent_messages}, OutputModel) == OutputModel(
+        answer="ok"
+    )
+
+    assert client.requests[0]["json"]["messages"] == agent_messages
 
 
 def test_settings_redacts_llm_api_key_from_repr_and_model_dump(
@@ -577,6 +600,34 @@ def test_openai_compatible_provider_returns_event_proposal() -> None:
     assert client.requests[0]["headers"]["Authorization"] == "Bearer secret-test-key"
     assert client.requests[0]["json"]["model"] == "deepseek-v4-pro"
     assert client.requests[0]["json"]["temperature"] == 0
+
+
+def test_openai_compatible_provider_normalizes_timeline_pair_before_schema_validation() -> None:
+    """The Timeline-only marker repairs presentation variants before Pydantic."""
+
+    client = FakeHttpClient(
+        response=_chat_response(
+            json.dumps(
+                {
+                    "time_relation": "before_event",
+                    "evidence_indexes": [0],
+                    "score": "90%",
+                }
+            )
+        )
+    )
+    provider = OpenAICompatibleLLMProvider(api_key="secret-test-key", http_client=client)
+
+    result = provider.structured_generate(
+        {
+            "messages": [{"role": "user", "content": "timeline pair"}],
+            "output_normalizer": TIMELINE_PAIR_OUTPUT_NORMALIZER,
+        },
+        TimelinePairInferenceV1,
+    )
+
+    assert result.relation == "BEFORE"
+    assert result.confidence == 0.9
 
 
 def test_openai_compatible_provider_parses_standard_string_json_content() -> None:

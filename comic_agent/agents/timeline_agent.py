@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from itertools import combinations
 
 from comic_agent.agents.specs import AgentSpec
+from comic_agent.agents.timeline_output_normalizer import TIMELINE_PAIR_OUTPUT_NORMALIZER
 from comic_agent.providers.llm import LLMProvider
 from comic_agent.providers.openai_compatible import ProviderResponseError
 from comic_agent.schemas.base import EvidenceRefV1, RecordStatus
@@ -74,10 +75,10 @@ class EventPairSelector:
 class TimelineAgent:
     """Keep deterministic checks separate from pairwise LLM time judgments."""
 
-    PROMPT_VERSION = "timeline-pair-v2.1"
+    PROMPT_VERSION = "timeline-pair-v2.3"
     spec = AgentSpec(
         agent_id="timeline-agent",
-        version="2.1",
+        version="2.3",
         reads=["EventProposalV1", "ClaimProposalV1", "StateChangeProposalV1"],
         output_schema="TimelineAnalysisProposalV1",
         tools=[],
@@ -287,11 +288,12 @@ class TimelineAgent:
                         {"chunk_id": chunk_id, "text": chunks_by_id[chunk_id].text}
                     )
         return {
+            "output_normalizer": TIMELINE_PAIR_OUTPUT_NORMALIZER,
             "messages": [
                 {
                     "role": "system",
                     "content": (
-                        "You are TimelineAgent V2.1. Judge ONLY Event A relative to Event B "
+                        "You are TimelineAgent V2.3. Judge ONLY Event A relative to Event B "
                         "from the supplied records and exact evidence allowlist. Narrative "
                         "or chapter "
                         "order is not story-time evidence. Never invent facts, dates, or "
@@ -303,12 +305,13 @@ class TimelineAgent:
                         "Do not return proposal ids, event ids, quotes, offsets, or source text. "
                         "reasoning_summary must be a short evidence-grounded "
                         "summary, "
-                        "not hidden reasoning. Return only one JSON object matching: "
-                        + json.dumps(
-                            TimelinePairInferenceV1.model_json_schema(),
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                        )
+                        "not hidden reasoning. Reply with exactly one JSON data object: an answer, "
+                        "not a description of fields. Use only relation, evidence_indexes, "
+                        "confidence, and optional reasoning_summary. Do not emit a "
+                        "type/properties/required object or an explanation. "
+                        "Example for insufficient "
+                        "evidence: {\"relation\":\"UNKNOWN\",\"evidence_indexes\":[],"
+                        "\"confidence\":0.0,\"reasoning_summary\":\"No temporal evidence.\"}."
                     ),
                 },
                 {
@@ -353,10 +356,7 @@ class TimelineAgent:
         return (
             input_context.mode,
             tuple(proposal.proposal_id for proposal in input_context.event_proposals),
-            tuple(
-                getattr(proposal, "claim_id", proposal.proposal_id)
-                for proposal in input_context.claim_proposals
-            ),
+            tuple(proposal.proposal_id for proposal in input_context.claim_proposals),
             tuple(proposal.proposal_id for proposal in input_context.state_change_proposals),
         )
 
@@ -415,15 +415,17 @@ class TimelineAgent:
             ):
                 conflicts.append(
                     TimelineConflictV1(
-                        conflict_id=stable_id("claim-conflict", first.claim_id, second.claim_id),
+                        conflict_id=stable_id(
+                            "claim-conflict", first.proposal_id, second.proposal_id
+                        ),
                         project_id=input_context.project_id,
                         category=TimelineConflictCategory.CONTRADICTORY_CLAIMS,
                         summary=(
-                            f"Claims {first.claim_id} and {second.claim_id} assign "
+                            f"Claims {first.proposal_id} and {second.proposal_id} assign "
                             "different values "
                             f"to {first.subject_id}.{first.predicate}."
                         ),
-                        affected_proposal_ids=[first.claim_id, second.claim_id],
+                        affected_proposal_ids=[first.proposal_id, second.proposal_id],
                         evidence_refs=[*first.evidence_refs, *second.evidence_refs],
                     )
                 )
@@ -455,11 +457,11 @@ class TimelineAgent:
                 duplicates.append(
                     DuplicateCandidateV1(
                         candidate_id=stable_id(
-                            "duplicate-claim", first_claim.claim_id, second_claim.claim_id
+                            "duplicate-claim", first_claim.proposal_id, second_claim.proposal_id
                         ),
                         project_id=input_context.project_id,
                         candidate_type=DuplicateCandidateType.CLAIM,
-                        proposal_ids=[first_claim.claim_id, second_claim.claim_id],
+                        proposal_ids=[first_claim.proposal_id, second_claim.proposal_id],
                         reason="Exact subject, predicate, value, source, and reality layer match.",
                         evidence_refs=[*first_claim.evidence_refs, *second_claim.evidence_refs],
                         confidence=1.0,

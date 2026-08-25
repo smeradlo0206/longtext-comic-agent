@@ -199,13 +199,7 @@ def get_pipeline_status(
     aggregate = analysis_repository.get_result(analysis_run_id)
     attempts = recovery_repository.list_attempts(analysis_run_id)
     latest_gate2_route = _latest_approved_recovery_route(attempts) or route
-    timeline_route = latest_gate2_route
-    bundle = timeline_route.approved_proposal_bundle if timeline_route is not None else None
-    timeline = (
-        timeline_repository.get_by_bundle(run.project_id, bundle.bundle_id)
-        if bundle is not None
-        else None
-    )
+    timeline = _timeline_for_route(timeline_repository, run.project_id, latest_gate2_route)
     gate3_route = timeline.gate3_route if timeline is not None else None
     gate3_result = timeline.gate3_result if timeline is not None else None
     safe_codes = sorted(
@@ -292,6 +286,30 @@ def get_pipeline_status(
             timeline.recovery_budget.model_dump(mode="json") if timeline is not None else None
         ),
     }
+
+
+def _timeline_for_route(
+    timeline_repository: TimelineGate3Repository,
+    project_id: str,
+    route: Any | None,
+) -> Any | None:
+    """Load Timeline using the lineage key persisted for the Gate 2 route.
+
+    Fully approved routes use the legacy approved-proposal bundle.  Non-blocking
+    Gate 2 outcomes have no approved bundle and persist Timeline by their
+    NarrativeExecutionBundle instead.  Keeping this lookup in one helper keeps
+    the status endpoint aligned with TimelineGate3Repository.reserve_run().
+    """
+
+    if route is None:
+        return None
+    approved_bundle = getattr(route, "approved_proposal_bundle", None)
+    if approved_bundle is not None:
+        return timeline_repository.get_by_bundle(project_id, approved_bundle.bundle_id)
+    execution_bundle = getattr(route, "narrative_execution_bundle", None)
+    if execution_bundle is None:
+        return None
+    return timeline_repository.get_by_bundle(project_id, execution_bundle.bundle_id)
 
 
 def _latest_approved_recovery_route(attempts: list[Any]) -> Any | None:
@@ -385,9 +403,7 @@ def _require_real_pipeline_opt_in(
     )
     if str(result.status) != "AVAILABLE":
         raise HTTPException(status_code=409, detail=result.model_dump(mode="json"))
-    capability_service = ProviderCapabilityService(
-        settings=settings, repository=circuit_repository
-    )
+    capability_service = ProviderCapabilityService(settings=settings, repository=circuit_repository)
     capability = capability_service.resolve(
         provider_key=f"{settings.llm_provider_name}:{settings.llm_model}",
         provider=provider,
@@ -511,9 +527,7 @@ def _save_pipeline_failure(
             NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION,
         }
         status = (
-            run.status
-            if run.status in artifact_statuses
-            else NarrativeAnalysisRunStatus.FAILED
+            run.status if run.status in artifact_statuses else NarrativeAnalysisRunStatus.FAILED
         )
         repository.save_run(
             run.model_copy(
@@ -680,7 +694,11 @@ def _run_pipeline_until_terminal(
                     NarrativePipelinePhase.COMPLETED
                     if run.status == NarrativeAnalysisRunStatus.SUCCEEDED
                     else NarrativePipelinePhase.NEEDS_HUMAN_ACTION
-                    if run.status == NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION
+                    if run.status
+                    in {
+                        NarrativeAnalysisRunStatus.PARTIAL_FAILED,
+                        NarrativeAnalysisRunStatus.NEEDS_HUMAN_ACTION,
+                    }
                     else NarrativePipelinePhase.FAILED
                 )
                 update: dict[str, object] = {"pipeline_phase": phase}
@@ -850,16 +868,12 @@ def _structured_execution_summary(windows: list[Any]) -> dict[str, object]:
         ),
         "max_split_depth": max((window.split_depth for window in windows), default=0),
         "completion_tokens": sum(completion_values) if completion_values else None,
-        "completion_tokens_status": (
-            "REPORTED" if completion_values else "PROVIDER_NOT_REPORTED"
-        ),
+        "completion_tokens_status": ("REPORTED" if completion_values else "PROVIDER_NOT_REPORTED"),
         "provider_calls_consumed": sum(window.provider_request_count for window in windows),
         "provider_calls_budget": sum(window.max_call_attempts for window in windows),
         "elapsed_seconds_consumed": sum(window.elapsed_seconds_used for window in windows),
         "elapsed_seconds_budget": sum(window.time_budget_seconds for window in windows),
-        "needs_human_action": any(
-            str(window.status) == "NEEDS_HUMAN_ACTION" for window in windows
-        ),
+        "needs_human_action": any(str(window.status) == "NEEDS_HUMAN_ACTION" for window in windows),
     }
 
 

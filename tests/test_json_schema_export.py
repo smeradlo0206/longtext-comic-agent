@@ -130,6 +130,13 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
         "TimelineFailureSummaryV1",
         "TimelineProviderDiagnosticsV1",
         "TimelineValidationErrorV1",
+        "TimelineExecutionBundleV1",
+        "TimelineExecutionDiagnosticV1",
+        "TimelineExecutionFailedItemV1",
+        "TimelineExecutionInputReferenceV1",
+        "TimelineExecutionIssueV1",
+        "TimelineExecutionProvenanceV1",
+        "TimelineInputAvailabilitySummaryV1",
         "ProductionDossierV1",
         "ProductionDossierProvenanceV1",
         "StoryBibleProductionInputV2",
@@ -168,13 +175,13 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
         "ReviewGate1IssueV1",
         "ReviewGate1CheckResultV1",
         "SourceChapterReviewItemV1",
-            "SourceChunkReviewItemV1",
-            "ApprovedSourceChunkBundleV1",
-            "ReviewGate1IssueCountV1",
-            "ReviewGate1CategoryCountV1",
-            "ReviewGate1MetricsV1",
-            "ReviewGate1RoutingAdviceV1",
-            "ReviewGate1ResultV1",
+        "SourceChunkReviewItemV1",
+        "ApprovedSourceChunkBundleV1",
+        "ReviewGate1IssueCountV1",
+        "ReviewGate1CategoryCountV1",
+        "ReviewGate1MetricsV1",
+        "ReviewGate1RoutingAdviceV1",
+        "ReviewGate1ResultV1",
     ):
         assert (output_dir / f"{schema_name}.json").exists()
 
@@ -280,12 +287,12 @@ def test_json_schema_export_includes_phase_one_workflow_schemas(tmp_path, monkey
         "1.2",
         "1.3",
         "1.4",
-            "1.5",
-            "1.6",
-            "1.7",
-            "1.8",
-            "1.9",
-        ]
+        "1.5",
+        "1.6",
+        "1.7",
+        "1.8",
+        "1.9",
+    ]
     assert "owned_chunk_ids" in window_schema["properties"]
     assert "parent_window_id" in window_schema["properties"]
     assert relationship_schema["properties"]["schema_version"]["const"] == "1.0"

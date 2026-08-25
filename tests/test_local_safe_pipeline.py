@@ -15,7 +15,9 @@ from comic_agent.api.pipeline import (
     _parse_narrative_modes,
     _pipeline_retry_wait_seconds,
     _require_real_pipeline_opt_in,
+    _run_pipeline_until_terminal,
     _save_pipeline_failure,
+    _timeline_for_route,
 )
 from comic_agent.config import Settings, get_settings
 from comic_agent.main import create_app
@@ -65,9 +67,10 @@ def test_gate2_safe_issue_codes_include_rejected_proposal_diagnostics() -> None:
 
 
 def test_pipeline_accepts_only_distinct_known_requested_narrative_modes() -> None:
-    assert _parse_narrative_modes(
-        '["entity_extraction", "event_extraction"]'
-    ) == ["entity_extraction", "event_extraction"]
+    assert _parse_narrative_modes('["entity_extraction", "event_extraction"]') == [
+        "entity_extraction",
+        "event_extraction",
+    ]
     with pytest.raises(ValueError, match="distinct"):
         _parse_narrative_modes('["event_extraction", "event_extraction"]')
     with pytest.raises(ValueError, match="unsupported"):
@@ -104,6 +107,26 @@ def test_pipeline_selects_latest_fresh_approved_route_despite_later_failed_recov
     from comic_agent.api import pipeline
 
     assert pipeline._latest_approved_recovery_route(attempts) is approved
+
+
+def test_pipeline_status_looks_up_timeline_for_execution_only_gate2_route() -> None:
+    """Non-approved Gate 2 routes persist Timeline by execution bundle lineage."""
+
+    requested: list[str] = []
+
+    class _TimelineRepository:
+        def get_by_bundle(self, project_id: str, bundle_id: str) -> object:
+            assert project_id == "project-1"
+            requested.append(bundle_id)
+            return object()
+
+    route = SimpleNamespace(
+        approved_proposal_bundle=None,
+        narrative_execution_bundle=SimpleNamespace(bundle_id="execution-bundle-1"),
+    )
+
+    assert _timeline_for_route(_TimelineRepository(), "project-1", route) is not None
+    assert requested == ["execution-bundle-1"]
 
 
 def test_overdue_pipeline_retry_checkpoint_is_immediately_eligible() -> None:
@@ -246,9 +269,7 @@ def test_one_click_pipeline_imports_and_reaches_gate3_approved(tmp_path, monkeyp
     assert _OFFICIAL_TEXT not in status.text
     assert gate2_bundle.status_code == 200
     source_bundle_id = gate2_bundle.json()["bundle_id"]
-    approved = client.get(
-        f"/projects/local-demo/timeline-gate3/{source_bundle_id}/approved-bundle"
-    )
+    approved = client.get(f"/projects/local-demo/timeline-gate3/{source_bundle_id}/approved-bundle")
     assert approved.status_code == 200
     assert approved.json()["source_approved_proposal_bundle_id"] == source_bundle_id
     assert "quote_text" not in approved.text
@@ -400,9 +421,7 @@ def test_one_click_pipeline_exposes_sanitized_narrative_failure_summary(
     assert payload["narrative_failure_summary"] == {
         "failed_window_count": 6,
         "failure_categories": ["SCHEMA_REPAIR_EXHAUSTED"],
-        "recommended_actions": [
-            "automatic schema recovery stopped; inspect safe rule codes"
-        ],
+        "recommended_actions": ["automatic schema recovery stopped; inspect safe rule codes"],
     }
     assert "error_message" not in status.text
     assert "raw_output" not in status.text
@@ -484,9 +503,7 @@ def test_double_click_reuses_the_durable_pipeline_run_without_a_second_provider_
 ) -> None:  # type: ignore[no-untyped-def]
     client = _client(tmp_path, monkeypatch)
     provider = client.app.state.narrative_analyst_provider
-    request = {
-        "files": {"file": ("official.txt", _OFFICIAL_TEXT.encode("utf-8"), "text/plain")}
-    }
+    request = {"files": {"file": ("official.txt", _OFFICIAL_TEXT.encode("utf-8"), "text/plain")}}
 
     first = client.post("/projects/idempotent-demo/pipeline-runs/import-and-analyze", **request)
     second = client.post("/projects/idempotent-demo/pipeline-runs/import-and-analyze", **request)
@@ -554,6 +571,41 @@ def test_background_failure_does_not_rewrite_a_completed_narrative_run(
     assert status["narrative"] == "SUCCEEDED"
     assert status["pipeline_phase"] == "FAILED"
     assert status["pipeline_safe_issue_codes"] == ["PIPELINE_WORKER_FAILED"]
+
+
+def test_terminal_partial_narrative_maps_to_needs_human_action(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A persisted partial execution is reviewable, never a terminal pipeline failure."""
+
+    client = _client(tmp_path, monkeypatch)
+    started = client.post(
+        "/projects/partial-terminal/pipeline-runs/import-and-analyze",
+        files={"file": ("official.txt", _OFFICIAL_TEXT.encode("utf-8"), "text/plain")},
+    )
+    run_id = started.json()["analysis_run_id"]
+    session = client.app.state.session_factory()
+    try:
+        repository = NarrativeAnalysisRepository(session)
+        run = repository.get_run(run_id)
+        assert run is not None
+        repository.save_run(
+            run.model_copy(update={"status": NarrativeAnalysisRunStatus.PARTIAL_FAILED})
+        )
+    finally:
+        session.close()
+
+    from comic_agent.api import pipeline
+
+    monkeypatch.setattr(pipeline, "_run_whole_document_analysis", lambda *args: None)
+    _run_pipeline_until_terminal(
+        client.app.state.session_factory,
+        client.app.state,
+        run_id,
+        False,
+    )
+
+    status = client.get(f"/pipeline-runs/{run_id}").json()
+    assert status["narrative"] == "PARTIAL_FAILED"
+    assert status["pipeline_phase"] == "NEEDS_HUMAN_ACTION"
 
 
 @pytest.mark.parametrize(

@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from comic_agent.schemas.base import EvidenceRefV1
 from comic_agent.schemas.narrative import EventProposalV1
+from comic_agent.schemas.review import ApprovedProposalBundleV1
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.workflow import (
     AggregatedEventProposalV1,
@@ -179,6 +180,28 @@ def test_partial_analysis_persists_execution_bundle_and_gate2_audit() -> None:
     assert execution is not None
     assert execution.status == "PARTIAL_FAILED"
     assert reviewed.review_gate2_route.review_status == "NEEDS_HUMAN_REVIEW"
+    # Persisted runs must remain reloadable even when a completed Gate 2 audit
+    # is routed to human review for an incomplete execution.  A rejected
+    # proposal can leave the review result COMPLETED while the execution route
+    # is NEEDS_HUMAN_REVIEW.
+    result_payload = reviewed.review_gate2_result.model_copy(
+        update={
+            "status": "COMPLETED",
+            "approved_bundle": ApprovedProposalBundleV1(
+                bundle_id="approved-bundle-1",
+                project_id="project-1",
+                document_id="document-1",
+                analysis_run_id="analysis-1",
+                review_run_id=reviewed.review_gate2_result.review_run_id,
+                policy_id=reviewed.review_gate2_result.policy.policy_id,
+            ),
+        }
+    )
+    run_payload = reviewed.model_dump(mode="json")
+    run_payload["review_gate2_result"] = result_payload.model_dump(mode="json")
+    reloaded = NarrativeAnalysisRunV1.model_validate(run_payload)
+    assert reloaded.review_gate2_route is not None
+    assert reloaded.review_gate2_route.review_status == "NEEDS_HUMAN_REVIEW"
     assert [item.analysis_window_id for item in execution.failed_windows] == ["window-failed-1"]
     assert any(issue.code == "NARRATIVE_EXECUTION_INCOMPLETE" for issue in execution.issues)
     assert service.calls == 1

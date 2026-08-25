@@ -1,6 +1,7 @@
 import pytest
 
 from comic_agent.agents.timeline_agent import TimelineAgent
+from comic_agent.agents.timeline_output_normalizer import TIMELINE_PAIR_OUTPUT_NORMALIZER
 from comic_agent.providers.mocks import MockLLMProvider
 from comic_agent.providers.openai_compatible import ProviderResponseError
 from comic_agent.schemas.base import EvidenceRefV1, RealityLayer
@@ -36,6 +37,26 @@ def claim(claim_id: str, object_value: str) -> ClaimProposalV1:
         predicate="location",
         object_value=object_value,
         asserted_by_entity_id="chen",
+        evidence_refs=EVIDENCE,
+        confidence=0.8,
+        reality_layer=RealityLayer.PRIMARY,
+    )
+
+
+def modern_claim(proposal_id: str, object_value: str) -> ClaimProposalV1:
+    return ClaimProposalV1(
+        schema_version="1.3",
+        proposal_id=proposal_id,
+        claim_id=None,
+        subject_id="lin",
+        predicate="location",
+        object_value=object_value,
+        asserted_by_entity_id="chen",
+        claim_type="FACTUAL_ASSERTION",
+        claim_text=f"Lin is in the {object_value}.",
+        temporal_scope="PRESENT",
+        source_type="NARRATOR",
+        verification_status="UNVERIFIED",
         evidence_refs=EVIDENCE,
         confidence=0.8,
         reality_layer=RealityLayer.PRIMARY,
@@ -94,6 +115,43 @@ def test_timeline_agent_marks_exact_claims_as_duplicate_candidates() -> None:
     )
 
     assert analysis.duplicate_candidates[0].candidate_type == DuplicateCandidateType.CLAIM
+
+
+def test_timeline_agent_uses_proposal_ids_for_duplicate_claims_without_legacy_ids() -> None:
+    analysis = TimelineAgent().run(
+        TimelineAnalysisInputV1(
+            project_id="project-1",
+            claim_proposals=[
+                modern_claim("proposal-1", "library"),
+                modern_claim("proposal-2", "library"),
+            ],
+        )
+    )
+
+    duplicate = analysis.duplicate_candidates[0]
+    assert duplicate.candidate_type == DuplicateCandidateType.CLAIM
+    assert duplicate.proposal_ids == ["proposal-1", "proposal-2"]
+    assert None not in duplicate.proposal_ids
+
+
+def test_timeline_agent_uses_proposal_ids_for_contradictory_claims_without_legacy_ids() -> None:
+    analysis = TimelineAgent().run(
+        TimelineAnalysisInputV1(
+            project_id="project-1",
+            claim_proposals=[
+                modern_claim("proposal-1", "library"),
+                modern_claim("proposal-2", "dormitory"),
+            ],
+        )
+    )
+
+    conflict = next(
+        item
+        for item in analysis.conflicts
+        if item.category == TimelineConflictCategory.CONTRADICTORY_CLAIMS
+    )
+    assert conflict.affected_proposal_ids == ["proposal-1", "proposal-2"]
+    assert None not in conflict.affected_proposal_ids
 
 
 def source_chunk() -> SourceChunkV1:
@@ -219,6 +277,30 @@ def test_timeline_agent_uses_small_pair_contract_and_one_safe_schema_repair() ->
     assert "TIMELINE_EVIDENCE_INDEX_INVALID" in str(repair_messages)
     assert "sanitized schema failure" not in str(repair_messages)
     assert analysis.temporal_relations[0].evidence_refs == EVIDENCE
+
+
+def test_timeline_pair_prompt_requests_a_json_data_answer_not_a_field_description() -> None:
+    first = event("event-1", "Chen leaves.")
+    second = event("event-2", "Lin arrives.")
+    agent = TimelineAgent()
+
+    request = agent._request_for_pair(  # noqa: SLF001 - contract regression coverage
+        first,
+        second,
+        {"chunk-1": source_chunk()},
+        EVIDENCE,
+    )
+
+    messages = request["messages"]
+    assert request["output_normalizer"] == TIMELINE_PAIR_OUTPUT_NORMALIZER
+    assert isinstance(messages, list)
+    system_prompt = messages[0]["content"]
+    assert isinstance(system_prompt, str)
+    assert "JSON data object" in system_prompt
+    assert "not a description of fields" in system_prompt
+    assert '"relation"' in system_prompt
+    assert '"evidence_indexes"' in system_prompt
+    assert "JSON Schema" not in system_prompt
 
 
 def test_timeline_agent_stops_after_one_schema_repair() -> None:

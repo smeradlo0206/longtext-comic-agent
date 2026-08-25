@@ -256,6 +256,17 @@ from comic_agent.schemas.timeline import (
     TimelineReviewMaterialV1,
     TimelineValidationErrorV1,
 )
+from comic_agent.schemas.timeline_execution import (
+    TimelineExecutionBundleV1,
+    TimelineExecutionDiagnosticV1,
+    TimelineExecutionFailedItemV1,
+    TimelineExecutionInputReferenceV1,
+    TimelineExecutionIssueV1,
+    TimelineExecutionProvenanceV1,
+    TimelineExecutionStatus,
+    TimelineInputAvailability,
+    TimelineInputAvailabilitySummaryV1,
+)
 from comic_agent.schemas.visual import PanelSpecV1
 from comic_agent.schemas.workflow import (
     AgentInputRefV1,
@@ -564,4 +575,13 @@ __all__ = [
     "TimelineReviewMaterialProvenanceV1",
     "TimelineReviewMaterialV1",
     "TimelineValidationErrorV1",
+    "TimelineExecutionBundleV1",
+    "TimelineExecutionDiagnosticV1",
+    "TimelineExecutionFailedItemV1",
+    "TimelineExecutionInputReferenceV1",
+    "TimelineExecutionIssueV1",
+    "TimelineExecutionProvenanceV1",
+    "TimelineExecutionStatus",
+    "TimelineInputAvailability",
+    "TimelineInputAvailabilitySummaryV1",
 ]

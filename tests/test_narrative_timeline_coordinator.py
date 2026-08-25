@@ -272,6 +272,21 @@ def test_two_sessions_claim_one_provider_and_resume_only_reviews(tmp_path) -> No
     assert final is not None
     assert final.status == TimelineGate3RunStatus.APPROVED
     assert final.provider_request_count == 1
+    assert final.timeline_execution_bundle is not None
+    assert final.timeline_execution_bundle.status == "SUCCEEDED"
+    assert final.timeline_execution_bundle.candidate_relations == []
+    assert final.gate3_result is not None
+    assert final.gate3_route is not None
+    assert final.timeline_review_material is not None
+    assert final.gate3_result.timeline_execution_bundle_id == (
+        final.timeline_execution_bundle.bundle_id
+    )
+    assert final.gate3_route.timeline_execution_bundle_id == (
+        final.timeline_execution_bundle.bundle_id
+    )
+    assert final.timeline_review_material.timeline_execution_bundle_id == (
+        final.timeline_execution_bundle.bundle_id
+    )
     assert runner.calls == 1
     assert len(AgentRunRepository(Session(engine)).list_agent_runs("project-1")) == 2
 
@@ -313,13 +328,22 @@ def test_timeline_timeout_persists_only_safe_failure_diagnostics(tmp_path) -> No
     failed = coordinator.run_if_approved(route=_route(), source_chunks=[_chunk()])
 
     assert failed is not None
-    assert failed.status == TimelineGate3RunStatus.FAILED
+    assert failed.status == TimelineGate3RunStatus.NEEDS_HUMAN_REVIEW
     assert str(failed.failure_category) == "PROVIDER_TIMEOUT"
     assert failed.safe_issue_codes == ["TIMELINE_PROVIDER_TIMEOUT"]
     assert failed.timeline_review_material is not None
-    assert failed.timeline_review_material.review_status == "FAILED"
+    assert failed.timeline_review_material.review_status == "NEEDS_HUMAN_REVIEW"
     assert failed.timeline_review_material.failure_summary is not None
     assert failed.timeline_review_material.failure_summary.category == "PROVIDER_TIMEOUT"
+    assert failed.timeline_execution_bundle is not None
+    assert failed.timeline_execution_bundle.status == "NEEDS_HUMAN_ACTION"
+    assert (
+        failed.timeline_execution_bundle.failed_items[0].failure_category
+        == "PROVIDER_TIMEOUT"
+    )
+    assert "synthetic provider timeout" not in failed.timeline_execution_bundle.model_dump_json()
+    assert failed.gate3_route is not None
+    assert failed.gate3_route.held_issue_ids
 
 
 def test_timeline_schema_failure_persists_only_typed_safe_diagnostics(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -334,7 +358,7 @@ def test_timeline_schema_failure_persists_only_typed_safe_diagnostics(tmp_path) 
     failed = coordinator.run_if_approved(route=_route(), source_chunks=[_chunk()])
 
     assert failed is not None
-    assert failed.status == TimelineGate3RunStatus.FAILED
+    assert failed.status == TimelineGate3RunStatus.NEEDS_HUMAN_REVIEW
     assert failed.provider_diagnostics is not None
     assert failed.provider_diagnostics.schema_error_field_paths == ["evidence_indexes.0"]
     assert failed.provider_diagnostics.schema_error_rule_codes == [
@@ -349,6 +373,16 @@ def test_timeline_schema_failure_persists_only_typed_safe_diagnostics(tmp_path) 
     assert failed.timeline_review_material.failure_summary is not None
     assert failed.timeline_review_material.failure_summary.field_path == "evidence_indexes.0"
     assert "unsafe_response" not in failed.model_dump_json()
+    assert failed.timeline_execution_bundle is not None
+    assert failed.timeline_execution_bundle.status == "FAILED"
+    assert failed.timeline_execution_bundle.failed_items[0].field_path == "evidence_indexes.0"
+    assert failed.timeline_execution_bundle.diagnostics[0].field_path == "evidence_indexes.0"
+    assert failed.gate3_result is not None
+    issue = failed.gate3_result.issues[0]
+    assert issue.failed_item_count == 1
+    assert issue.execution_diagnostic_field_paths == ["evidence_indexes.0"]
+    assert "unsafe_response" not in failed.gate3_result.model_dump_json()
+    assert failed.status == TimelineGate3RunStatus.NEEDS_HUMAN_REVIEW
 
 
 def test_invalid_llm_relation_records_sanitized_field_path_and_enum_category(tmp_path) -> None:
@@ -394,7 +428,7 @@ def test_local_timeline_construction_validation_is_diagnosed_and_materialized(tm
     failed = coordinator.run_if_approved(route=_route(), source_chunks=[_chunk()])
 
     assert failed is not None
-    assert failed.status == TimelineGate3RunStatus.FAILED
+    assert failed.status == TimelineGate3RunStatus.NEEDS_HUMAN_REVIEW
     assert failed.provider_diagnostics is not None
     assert (
         failed.provider_diagnostics.failure_origin
@@ -413,6 +447,10 @@ def test_local_timeline_construction_validation_is_diagnosed_and_materialized(tm
     persisted = TimelineGate3Repository(Session(engine)).get_run(failed.timeline_run_id)
     assert persisted is not None
     assert persisted.timeline_review_material is not None
+    assert persisted.timeline_execution_bundle is not None
+    assert persisted.timeline_execution_bundle.failed_items[0].failure_origin == (
+        "LOCAL_ARTIFACT_CONSTRUCTION_ERROR"
+    )
 
 
 def test_contract_validation_failure_has_a_source_free_origin(tmp_path) -> None:

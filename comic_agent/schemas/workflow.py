@@ -481,7 +481,17 @@ class NarrativeAnalysisRunV1(StrictBaseModel):
                 or route.analysis_run_id != self.analysis_run_id
             ):
                 raise ValueError("Gate 2 artifact analysis_run_id must match the analysis run")
-            if result.review_run_id != route.review_run_id or result.status != route.review_status:
+            incomplete_execution_route = (
+                str(result.status) == "COMPLETED"
+                and str(route.decision) == "NEEDS_HUMAN_REVIEW"
+                and str(route.review_status) == "NEEDS_HUMAN_REVIEW"
+                and route.narrative_execution_bundle is not None
+                and str(route.narrative_execution_bundle.status)
+                in {"PARTIAL_FAILED", "NEEDS_HUMAN_ACTION"}
+            )
+            if result.review_run_id != route.review_run_id or (
+                result.status != route.review_status and not incomplete_execution_route
+            ):
                 raise ValueError("Gate 2 route must match the stored review result")
         outcome_ids = [outcome.outcome_id for outcome in self.recovery_outcomes]
         if len(outcome_ids) != len(set(outcome_ids)):

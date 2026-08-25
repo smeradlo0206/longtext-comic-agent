@@ -8,6 +8,7 @@ from comic_agent.schemas import (
     CampusContentProfileProposalV1,
     ClaimProposalV1,
     ClaimType,
+    EntityProposalV1,
     EventProposalV1,
     NarrativeAnalysisReviewRouteV1,
     NarrativeExecutionBundleV1,
@@ -18,6 +19,10 @@ from comic_agent.schemas import (
     TimelineAnalysisMode,
 )
 from comic_agent.schemas.base import EvidenceRefV1
+from comic_agent.schemas.timeline_execution import (
+    TimelineInputAvailability,
+    TimelineInputAvailabilitySummaryV1,
+)
 
 
 class NarrativeTimelineInputAdapter:
@@ -129,12 +134,75 @@ class NarrativeTimelineInputAdapter:
     def has_timeline_candidates(bundle: NarrativeExecutionBundleV1) -> bool:
         """Whether the safely selected execution material contains Timeline-relevant facts."""
 
-        return any(
+        return (
+            NarrativeTimelineInputAdapter.classify_execution_input(bundle)
+            == TimelineInputAvailability.AVAILABLE
+        )
+
+    @staticmethod
+    def classify_execution_input(
+        bundle: NarrativeExecutionBundleV1,
+    ) -> TimelineInputAvailability:
+        """Classify why execution material can or cannot enter Timeline.
+
+        This intentionally reads the audited execution artifact rather than
+        inferring meaning from an empty adapter result.  The outcome is later
+        persisted for Gate 3 and Human Review; it never creates a Timeline fact.
+        """
+
+        if any(
             isinstance(
                 candidate.proposal,
                 (EventProposalV1, ClaimProposalV1, StateChangeProposalV1),
             )
             for candidate in bundle.candidates
+        ):
+            return TimelineInputAvailability.AVAILABLE
+        if any(
+            window.mode in {"event_extraction", "claim_extraction", "state_change_extraction"}
+            for window in bundle.failed_windows
+        ):
+            return TimelineInputAvailability.INPUT_INCOMPLETE
+        if any(
+            item.proposal_schema in {"EventProposalV1", "ClaimProposalV1", "StateChangeProposalV1"}
+            for item in bundle.excluded_items
+        ):
+            return TimelineInputAvailability.INPUT_EXCLUDED
+        return TimelineInputAvailability.NO_TIMELINE_CONTENT
+
+    @staticmethod
+    def execution_input_summary(
+        bundle: NarrativeExecutionBundleV1,
+    ) -> TimelineInputAvailabilitySummaryV1:
+        """Return only typed counts and modes suitable for a review artifact."""
+
+        candidates = [candidate.proposal for candidate in bundle.candidates]
+        return TimelineInputAvailabilitySummaryV1(
+            entity_proposal_count=sum(
+                isinstance(proposal, EntityProposalV1) for proposal in candidates
+            ),
+            event_proposal_count=sum(
+                isinstance(proposal, EventProposalV1) for proposal in candidates
+            ),
+            claim_proposal_count=sum(
+                isinstance(proposal, ClaimProposalV1) for proposal in candidates
+            ),
+            state_change_proposal_count=sum(
+                isinstance(proposal, StateChangeProposalV1) for proposal in candidates
+            ),
+            excluded_timeline_candidate_count=sum(
+                item.proposal_schema
+                in {"EventProposalV1", "ClaimProposalV1", "StateChangeProposalV1"}
+                for item in bundle.excluded_items
+            ),
+            incomplete_modes=sorted(
+                {
+                    str(window.mode)
+                    for window in bundle.failed_windows
+                    if window.mode
+                    in {"event_extraction", "claim_extraction", "state_change_extraction"}
+                }
+            ),
         )
 
     def _from_execution_bundle(

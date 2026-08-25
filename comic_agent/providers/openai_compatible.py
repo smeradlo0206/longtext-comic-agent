@@ -11,6 +11,10 @@ from typing import Any, Protocol, TypeVar
 import httpx
 from pydantic import BaseModel, SecretStr, ValidationError
 
+from comic_agent.agents.timeline_output_normalizer import (
+    TIMELINE_PAIR_OUTPUT_NORMALIZER,
+    normalize_timeline_pair_output,
+)
 from comic_agent.config import Settings
 from comic_agent.providers.llm import OutputModelT as ProviderOutputModelT
 from comic_agent.schemas.reliability import (
@@ -251,7 +255,7 @@ class OpenAICompatibleLLMProvider:
         self._validate_response_content(content, diagnostics)
 
         try:
-            payload = json.loads(self._extract_json(content))
+            decoded_payload = json.loads(self._extract_json(content))
         except json.JSONDecodeError as exc:
             if self._exceeded_max_output_tokens(diagnostics):
                 raise ProviderResponseError(
@@ -263,8 +267,12 @@ class OpenAICompatibleLLMProvider:
                 diagnostics=diagnostics,
             ) from exc
 
+        normalized_payload = self._normalize_decoded_output(
+            request, output_model, decoded_payload
+        )
+
         try:
-            return output_model.model_validate(payload)
+            return output_model.model_validate(normalized_payload)
         except ValidationError as exc:
             diagnostics.update(self.schema_validation_diagnostics(exc, output_model))
             self._last_execution_metadata = self._last_execution_metadata.model_copy(
@@ -278,6 +286,22 @@ class OpenAICompatibleLLMProvider:
                 ),
                 diagnostics=diagnostics,
             ) from exc
+
+    @staticmethod
+    def _normalize_decoded_output(
+        request: dict[str, object],
+        output_model: type[BaseModel],
+        payload: object,
+    ) -> object:
+        """Apply only the named, model-specific pre-validation normalizer."""
+
+        if (
+            request.get("output_normalizer") == TIMELINE_PAIR_OUTPUT_NORMALIZER
+            and output_model.__name__ == "TimelinePairInferenceV1"
+            and isinstance(payload, dict)
+        ):
+            return normalize_timeline_pair_output(payload)
+        return payload
 
     def apply_capability_profile(self, profile: ProviderCapabilityProfileV1) -> None:
         """Apply only a source-free profile resolved by the capability service."""
@@ -793,6 +817,21 @@ class OpenAICompatibleLLMProvider:
         request: dict[str, object],
         output_model: type[BaseModel],
     ) -> list[dict[str, str]]:
+        if "messages" in request:
+            raw_messages = request["messages"]
+            if not isinstance(raw_messages, list) or not raw_messages:
+                raise ValueError("LLM request messages must be a non-empty list")
+            messages: list[dict[str, str]] = []
+            for message in raw_messages:
+                if not isinstance(message, Mapping):
+                    raise ValueError("LLM request message must be an object")
+                role = message.get("role")
+                content = message.get("content")
+                if not isinstance(role, str) or not isinstance(content, str):
+                    raise ValueError("LLM request message role and content must be strings")
+                messages.append({"role": role, "content": content})
+            return messages
+
         system_prompt = str(
             request.get(
                 "system_prompt",
