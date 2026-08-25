@@ -13,6 +13,7 @@ from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.storybible import (
     CommitPlanV1,
     ConflictV1,
+    HumanApprovedStoryBibleProductionLineageV1,
     ProfileUpdateProposalV1,
     StoryBibleCanonicalSnapshotV1,
     StoryBibleCuratorProposalV1,
@@ -246,6 +247,28 @@ class _Curator:
         return self.result
 
 
+class _LineageRecordingAdapter(StoryBibleCuratorInputAdapter):
+    def __init__(self) -> None:
+        self.lineage = None
+        self.strict_calls = 0
+        self.legacy_calls = 0
+        self._inside_strict = False
+
+    def adapt_with_lineage(self, production: Any, *, lineage: Any, **kwargs: Any) -> Any:
+        self.strict_calls += 1
+        self.lineage = lineage
+        self._inside_strict = True
+        try:
+            return super().adapt_with_lineage(production, lineage=lineage, **kwargs)
+        finally:
+            self._inside_strict = False
+
+    def adapt(self, production: Any, **kwargs: Any) -> Any:
+        if not self._inside_strict:
+            self.legacy_calls += 1
+        return super().adapt(production, **kwargs)
+
+
 def _coordinator(
     prepared: PreparedStoryBibleProduction | None = None,
     *,
@@ -254,6 +277,7 @@ def _coordinator(
         StoryBibleProductionAuthorizationPolicy.LEGACY_COMPAT
     ),
     allow_legacy_compat: bool | None = None,
+    input_adapter: StoryBibleCuratorInputAdapter | None = None,
 ) -> tuple[StoryBibleProductionCoordinator, _Builder, _Runs, _AgentRuns, _Curator]:
     prepared = prepared or _prepared()
     builder = _Builder(prepared)
@@ -268,6 +292,7 @@ def _coordinator(
         agent_run_repository=agents,  # type: ignore[arg-type]
         settings=Settings(_env_file=None, enable_real_llm=True),
         authorization_policy=authorization_policy,
+        input_adapter=input_adapter,
         allow_legacy_compat=(
             authorization_policy == StoryBibleProductionAuthorizationPolicy.LEGACY_COMPAT
             if allow_legacy_compat is None
@@ -275,6 +300,58 @@ def _coordinator(
         ),
     )
     return coordinator, builder, runs, agents, curator
+
+
+def _human_prepared(
+    *, lineage: HumanApprovedStoryBibleProductionLineageV1 | None
+) -> PreparedStoryBibleProduction:
+    legacy = _prepared()
+    context = legacy.context.model_copy(
+        update={
+            "gate2_approved_bundle_id": None,
+            "approved_timeline_bundle_id": None,
+            "human_review_id": "review-1",
+            "production_dossier_id": "dossier-1",
+            "narrative_execution_bundle_id": "narrative-1",
+            "timeline_review_material_id": "timeline-material-1",
+            "authorization_kind": StoryBibleProductionAuthorizationKind.HUMAN_APPROVED,
+            "human_approved_lineage": lineage,
+        }
+    )
+    production_input = legacy.production_input.model_copy(
+        update={
+            "gate2_approved_bundle_id": None,
+            "approved_timeline_bundle_id": None,
+            "human_review_id": "review-1",
+            "production_dossier_id": "dossier-1",
+            "narrative_execution_bundle_id": "narrative-1",
+            "timeline_review_material_id": "timeline-material-1",
+            "authorization_kind": StoryBibleProductionAuthorizationKind.HUMAN_APPROVED,
+            "human_approved_lineage": lineage,
+        }
+    )
+    run = legacy.run.model_copy(
+        update={
+            "gate2_approved_bundle_id": None,
+            "approved_timeline_bundle_id": None,
+            "human_review_id": "review-1",
+            "production_dossier_id": "dossier-1",
+            "narrative_execution_bundle_id": "narrative-1",
+            "timeline_review_material_id": "timeline-material-1",
+            "authorization_kind": StoryBibleProductionAuthorizationKind.HUMAN_APPROVED,
+            "human_approved_lineage": lineage,
+        }
+    )
+    return PreparedStoryBibleProduction(production_input, context, run)
+
+
+def _human_lineage() -> HumanApprovedStoryBibleProductionLineageV1:
+    return HumanApprovedStoryBibleProductionLineageV1(
+        human_review_id="review-1",
+        dossier_id="dossier-1",
+        narrative_execution_bundle_id="narrative-1",
+        timeline_review_material_id="timeline-material-1",
+    )
 
 
 def _run(coordinator: StoryBibleProductionCoordinator) -> StoryBibleProductionRunV1:
@@ -323,6 +400,81 @@ def test_human_only_run_prepared_requires_human_review_and_dossier_ids() -> None
     )
 
     assert result.code == "PRODUCTION_AUTHORIZATION_REQUIRED"
+    assert curator.calls == 0
+
+
+def test_human_approved_runtime_wiring_uses_strict_curator_lineage_adapter() -> None:
+    adapter = _LineageRecordingAdapter()
+    prepared = _human_prepared(lineage=_human_lineage())
+    coordinator, _, _, _, curator = _coordinator(
+        prepared,
+        authorization_policy=StoryBibleProductionAuthorizationPolicy.HUMAN_APPROVED_ONLY,
+        input_adapter=adapter,
+    )
+
+    result = coordinator.run_prepared(
+        prepared=prepared,
+        model_identity="model-1",
+        real_llm_requested=True,
+    )
+
+    assert result.status == StoryBibleProductionRunStatus.SUCCEEDED
+    assert adapter.strict_calls == 1
+    assert adapter.legacy_calls == 0
+    assert adapter.lineage is not None
+    assert adapter.lineage.production_run_id == prepared.run.run_id
+    assert adapter.lineage.dossier_id == "dossier-1"
+    assert adapter.lineage.human_review_id == "review-1"
+    assert adapter.lineage.approved_timeline_bundle_id is None
+    assert (
+        adapter.lineage.canonical_snapshot_hash
+        == prepared.context.canonical_storybible_snapshot_hash
+    )
+    assert curator.calls == 1
+
+
+def test_human_approved_runtime_wiring_rejects_missing_lineage_without_fallback() -> None:
+    adapter = _LineageRecordingAdapter()
+    prepared = _human_prepared(lineage=None)
+    coordinator, _, runs, _, curator = _coordinator(
+        prepared,
+        authorization_policy=StoryBibleProductionAuthorizationPolicy.HUMAN_APPROVED_ONLY,
+        input_adapter=adapter,
+    )
+
+    with pytest.raises(StoryBibleProductionExecutionError) as caught:
+        coordinator.run_prepared(
+            prepared=prepared,
+            model_identity="model-1",
+            real_llm_requested=True,
+        )
+
+    assert caught.value.stage == StoryBibleProductionFailureStage.INPUT_ADAPTATION
+    assert runs.run.status == StoryBibleProductionRunStatus.FAILED
+    assert adapter.strict_calls == adapter.legacy_calls == 0
+    assert curator.calls == 0
+
+
+def test_human_approved_runtime_wiring_rejects_inconsistent_persisted_lineage() -> None:
+    adapter = _LineageRecordingAdapter()
+    inconsistent = _human_lineage().model_copy(update={"dossier_id": "other-dossier"})
+    prepared = _human_prepared(lineage=inconsistent)
+    coordinator, _, runs, _, curator = _coordinator(
+        prepared,
+        authorization_policy=StoryBibleProductionAuthorizationPolicy.HUMAN_APPROVED_ONLY,
+        input_adapter=adapter,
+    )
+
+    with pytest.raises(StoryBibleProductionExecutionError) as caught:
+        coordinator.run_prepared(
+            prepared=prepared,
+            model_identity="model-1",
+            real_llm_requested=True,
+        )
+
+    assert caught.value.stage == StoryBibleProductionFailureStage.INPUT_ADAPTATION
+    assert runs.run.status == StoryBibleProductionRunStatus.FAILED
+    assert adapter.strict_calls == adapter.legacy_calls == 0
     assert curator.calls == 0
 
 
@@ -381,15 +533,15 @@ def test_provider_and_schema_failures_are_terminal(error: Any, stage: Any) -> No
     assert runs.run.provider_request_count == 1
 
 
-def test_normalization_failure_is_terminal_and_sanitized() -> None:
+def test_server_owned_curator_project_id_is_rewritten_before_normalization() -> None:
     bad = _proposal().model_copy(update={"project_id": "wrong-project"})
     coordinator, _, _, agents, _ = _coordinator(curator=_Curator(bad))
     result = _run(coordinator)
 
-    assert result.status == StoryBibleProductionRunStatus.FAILED
-    assert result.failure_stage == StoryBibleProductionFailureStage.NORMALIZATION
-    assert result.curator_proposal is None
-    assert next(iter(agents.values.values())).status == AgentRunStatus.FAILED
+    assert result.status == StoryBibleProductionRunStatus.SUCCEEDED
+    assert result.curator_proposal is not None
+    assert result.curator_proposal.project_id == "project-1"
+    assert next(iter(agents.values.values())).status == AgentRunStatus.SUCCEEDED
 
 
 def test_chunk_budget_fails_before_claim_without_truncation() -> None:

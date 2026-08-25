@@ -285,6 +285,68 @@ def test_normalization_is_replay_stable_and_rewrites_complete_graph() -> None:
     assert first.evidence_refs[0].quote_end == 14
 
 
+def test_server_owned_project_fields_are_rewritten_and_diagnosed() -> None:
+    raw = _raw_proposal()
+    raw.project_id = "wrong-project"
+    raw.commit_plan.project_id = "wrong-project"
+    for update in raw.commit_plan.updates:
+        update.project_id = "wrong-project"
+        resource = update.profile if isinstance(update, ProfileUpdateProposalV1) else None
+        if resource is not None:
+            resource.project_id = "wrong-project"
+        elif isinstance(update, StateUpdateProposalV1):
+            update.state.project_id = "wrong-project"
+        elif isinstance(update, RelationshipUpdateProposalV1):
+            update.relationship.project_id = "wrong-project"
+        else:
+            assert isinstance(update, WorldRuleUpdateProposalV1)
+            update.world_rule.project_id = "wrong-project"
+    raw.conflicts[0].project_id = "wrong-project"
+
+    normalizer = StoryBibleProductionOutputNormalizer()
+    normalized = normalizer.normalize(
+        raw,
+        context=_context(),
+        run=_run(_context().canonical_storybible_snapshot_hash),
+    )
+
+    assert normalized.project_id == "project-1"
+    assert normalized.commit_plan.project_id == "project-1"
+    assert all(update.project_id == "project-1" for update in normalized.commit_plan.updates)
+    resources = _resources(normalized)
+    for key in ("Alice", "Bob", "state", "relationship", "rule"):
+        resource = resources[key]
+        assert isinstance(
+            resource,
+            (StoryEntityProfileV1, StoryEntityStateV1, StoryRelationshipV1, WorldRuleV1),
+        )
+        assert resource.project_id == "project-1"
+    assert normalized.conflicts[0].project_id == "project-1"
+    assert normalizer.last_diagnostics
+    assert {item.code for item in normalizer.last_diagnostics} == {"SERVER_FIELD_REWRITTEN"}
+    assert all(item.original_value == "<redacted>" for item in normalizer.last_diagnostics)
+    assert any(item.field == "commit_plan.project_id" for item in normalizer.last_diagnostics)
+
+
+def test_semantic_reference_mismatch_is_still_rejected() -> None:
+    raw = _raw_proposal()
+    state_update = raw.commit_plan.updates[2]
+    assert isinstance(state_update, StateUpdateProposalV1)
+    state_update.state.profile_id = "missing-profile"
+
+    normalizer = StoryBibleProductionOutputNormalizer()
+    with pytest.raises(ValueError, match="unknown profile"):
+        normalizer.normalize(
+            raw,
+            context=_context(),
+            run=_run(_context().canonical_storybible_snapshot_hash),
+        )
+    assert any(
+        item.code == "NORMALIZER_CONTRACT_ERROR" for item in normalizer.last_diagnostics
+    )
+    assert all(item.original_value == "<redacted>" for item in normalizer.last_diagnostics)
+
+
 def test_new_resource_ids_are_independent_of_arbitrary_local_ids() -> None:
     first = _normalize(_raw_proposal())
     renamed = _raw_proposal(alice_id="arbitrary-a", bob_id="arbitrary-b")

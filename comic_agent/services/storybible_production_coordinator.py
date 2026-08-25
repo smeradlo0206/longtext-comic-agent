@@ -13,6 +13,7 @@ from comic_agent.repositories.storybible_production_run_repository import (
 )
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.storybible import (
+    StoryBibleCuratorContextLineageV1,
     StoryBibleCuratorProposalV1,
     StoryBibleProductionAuthorizationFailureCode,
     StoryBibleProductionAuthorizationFailureV1,
@@ -34,6 +35,7 @@ from comic_agent.services.id_service import stable_id
 from comic_agent.services.narrative_analyst_summary import sanitize_error_message
 from comic_agent.services.storybible_curator_input_adapter import (
     StoryBibleContextBudgetExceededError,
+    StoryBibleContextLineageError,
     StoryBibleCuratorInputAdapter,
 )
 from comic_agent.services.storybible_production_context import PreparedStoryBibleProduction
@@ -189,16 +191,31 @@ class StoryBibleProductionCoordinator:
             return run
         if run.status == StoryBibleProductionRunStatus.RUNNING:
             return self._resume_running(run)
+        human_approved = (
+            prepared.context.authorization_kind
+            == StoryBibleProductionAuthorizationKind.HUMAN_APPROVED
+        )
         try:
-            curator_input = self._adapter.adapt(
-                prepared.context,
-                max_context_chunks=self._curator.spec.max_context_chunks,
-            )
+            if human_approved:
+                curator_input = self._adapter.adapt_with_lineage(
+                    prepared.context,
+                    lineage=self._curator_context_lineage(prepared),
+                    max_context_chunks=self._curator.spec.max_context_chunks,
+                )
+            else:
+                curator_input = self._adapter.adapt(
+                    prepared.context,
+                    max_context_chunks=self._curator.spec.max_context_chunks,
+                )
         except StoryBibleContextBudgetExceededError as exc:
+            if human_approved:
+                self._persist_input_failure(prepared, exc)
             raise StoryBibleProductionExecutionError(
                 StoryBibleProductionFailureStage.CONTEXT_BUDGET, str(exc)
             ) from exc
-        except (ValueError, ValidationError) as exc:
+        except (StoryBibleContextLineageError, ValueError, ValidationError) as exc:
+            if human_approved:
+                self._persist_input_failure(prepared, exc)
             raise StoryBibleProductionExecutionError(
                 StoryBibleProductionFailureStage.INPUT_ADAPTATION,
                 self._sanitize(exc, prepared.context.source_chunks),
@@ -499,6 +516,67 @@ class StoryBibleProductionCoordinator:
             code=StoryBibleProductionAuthorizationFailureCode.PRODUCTION_AUTHORIZATION_REQUIRED,
             authorization_policy=self._authorization_policy,
         )
+
+    @staticmethod
+    def _curator_context_lineage(
+        prepared: PreparedStoryBibleProduction,
+    ) -> StoryBibleCuratorContextLineageV1:
+        """Build Curator lineage only from the reserved, server-built context."""
+
+        context = prepared.context
+        if context.authorization_kind != StoryBibleProductionAuthorizationKind.HUMAN_APPROVED:
+            raise StoryBibleContextLineageError(
+                "Curator lineage requires human-approved production context"
+            )
+        if (
+            context.production_dossier_id is None
+            or context.human_review_id is None
+            or context.narrative_execution_bundle_id is None
+            or context.timeline_review_material_id is None
+        ):
+            raise StoryBibleContextLineageError(
+                "human-approved production context lacks complete material lineage"
+            )
+        persisted = context.human_approved_lineage
+        if persisted is None or any(
+            (
+                getattr(persisted, field)
+                != getattr(context, context_field)
+            )
+            for field, context_field in (
+                ("human_review_id", "human_review_id"),
+                ("dossier_id", "production_dossier_id"),
+                ("narrative_execution_bundle_id", "narrative_execution_bundle_id"),
+                ("timeline_review_material_id", "timeline_review_material_id"),
+            )
+        ):
+            raise StoryBibleContextLineageError(
+                "human-approved production context has inconsistent persisted lineage"
+            )
+        return StoryBibleCuratorContextLineageV1(
+            production_run_id=prepared.run.run_id,
+            dossier_id=context.production_dossier_id,
+            human_review_id=context.human_review_id,
+            approved_timeline_bundle_id=context.approved_timeline_bundle_id,
+            canonical_snapshot_identity=context.canonical_storybible_snapshot_hash,
+            canonical_snapshot_hash=context.canonical_storybible_snapshot_hash,
+        )
+
+    def _persist_input_failure(
+        self, prepared: PreparedStoryBibleProduction, exc: Exception
+    ) -> None:
+        """Persist a safe pre-provider diagnostic for human-approved input failures."""
+
+        try:
+            self._runs.save_failure(
+                prepared.run.run_id,
+                error_message=self._sanitize(exc, prepared.context.source_chunks),
+                failure_stage=StoryBibleProductionFailureStage.INPUT_ADAPTATION,
+            )
+        except Exception:
+            # The original structured failure remains the caller-visible result;
+            # persistence failures must not expose provider or source details.
+            pass
 
     @staticmethod
     def _has_human_approved_input(prepared: PreparedStoryBibleProduction) -> bool:

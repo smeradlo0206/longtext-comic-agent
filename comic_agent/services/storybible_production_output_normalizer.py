@@ -1,7 +1,8 @@
 """Deterministic output trust boundary for future production StoryBible execution."""
 
 import json
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from comic_agent.schemas.base import EvidenceRefV1, RecordStatus
 from comic_agent.schemas.storybible import (
@@ -35,8 +36,20 @@ type StoryBibleResource = (
 )
 
 
+@dataclass(frozen=True)
+class NormalizationDiagnostic:
+    """Safe, non-payload diagnostic emitted by the output trust boundary."""
+
+    code: Literal["SERVER_FIELD_REWRITTEN", "NORMALIZER_CONTRACT_ERROR"]
+    field: str
+    original_value: str = "<redacted>"
+
+
 class StoryBibleProductionOutputNormalizer:
     """Normalize one schema-valid but untrusted model proposal without side effects."""
+
+    def __init__(self) -> None:
+        self.last_diagnostics: tuple[NormalizationDiagnostic, ...] = ()
 
     def normalize(
         self,
@@ -45,9 +58,31 @@ class StoryBibleProductionOutputNormalizer:
         context: StoryBibleProductionContextV1,
         run: StoryBibleProductionRunV1,
     ) -> StoryBibleCuratorProposalV1:
+        try:
+            return self._normalize_with_diagnostics(raw, context=context, run=run)
+        except ValueError:
+            self.last_diagnostics = self.last_diagnostics + (
+                NormalizationDiagnostic(
+                    code="NORMALIZER_CONTRACT_ERROR",
+                    field="<unknown>",
+                ),
+            )
+            raise
+
+    def _normalize_with_diagnostics(
+        self,
+        raw: StoryBibleCuratorProposalV1,
+        *,
+        context: StoryBibleProductionContextV1,
+        run: StoryBibleProductionRunV1,
+    ) -> StoryBibleCuratorProposalV1:
+        diagnostics: list[NormalizationDiagnostic] = []
+        self.last_diagnostics = ()
+        self._record_server_owned_rewrites(raw, context, diagnostics)
+        self.last_diagnostics = tuple(diagnostics)
         self._validate_lineage(raw, context, run)
         updates = list(raw.commit_plan.updates)
-        self._reject_duplicate_local_ids(updates, project_id=context.project_id)
+        self._reject_duplicate_local_ids(updates)
         normalized_evidence = _EvidenceGrounder(context)
 
         profile_map = self._build_profile_map(updates, context, run, normalized_evidence)
@@ -120,7 +155,7 @@ class StoryBibleProductionOutputNormalizer:
             updates=normalized_updates,
             evidence_refs=plan_evidence,
         )
-        return StoryBibleCuratorProposalV1(
+        result = StoryBibleCuratorProposalV1(
             proposal_id=proposal_id,
             project_id=context.project_id,
             status=raw.status,
@@ -129,6 +164,44 @@ class StoryBibleProductionOutputNormalizer:
             evidence_refs=normalized_evidence.normalize(raw.evidence_refs),
             confidence=raw.confidence,
         )
+        self.last_diagnostics = tuple(diagnostics)
+        return result
+
+    @staticmethod
+    def _record_server_owned_rewrites(
+        raw: StoryBibleCuratorProposalV1,
+        context: StoryBibleProductionContextV1,
+        diagnostics: list[NormalizationDiagnostic],
+    ) -> None:
+        """Record only safe metadata rewrites; never retain the rejected value."""
+
+        def record(field: str) -> None:
+            diagnostics.append(
+                NormalizationDiagnostic(
+                    code="SERVER_FIELD_REWRITTEN",
+                    field=field,
+                )
+            )
+
+        if raw.project_id != context.project_id:
+            record("project_id")
+        if raw.commit_plan.project_id != context.project_id:
+            record("commit_plan.project_id")
+        for index, update in enumerate(raw.commit_plan.updates):
+            if update.project_id != context.project_id:
+                record(f"commit_plan.updates[{index}].project_id")
+            resource = _resource_for(update)
+            if resource.project_id != context.project_id:
+                resource_name = {
+                    "ProfileUpdateProposalV1": "profile",
+                    "StateUpdateProposalV1": "state",
+                    "RelationshipUpdateProposalV1": "relationship",
+                    "WorldRuleUpdateProposalV1": "world_rule",
+                }[type(update).__name__]
+                record(f"commit_plan.updates[{index}].{resource_name}.project_id")
+        for index, conflict in enumerate(raw.conflicts):
+            if conflict.project_id != context.project_id:
+                record(f"conflicts[{index}].project_id")
 
     @staticmethod
     def _validate_lineage(
@@ -136,12 +209,8 @@ class StoryBibleProductionOutputNormalizer:
         context: StoryBibleProductionContextV1,
         run: StoryBibleProductionRunV1,
     ) -> None:
-        if raw.project_id != context.project_id:
-            raise ValueError("StoryBible proposal belongs to another project")
         if raw.status != RecordStatus.CANDIDATE:
             raise ValueError("production StoryBible proposal must have CANDIDATE status")
-        if raw.commit_plan.project_id != context.project_id:
-            raise ValueError("StoryBible commit plan belongs to another project")
         if run.project_id != context.project_id:
             raise ValueError("StoryBible run and context project mismatch")
         if canonical_storybible_snapshot_hash(context.canonical_snapshot) != (
@@ -157,15 +226,11 @@ class StoryBibleProductionOutputNormalizer:
             raise ValueError("StoryBible run does not match production context lineage")
 
     @staticmethod
-    def _reject_duplicate_local_ids(
-        updates: list[StoryBibleUpdate], *, project_id: str
-    ) -> None:
+    def _reject_duplicate_local_ids(updates: list[StoryBibleUpdate]) -> None:
         update_ids: set[str] = set()
         resource_ids: dict[str, set[str]] = {}
         for update in updates:
             resource = _resource_for(update)
-            if update.project_id != project_id or resource.project_id != project_id:
-                raise ValueError("StoryBible update or resource belongs to another project")
             if update.update_id in update_ids:
                 raise ValueError(f"duplicate local update_id: {update.update_id}")
             update_ids.add(update.update_id)
@@ -322,8 +387,6 @@ class StoryBibleProductionOutputNormalizer:
         local_ids: set[str] = set()
         normalized: list[ConflictV1] = []
         for conflict in conflicts:
-            if conflict.project_id != context.project_id:
-                raise ValueError("StoryBible conflict belongs to another project")
             if conflict.conflict_id in local_ids:
                 raise ValueError(f"duplicate local conflict_id: {conflict.conflict_id}")
             local_ids.add(conflict.conflict_id)

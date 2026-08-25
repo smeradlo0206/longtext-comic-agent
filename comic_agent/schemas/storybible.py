@@ -249,11 +249,40 @@ class CommitPlanV1(StrictBaseModel):
         return _reject_blank(value)
 
 
+class StoryBibleCuratorContextLineageV1(StrictBaseModel):
+    """Server-owned lineage metadata exposed to the proposal-only Curator."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    production_run_id: StoryBibleId
+    dossier_id: StoryBibleId
+    human_review_id: StoryBibleId
+    approved_timeline_bundle_id: StoryBibleId | None
+    canonical_snapshot_identity: StoryBibleId
+    canonical_snapshot_hash: StoryBibleId
+
+    @field_validator(
+        "production_run_id",
+        "dossier_id",
+        "human_review_id",
+        "canonical_snapshot_identity",
+        "canonical_snapshot_hash",
+    )
+    @classmethod
+    def lineage_references_are_not_blank(cls, value: str) -> str:
+        return _reject_blank(value)
+
+    @field_validator("approved_timeline_bundle_id")
+    @classmethod
+    def optional_timeline_reference_is_not_blank(cls, value: str | None) -> str | None:
+        return _reject_blank(value) if value is not None else None
+
+
 class StoryBibleContextV1(StrictBaseModel):
     """Bounded context supplied to the proposal-only StoryBible curator."""
 
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["1.0", "1.1"] = "1.1"
     project_id: StoryBibleId
+    lineage: StoryBibleCuratorContextLineageV1 | None = None
     entity_proposals: list[EntityProposalV1] = Field(default_factory=list)
     event_proposals: list[EventProposalV1] = Field(default_factory=list)
     state_change_proposals: list[StateChangeProposalV1] = Field(default_factory=list)
