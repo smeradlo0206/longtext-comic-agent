@@ -447,9 +447,7 @@ def _state_change_batch_json(*, quantity_value: object = 4) -> dict[str, Any]:
                 "new_value": quantity_value,
                 "persistent": False,
                 "reality_layer": "PRIMARY",
-                "evidence_refs": [
-                    {"chunk_id": "chunk-1", "quote_text": "药瓶数量从六变为四"}
-                ],
+                "evidence_refs": [{"chunk_id": "chunk-1", "quote_text": "药瓶数量从六变为四"}],
                 "new_value_evidence_indexes": [0],
                 "persistence_evidence_indexes": [],
                 "confidence": 0.9,
@@ -511,8 +509,7 @@ def test_state_change_schema_rule_codes_are_safe_and_stable(
     message: str, expected_code: str
 ) -> None:
     assert (
-        OpenAICompatibleLLMProvider._schema_validation_rule_code({"msg": message})
-        == expected_code
+        OpenAICompatibleLLMProvider._schema_validation_rule_code({"msg": message}) == expected_code
     )
 
 
@@ -525,9 +522,7 @@ def test_openai_compatible_provider_retries_one_tls_connect_error() -> None:
     """A transient TLS handshake failure gets one bounded retry before surfacing."""
 
     response = _chat_response(json.dumps(_event_json(), ensure_ascii=False))
-    client = SequenceHttpClient(
-        [httpx.ConnectError("TLS handshake failed"), response]
-    )
+    client = SequenceHttpClient([httpx.ConnectError("TLS handshake failed"), response])
     provider = OpenAICompatibleLLMProvider(api_key="secret-test-key", http_client=client)
 
     proposal = provider.structured_generate({}, EventProposalV1)
@@ -676,9 +671,7 @@ def test_event_actor_validation_exposes_safe_rule_code() -> None:
         provider.structured_generate({}, EventProposalBatchV1)
 
     diagnostics = exc_info.value.diagnostics
-    assert diagnostics["schema_error_rule_codes"] == [
-        "EVENT_KNOWN_ACTOR_REQUIRES_PARTICIPANT_IDS"
-    ]
+    assert diagnostics["schema_error_rule_codes"] == ["EVENT_KNOWN_ACTOR_REQUIRES_PARTICIPANT_IDS"]
     assert "participant_ids" not in str(diagnostics.get("schema_error_rule_codes"))
 
 
@@ -692,9 +685,7 @@ def test_event_actor_schema_recovery_includes_exact_safe_truth_table() -> None:
         {
             "input_context": {
                 "output_recovery": "schema_validation",
-                "schema_error_rule_codes": [
-                    "EVENT_KNOWN_ACTOR_REQUIRES_PARTICIPANT_IDS"
-                ],
+                "schema_error_rule_codes": ["EVENT_KNOWN_ACTOR_REQUIRES_PARTICIPANT_IDS"],
             }
         },
         EventProposalBatchV1,
@@ -702,9 +693,12 @@ def test_event_actor_schema_recovery_includes_exact_safe_truth_table() -> None:
 
     user_message = client.requests[0]["json"]["messages"][1]["content"]
     assert "EVENT_KNOWN_ACTOR_REQUIRES_PARTICIPANT_IDS" in user_message
-    assert "KNOWN requires a non-empty participant_ids" in user_message
-    assert "UNRESOLVED requires empty participant_ids" in user_message
-    assert "non-null unresolved_actor_ref_id" in user_message
+    assert "KNOWN requires participant_ids or participant_mentions to be non-empty" in user_message
+    assert "UNKNOWN requires both participant arrays empty" in user_message
+    assert "UNRESOLVED requires both participant arrays empty" in user_message
+    assert "NOT_APPLICABLE means no actor" in user_message
+    assert "UNSPECIFIED permits either participant array" in user_message
+    assert "reissue the complete EventProposalBatchV1" in user_message
 
 
 def test_state_change_schema_recovery_instruction_is_numeric_and_source_free() -> None:
@@ -747,16 +741,12 @@ def test_state_change_quantity_validation_exposes_only_safe_rule_code() -> None:
         provider.structured_generate({}, StateChangeProposalBatchV1)
 
     diagnostics = exc_info.value.diagnostics
-    assert diagnostics["schema_error_rule_codes"] == [
-        "STATE_CHANGE_QUANTITY_MUST_BE_JSON_NUMBER"
-    ]
+    assert diagnostics["schema_error_rule_codes"] == ["STATE_CHANGE_QUANTITY_MUST_BE_JSON_NUMBER"]
     assert "4" not in str(diagnostics)
     assert "敏感" not in str(diagnostics)
 
 
-def test_provider_recovery_rejects_disbelief_of_claim_and_recovers_world_fact() -> (
-    None
-):
+def test_provider_recovery_rejects_disbelief_of_claim_and_recovers_world_fact() -> None:
     invalid_provider = OpenAICompatibleLLMProvider(
         api_key="secret-test-key",
         http_client=FakeHttpClient(
@@ -883,8 +873,7 @@ def test_relationship_signal_schema_rule_codes_are_safe_and_stable(
     message: str, expected_code: str
 ) -> None:
     assert (
-        OpenAICompatibleLLMProvider._schema_validation_rule_code({"msg": message})
-        == expected_code
+        OpenAICompatibleLLMProvider._schema_validation_rule_code({"msg": message}) == expected_code
     )
 
 

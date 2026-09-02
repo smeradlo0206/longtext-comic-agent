@@ -820,11 +820,14 @@ class OpenAICompatibleLLMProvider:
         if schema_name == "EventProposalBatchV1":
             event_shape = (
                 " For every event, use one complete EventProposalV1. "
-                "Set actor_resolution_status consistently: KNOWN requires a non-empty "
-                "participant_ids array and null unresolved_actor_ref_id. UNKNOWN and "
-                "NOT_APPLICABLE require empty participant_ids and null unresolved_actor_ref_id. "
-                "UNRESOLVED requires empty participant_ids and a non-null unresolved_actor_ref_id. "
-                "UNSPECIFIED requires null unresolved_actor_ref_id. Do not emit a partial event; "
+                "Set actor_resolution_status consistently: KNOWN requires participant_ids or "
+                "participant_mentions to be non-empty and unresolved_actor_ref_id null. UNKNOWN "
+                "requires both participant arrays empty and unresolved_actor_ref_id null. "
+                "UNRESOLVED requires both participant arrays empty and unresolved_actor_ref_id "
+                "non-null. NOT_APPLICABLE means no actor and requires both participant arrays "
+                "empty and unresolved_actor_ref_id null. UNSPECIFIED permits either participant "
+                "array to be empty or non-empty but requires unresolved_actor_ref_id null. "
+                "Do not emit a partial event; reissue the complete EventProposalBatchV1; "
                 "return events=[] when the bounded scope supplies no independently auditable event."
             )
         knowledge_state_shape = ""

@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 from pydantic import ValidationError
 
 from comic_agent.schemas.base import EvidenceRefV1, RealityLayer
@@ -401,6 +401,131 @@ def test_event_proposal_unspecified_rejects_unresolved_ref() -> None:
         )
 
 
+def _unresolved_mention() -> dict[str, object]:
+    return {
+        "mention_text": "陈野",
+        "resolution_status": "UNRESOLVED",
+        "proposal_id": None,
+        "proposal_schema": None,
+    }
+
+
+def test_event_actor_resolution_complete_valid_truth_table() -> None:
+    cases = [
+        {"actor_resolution_status": "KNOWN"},
+        {
+            "schema_version": "1.1",
+            "participant_ids": [],
+            "participant_mentions": [_unresolved_mention()],
+            "actor_resolution_status": "KNOWN",
+        },
+        {
+            "participant_ids": [],
+            "actor_resolution_status": "UNKNOWN",
+        },
+        {
+            "participant_ids": [],
+            "actor_resolution_status": "UNRESOLVED",
+            "unresolved_actor_ref_id": "unresolved-actor-1",
+        },
+        {
+            "participant_ids": [],
+            "actor_resolution_status": "NOT_APPLICABLE",
+        },
+        {"actor_resolution_status": "UNSPECIFIED"},
+        {
+            "participant_ids": [],
+            "actor_resolution_status": "UNSPECIFIED",
+        },
+    ]
+
+    for update in cases:
+        EventProposalV1.model_validate(event_payload() | update)
+
+
+@pytest.mark.parametrize(
+    "update",
+    [
+        {"participant_ids": [], "actor_resolution_status": "KNOWN"},
+        {
+            "actor_resolution_status": "KNOWN",
+            "unresolved_actor_ref_id": "unresolved-actor-1",
+        },
+        {"actor_resolution_status": "UNKNOWN"},
+        {
+            "schema_version": "1.1",
+            "participant_ids": [],
+            "participant_mentions": [_unresolved_mention()],
+            "actor_resolution_status": "UNKNOWN",
+        },
+        {
+            "participant_ids": [],
+            "actor_resolution_status": "UNKNOWN",
+            "unresolved_actor_ref_id": "unresolved-actor-1",
+        },
+        {"participant_ids": [], "actor_resolution_status": "UNRESOLVED"},
+        {
+            "actor_resolution_status": "UNRESOLVED",
+            "unresolved_actor_ref_id": "unresolved-actor-1",
+        },
+        {"actor_resolution_status": "NOT_APPLICABLE"},
+        {
+            "participant_ids": [],
+            "actor_resolution_status": "NOT_APPLICABLE",
+            "unresolved_actor_ref_id": "unresolved-actor-1",
+        },
+    ],
+)
+def test_event_actor_resolution_complete_invalid_truth_table(
+    update: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        EventProposalV1.model_validate(event_payload() | update)
+
+
+def test_event_v10_forbids_mentions_and_v11_allows_both_participant_forms() -> None:
+    mention = _unresolved_mention()
+    with pytest.raises(ValidationError, match="v1.0 cannot include mention references"):
+        EventProposalV1.model_validate(
+            event_payload()
+            | {
+                "schema_version": "1.0",
+                "participant_mentions": [mention],
+                "actor_resolution_status": "KNOWN",
+            }
+        )
+    with pytest.raises(ValidationError, match="v1.0 cannot include mention references"):
+        EventProposalV1.model_validate(
+            event_payload()
+            | {
+                "schema_version": "1.0",
+                "location_mention": mention,
+            }
+        )
+
+    event = EventProposalV1.model_validate(
+        event_payload()
+        | {
+            "schema_version": "1.1",
+            "participant_mentions": [mention],
+            "actor_resolution_status": "KNOWN",
+        }
+    )
+    assert event.participant_ids
+    assert event.participant_mentions
+
+
+def test_event_location_id_and_mention_are_mutually_exclusive() -> None:
+    with pytest.raises(ValidationError, match="mutually exclusive"):
+        EventProposalV1.model_validate(
+            event_payload()
+            | {
+                "schema_version": "1.1",
+                "location_mention": _unresolved_mention(),
+            }
+        )
+
+
 def test_temporal_relation_known_relation_requires_evidence_refs() -> None:
     with pytest.raises(ValidationError):
         TemporalRelationProposalV1(
@@ -631,8 +756,7 @@ def test_state_change_references_reject_partial_or_wrong_candidate_links(
 def test_state_change_v11_rejects_legacy_identifiers(legacy_field: str) -> None:
     with pytest.raises(ValidationError, match="v1.1 cannot include legacy"):
         StateChangeProposalV1.model_validate(
-            _state_change_v11_payload()
-            | {"schema_version": "1.1", legacy_field: "legacy-id"}
+            _state_change_v11_payload() | {"schema_version": "1.1", legacy_field: "legacy-id"}
         )
 
 
@@ -671,12 +795,14 @@ def test_state_change_batch_rejects_legacy_and_duplicate_changes() -> None:
     with pytest.raises(ValidationError, match="unique proposal_id"):
         StateChangeProposalBatchV1(
             schema_version="1.1",
-            batch_id="state-batch-duplicate-id", changes=[v11_change, duplicate_id]
+            batch_id="state-batch-duplicate-id",
+            changes=[v11_change, duplicate_id],
         )
     with pytest.raises(ValidationError, match="semantic duplicate"):
         StateChangeProposalBatchV1(
             schema_version="1.1",
-            batch_id="state-batch-semantic-duplicate", changes=[v11_change, semantic_duplicate]
+            batch_id="state-batch-semantic-duplicate",
+            changes=[v11_change, semantic_duplicate],
         )
 
 
@@ -690,8 +816,7 @@ def test_state_change_batch_rejects_legacy_and_duplicate_changes() -> None:
         },
         _state_change_v11_payload()
         | {"proposal_id": "proposal-state-old-2", "old_value": "braided"},
-        _state_change_v11_payload()
-        | {"proposal_id": "proposal-state-new-2", "new_value": "cut"},
+        _state_change_v11_payload() | {"proposal_id": "proposal-state-new-2", "new_value": "cut"},
         _state_change_v11_payload()
         | {"proposal_id": "proposal-state-temporary-2", "persistent": False},
         _state_change_v11_payload()
@@ -803,17 +928,13 @@ def test_state_change_v12_rejects_event_or_missing_target_kind() -> None:
 @pytest.mark.parametrize("old_value", ["未知", "不明", "N/A", "待确认"])
 def test_state_change_v12_rejects_placeholder_old_values(old_value: str) -> None:
     with pytest.raises(ValidationError, match="old_value"):
-        StateChangeProposalV1.model_validate(
-            _state_change_v12_payload() | {"old_value": old_value}
-        )
+        StateChangeProposalV1.model_validate(_state_change_v12_payload() | {"old_value": old_value})
 
 
 @pytest.mark.parametrize("new_value", [None, {"state": "受伤"}, ["受伤"]])
 def test_state_change_v12_rejects_missing_or_structured_new_values(new_value: object) -> None:
     with pytest.raises(ValidationError, match="new_value"):
-        StateChangeProposalV1.model_validate(
-            _state_change_v12_payload() | {"new_value": new_value}
-        )
+        StateChangeProposalV1.model_validate(_state_change_v12_payload() | {"new_value": new_value})
 
 
 @pytest.mark.parametrize(
@@ -853,8 +974,7 @@ def test_state_change_v12_accepts_stable_scalar_values(payload: dict[str, object
         _state_change_v12_payload() | {"new_value_evidence_indexes": []},
         _state_change_v12_payload() | {"new_value_evidence_indexes": [1]},
         _state_change_v12_payload() | {"new_value_evidence_indexes": [0, 0]},
-        _state_change_v12_payload()
-        | {"persistent": True, "persistence_evidence_indexes": []},
+        _state_change_v12_payload() | {"persistent": True, "persistence_evidence_indexes": []},
         _state_change_v12_payload() | {"persistence_evidence_indexes": [0]},
     ],
 )
@@ -875,8 +995,7 @@ def test_state_change_v12_requires_new_value_evidence_indexes() -> None:
 
 def test_state_change_v12_accepts_explicit_persistence_evidence() -> None:
     state_change = StateChangeProposalV1.model_validate(
-        _state_change_v12_payload()
-        | {"persistent": True, "persistence_evidence_indexes": [0]}
+        _state_change_v12_payload() | {"persistent": True, "persistence_evidence_indexes": [0]}
     )
 
     assert state_change.persistence_evidence_indexes == [0]
@@ -1044,9 +1163,7 @@ def test_state_change_v13_batch_accepts_only_v13_items_and_empty_output() -> Non
 
     assert empty_batch.schema_version == "1.3"
     assert (
-        StateChangeProposalBatchV1(
-            batch_id="state-batch-v13", changes=[v13_change]
-        ).schema_version
+        StateChangeProposalBatchV1(batch_id="state-batch-v13", changes=[v13_change]).schema_version
         == "1.3"
     )
     with pytest.raises(ValidationError, match="only permits v1.3"):
