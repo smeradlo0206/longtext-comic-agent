@@ -1,6 +1,11 @@
 """Public schema exports."""
 
 from comic_agent.schemas.base import EvidenceRefV1, RealityLayer, RecordStatus
+from comic_agent.schemas.comic_planning import (
+    ComicPlanningInputV1,
+    PanelPlanV1,
+    ScenePlanV1,
+)
 from comic_agent.schemas.continuity import CharacterStateV1
 from comic_agent.schemas.evaluation import (
     KnowledgeStateEvaluationCaseBatchV1,
@@ -280,6 +285,7 @@ __all__ = [
     "ClaimTemporalScope",
     "ClaimType",
     "ComicBeatProposalV1",
+    "ComicPlanningInputV1",
     "ComicBeatPurpose",
     "CreatureSubtype",
     "EpistemicStatus",
@@ -417,6 +423,8 @@ __all__ = [
     "SourceTextAuditSnapshotV1",
     "NarrativeAnalysisReviewRouteV1",
     "SceneSpecV1",
+    "ScenePlanV1",
+    "PanelPlanV1",
     "SourceChapterV1",
     "SourceChunkV1",
     "SourceDocumentV1",

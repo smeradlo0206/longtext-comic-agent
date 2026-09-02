@@ -1,3 +1,4 @@
+import json
 from typing import TypeVar
 
 import pytest
@@ -274,7 +275,38 @@ def test_event_extraction_prompt_matches_actor_resolution_validator_contract() -
         "unresolved_actor_ref_id",
     ):
         assert token in prompt
-    assert "KNOWN: participant_ids MUST contain at least one" in prompt
-    assert "UNKNOWN: participant_ids MUST be empty" in prompt
-    assert "UNRESOLVED: participant_ids MUST be empty" in prompt
+    assert "participant_ids OR participant_mentions MUST be non-empty" in prompt
+    assert "UNKNOWN: an actor exists but the source does not identify who" in prompt
+    assert "UNRESOLVED: an actor reference exists" in prompt
+    assert "NOT_APPLICABLE: the event genuinely has no actor" in prompt
+    assert "UNSPECIFIED: legacy/unspecified resolution" in prompt
     assert "unresolved_actor_ref_id MUST be non-null" in prompt
+
+
+def test_event_prompt_examples_validate_against_schema() -> None:
+    actor_examples = [
+        json.loads(line)
+        for line in EVENT_EXTRACTION_SYSTEM_PROMPT.splitlines()
+        if line.startswith('{"actor_resolution_status"')
+    ]
+    assert len(actor_examples) == 6
+    events = []
+    for index, actor_fields in enumerate(actor_examples):
+        events.append(
+            {
+                "schema_version": "1.1",
+                "proposal_id": f"event-prompt-example-{index}",
+                "event_type": "example",
+                "summary": "示例事件",
+                "location_id": None,
+                "location_mention": None,
+                "evidence_refs": [{"chunk_id": "chunk-example"}],
+                "confidence": 1.0,
+                "reality_layer": "PRIMARY",
+                **actor_fields,
+            }
+        )
+
+    EventProposalBatchV1.model_validate(
+        {"schema_version": "1.1", "batch_id": "prompt-examples", "events": events}
+    )
