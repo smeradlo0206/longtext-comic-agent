@@ -1827,6 +1827,42 @@ def test_worker_splits_length_failed_window_at_source_chunk_boundaries(
     assert len(provider.input_chunk_ids) == call_count
 
 
+def test_length_split_indices_do_not_collide_with_later_planned_batches(
+    tmp_path: Path,
+) -> None:
+    source_repository = _FakeSourceRepository([_long_chunk(index) for index in range(5)])
+    analysis_repository = _repository(tmp_path)
+    run = create_narrative_analysis_run(
+        source_repository=source_repository,
+        analysis_repository=analysis_repository,
+        project_id="project-1",
+        document_id="document-1",
+        modes=["event_extraction"],
+        batch_max_chunks=3,
+        real_llm_requested=True,
+    )
+    worker = NarrativeAnalysisWorker(
+        settings=Settings(_env_file=None, enable_real_llm=True),
+        source_repository=source_repository,
+        agent_run_repository=_FakeAgentRunRepository(),
+        analysis_repository=analysis_repository,
+        provider=_BoundaryLengthProvider(),
+    )
+
+    completed = worker.run_pending(run.analysis_run_id)
+    windows = analysis_repository.list_windows(run.analysis_run_id)
+
+    assert completed.status == NarrativeAnalysisRunStatus.SUCCEEDED
+    indices = [window.window_index for window in windows]
+    assert len(indices) == len(set(indices))
+    assert {0, 100_000} <= set(indices)
+    assert all(
+        window.window_index > 100_000
+        for window in windows
+        if window.parent_window_id is not None
+    )
+
+
 def test_split_children_only_process_parent_owned_overlap_chunks(tmp_path: Path) -> None:
     source_repository = _FakeSourceRepository([_chunk(index) for index in range(5)])
     analysis_repository = _repository(tmp_path)

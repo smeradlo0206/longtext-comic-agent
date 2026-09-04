@@ -182,19 +182,6 @@ def list_chunk_event_proposals(
     return repository.list_event_proposals_for_chunk(chunk_id)
 
 
-@router.get("/agent-runs/{agent_run_id}", response_model=AgentRunV1)
-def get_agent_run(
-    agent_run_id: str,
-    repository: RepositoryDep,
-) -> AgentRunV1:
-    """Return one stored agent execution trace."""
-
-    agent_run = repository.get_agent_run(agent_run_id)
-    if agent_run is None:
-        raise HTTPException(status_code=404, detail="Agent run not found")
-    return agent_run
-
-
 @router.get("/chunks/{chunk_id}/agent-runs", response_model=list[AgentRunV1])
 def list_chunk_agent_runs(
     chunk_id: str,

@@ -5,6 +5,7 @@ import json
 from comic_agent.agents.specs import AgentSpec
 from comic_agent.providers.llm import LLMProvider
 from comic_agent.schemas.base import RecordStatus
+from comic_agent.schemas.reliability import ProviderExecutionMetadataV1
 from comic_agent.schemas.storybible import StoryBibleContextV1, StoryBibleCuratorProposalV1
 
 
@@ -13,13 +14,13 @@ class StoryBibleCurator:
 
     spec = AgentSpec(
         agent_id="storybible-curator",
-        version="1.0",
+        version="1.1",
         reads=["StoryBibleContextV1"],
         output_schema="StoryBibleCuratorProposalV1",
         tools=[],
         can_write_canonical_data=False,
         requires_evidence=True,
-        max_context_chunks=3,
+        max_context_chunks=8,
         confidence_threshold=0.7,
     )
 
@@ -38,6 +39,20 @@ class StoryBibleCurator:
             StoryBibleCuratorProposalV1,
         )
         return response.model_copy(update={"status": RecordStatus.CANDIDATE})
+
+    def last_execution_metadata(self) -> ProviderExecutionMetadataV1 | None:
+        """Expose only the Provider's allowlisted execution metadata."""
+
+        getter = getattr(self._provider, "last_execution_metadata", None)
+        value = getter() if callable(getter) else None
+        return value if isinstance(value, ProviderExecutionMetadataV1) else None
+
+    def execution_history(self) -> list[ProviderExecutionMetadataV1]:
+        """Expose a copy of the Provider's allowlisted local usage history."""
+
+        getter = getattr(self._provider, "execution_history", None)
+        values = getter() if callable(getter) else []
+        return [value for value in values if isinstance(value, ProviderExecutionMetadataV1)]
 
     _EVIDENCE_REF_SCHEMA: dict[str, object] = {
         "type": "object",

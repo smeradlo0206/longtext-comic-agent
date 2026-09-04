@@ -24,6 +24,7 @@ All V1 schemas use `schema_version = "1.0"` and live in `comic_agent/schemas`.
 | StoryBeatV1 | Adaptation beat. | beat_id, scene_id, chunks, meaning, visual_expression | Via chunks | Page/panel agents | Narrative translator | CommitService later |
 | PanelSpecV1 | Provider-neutral panel plan. | panel_id, page_id, scene_id, chunks, shot fields | Via chunks | Prompt compiler | Panel director | CommitService later |
 | QAResultV1 | Quality check result. | qa_result_id, target, scores, passed | Target-dependent | Repair planner | QA agents | QA service |
+| PanelTextQAProposalV1 | Proposal-only pre-render comparison of PanelPlan facts against trusted source text. | proposal_id, project_id, checked panel ids, evidence, passed | Required input evidence allowlist | Image production gate | PanelTextQAAgent | Never |
 | RepairPlanV1 | Repair instruction. | repair_plan_id, target_id, type, instruction | Target-dependent | Repair executor | Repair planner | Repair service |
 | AgentRunV1 | Immutable record of one agent execution. | run id, project, input chunk, agent, status | Links one input chunk to an optional output proposal | API, audit services | Agent runner | N/A |
 
@@ -44,6 +45,12 @@ updates collected by `StoryBibleUpdateV1`. `ConflictV1` records reviewable confl
 `StoryBibleCuratorProposalV1` is the candidate-only curator result. `StoryBibleContextV1`
 is the bounded input contract for that curator.
 
+`StoryBibleContextV1` now writes schema version `1.1` and accepts historical `1.0` payloads.
+The trusted `source_chunk_ids` ceiling increases from three to eight so a short whole document
+split into several evidence chunks is not rejected before curation. Contexts above eight chunks
+still fail before a Provider call and are never truncated. This changes only the existing JSON
+payload contract; no database migration is required.
+
 StoryBible identifiers are limited to 128 characters and canonical/alias names to 255
 characters. These Pydantic constraints match the `VARCHAR(128)` and `VARCHAR(255)`
 persistence boundaries so invalid provider output is rejected before a database write.
@@ -54,6 +61,11 @@ update models.
 invariants, persists the candidate plan, applies valid updates idempotently through the
 repository, and marks the plan committed. Agents emit proposals only and cannot write
 canonical StoryBible facts directly.
+
+StoryBible output normalization resolves a quote-only `EvidenceRefV1` to the first exact
+occurrence inside its explicitly named trusted source chunk. This is deterministic even when the
+same exact quote appears more than once; missing, altered, cross-project, or out-of-scope quotes
+remain rejected. Provider-supplied spans are still checked byte-for-byte against source text.
 
 Commit validation is seeded with the project's existing canonical profiles and states.
 This prevents later plans from introducing duplicate identities or incompatible
@@ -181,3 +193,13 @@ them. One schema-only repair is allowed with source-free field paths and rule co
 `TimelineProviderDiagnosticsV1`; historical v1.0/v1.1 JSON payloads remain readable. No
 database migration is required because the new optional fields remain in the existing run
 payload. Gate 3 and downstream access remain blocked after any terminal Timeline failure.
+
+### 2026-09-02 Timeline pair relation compatibility and migration note
+
+`TimelinePairInferenceV1.schema_version` advances to `1.1` while continuing to read `1.0`.
+Its Provider-facing `relation` enum now contains only the five relations implemented by
+TimelineAgent V2 (`BEFORE`, `AFTER`, `OVERLAPS`, `SIMULTANEOUS`, and `UNKNOWN`). Older `1.0`
+responses using those values remain readable. `DURING` and `CONTAINS` were never accepted by
+TimelineAgent V2 and are now rejected at the Provider schema boundary, where the existing bounded
+repair can handle them. No database migration is required because Timeline inference responses are
+not stored in a dedicated table and Timeline run payloads already use JSON storage.

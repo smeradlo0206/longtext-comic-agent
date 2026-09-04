@@ -1,0 +1,75 @@
+{
+  "schema_version": "1.0",
+  "document_id": "AUTO",
+  "chapter_ids": [],
+  "planner_mode": "DETERMINISTIC_EXTRACTIVE",
+  "panels_per_page": 6,
+  "max_pages": 2,
+  "comic_style": "完整上色的精致日系漫画，清晰线条，柔和清晨自然光，统一色彩设计，电影感构图",
+  "global_prompt": "严格保持相邻镜头角色身份与空间状态连续；每次只生成当前时刻的一张独立分镜，不要生成拼图、分格边框、气泡或文字",
+  "quality_constraints": [
+    "只对当前镜头明确出现的角色保持其脸型、发型、发色、服装和体型，不得因此增加人物",
+    "客厅布局、沙发、茶几、窗户和茶具位置保持空间连续",
+    "人物数量和动作严格服从当前原文证据",
+    "画面完整上色且不得出现文字、水印或多格漫画布局"
+  ],
+  "selected_assets": [
+    {
+      "slot": "CHAR_MALE",
+      "asset_id": "wechat-004",
+      "entity_id": "character.male-lead",
+      "role": "character_identity",
+      "description": "成年男性主角身份参考；保持成年男性面部、平坦胸部、男性体型、五官、长发与主要服装轮廓",
+      "display_name": "男生"
+    },
+    {
+      "slot": "CHAR_FEMALE",
+      "asset_id": "wechat-009",
+      "entity_id": "character.female-lead",
+      "role": "character_identity",
+      "description": "成年女性主角身份参考；固定女性脸型、五官、长发、体型与主要服装轮廓",
+      "display_name": "女生"
+    },
+    {
+      "slot": "SCENE_LIVING_ROOM",
+      "asset_id": "wechat-015",
+      "entity_id": "location.living-room",
+      "role": "scene",
+      "description": "客厅空间参考，固定高窗、沙发、茶几、地毯和整体家具关系",
+      "display_name": "客厅"
+    }
+  ],
+  "reference_policy": {
+    "mode": "APPROVED_LIBRARY",
+    "require_canonical": true
+  },
+  "generation": {
+    "model_id": "black-forest-labs/FLUX.2-klein-4B",
+    "width": 1024,
+    "height": 576,
+    "steps": 4,
+    "guidance_scale": 1.0,
+    "seed": 2026082201,
+    "attempts": 1,
+    "device": "cuda:0",
+    "dtype": "bfloat16"
+  },
+  "visual_qa": {
+    "enabled": true,
+    "latency_budget_seconds": 60.0,
+    "min_dynamic_range": 0.12,
+    "min_edge_energy": 0.015,
+    "min_reference_similarity": 0.01,
+    "max_auto_repairs": 1
+  },
+  "dialogue_layout": {
+    "enabled": true,
+    "font_path": null,
+    "min_font_size": 18,
+    "max_font_size": 32,
+    "bubble_padding": 18,
+    "max_bubble_width_ratio": 0.38
+  },
+  "continuity_enabled": true,
+  "identity_anchor_mode": "AUTO"
+}

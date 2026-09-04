@@ -10,6 +10,7 @@ import argparse
 import json
 import re
 import sys
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,7 +25,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from comic_agent.agents.panel_text_qa import PanelTextQAAgent  # noqa: E402
 from comic_agent.config import Settings, get_settings  # noqa: E402
+from comic_agent.demo.autonomous_image_pipeline import AutonomousImagePipeline  # noqa: E402
 from comic_agent.domain.identity import storybible_proposal_hash  # noqa: E402
 from comic_agent.main import create_app  # noqa: E402
 from comic_agent.repositories.agent_run_repository import AgentRunRepository  # noqa: E402
@@ -64,7 +67,7 @@ from comic_agent.services.storybible_production_output_normalizer import (  # no
 from comic_agent.services.storybible_review_service import StoryBibleReviewService  # noqa: E402
 
 DEFAULT_INPUT = ROOT / "tests" / "fixtures" / "acceptance" / "current_real_pipeline_short.txt"
-DEFAULT_ARTIFACT_ROOT = ROOT / "artifacts" / "current-real-pipeline-acceptance"
+DEFAULT_ARTIFACT_ROOT = ROOT / "runs" / "current-real-pipeline-acceptance"
 NARRATIVE_MODES = (
     "entity_extraction",
     "event_extraction",
@@ -94,6 +97,8 @@ STAGES = (
     "scene_validation",
     "panel_planning",
     "panel_validation",
+    "text_qa",
+    "image_production",
 )
 SECRET_RE = re.compile(r"(?i)(authorization|bearer|api[_-]?key|token)(\s*[:=]\s*)(\S+)")
 
@@ -131,17 +136,26 @@ def initial_result(run_dir: Path) -> dict[str, Any]:
         "snapshot_hash": None,
         "scene_count": 0,
         "panel_count": 0,
+        "text_qa": None,
+        "image_production": None,
         "mock_or_fallback_used": None,
         "previous_curator_length_failure": None,
         "narrative_modes": {},
         "stage_status": {stage: "NOT_STARTED" for stage in STAGES},
         "provider_calls": {},
+        "token_usage": {},
+        "stage_timings_seconds": {},
+        "duration_seconds": None,
+        "started_at": datetime.now(UTC).isoformat(),
+        "completed_at": None,
         "counts": {},
         "artifact_paths": {
             "directory": str(run_dir),
             "database": str(run_dir / "e2e.sqlite"),
             "result": str(run_dir / "result.json"),
             "log": str(run_dir / "run.log"),
+            "text_qa": str(run_dir / "panel-text-qa.json"),
+            "image_run_root": None,
         },
     }
 
@@ -250,13 +264,78 @@ def record_narrative_diagnostics(
 
 def run_stage(result: dict[str, Any], stage: str, operation: Callable[[], Any]) -> Any:
     result["stage_status"][stage] = "RUNNING"
+    started = time.perf_counter()
     try:
         value = operation()
     except Exception:
         result["stage_status"][stage] = "FAIL"
         raise
+    finally:
+        result["stage_timings_seconds"][stage] = round(time.perf_counter() - started, 3)
     result["stage_status"][stage] = "PASS"
     return value
+
+
+def summarize_provider_usage(executions: list[Any]) -> dict[str, int]:
+    """Aggregate only Provider-reported token counters."""
+
+    reported = [item for item in executions if getattr(item, "total_tokens", None) is not None]
+    return {
+        "calls": len(executions),
+        "reported_calls": len(reported),
+        "prompt_tokens": sum(int(getattr(item, "prompt_tokens", 0) or 0) for item in executions),
+        "completion_tokens": sum(
+            int(getattr(item, "completion_tokens", 0) or 0) for item in executions
+        ),
+        "total_tokens": sum(int(getattr(item, "total_tokens", 0) or 0) for item in executions),
+    }
+
+
+def record_provider_usage(result: dict[str, Any], app: Any) -> None:
+    """Record exact reported usage without request, response, or secret content."""
+
+    narrative_provider = getattr(app.state, "narrative_analyst_provider", None)
+    narrative_getter = getattr(narrative_provider, "execution_history", None)
+    timeline_getter = getattr(app.state.timeline_agent, "provider_execution_history", None)
+    storybible_getter = getattr(app.state.storybible_curator, "execution_history", None)
+    histories = {
+        "narrative_and_preflight": (
+            narrative_getter() if callable(narrative_getter) else []
+        ),
+        "timeline": timeline_getter() if callable(timeline_getter) else [],
+        "storybible": storybible_getter() if callable(storybible_getter) else [],
+    }
+    result["token_usage"] = {
+        name: summarize_provider_usage(history) for name, history in histories.items()
+    }
+    result["token_usage"]["all_text_providers"] = {
+        key: sum(int(summary[key]) for summary in result["token_usage"].values())
+        for key in (
+            "calls",
+            "reported_calls",
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+        )
+    }
+
+
+def timeline_can_reach_gate3(status: object) -> bool:
+    """A held Gate 3 review is a valid Timeline result, not a Timeline failure."""
+
+    return status in {"APPROVED", "NEEDS_HUMAN_REVIEW"}
+
+
+def resolved_timeline_bundle_id(
+    pipeline_status: dict[str, Any], review_response: dict[str, Any] | None
+) -> str | None:
+    """Prefer the authoritative review response over eventually stale aggregate status."""
+
+    candidates = (
+        review_response.get("approved_timeline_bundle_id") if review_response else None,
+        pipeline_status.get("approved_timeline_bundle_id"),
+    )
+    return next((value for value in candidates if isinstance(value, str) and value), None)
 
 
 def validate_scene_panel_lineage(
@@ -358,8 +437,10 @@ def execute_real(args: argparse.Namespace, result: dict[str, Any], settings: Set
         database_url=f"sqlite+pysqlite:///{Path(result['artifact_paths']['database']).as_posix()}"
     )
     with TestClient(app) as client:
+        review_payload: dict[str, Any] | None = None
         source = args.input.resolve()
         result["stage_status"]["document_import"] = "RUNNING"
+        pipeline_started = time.perf_counter()
         with source.open("rb") as stream:
             response = client.post(
                 f"/projects/{project_id}/pipeline-runs/import-and-analyze",
@@ -370,6 +451,9 @@ def execute_real(args: argparse.Namespace, result: dict[str, Any], settings: Set
                 },
                 files={"file": (source.name, stream, "text/plain")},
             )
+        result["stage_timings_seconds"]["source_to_gate3_api"] = round(
+            time.perf_counter() - pipeline_started, 3
+        )
         if response.status_code != 200:
             raise AcceptanceFailure(
                 "document_import", "API", f"Import pipeline HTTP {response.status_code}"
@@ -410,7 +494,7 @@ def execute_real(args: argparse.Namespace, result: dict[str, Any], settings: Set
             raise AcceptanceFailure("gate2", "GATE2", f"Gate 2 stopped: {mapping['gate2']}")
         result["stage_status"]["gate2"] = "PASS"
         result["stage_status"]["timeline_adapter"] = "PASS"
-        if mapping["timeline"] != "APPROVED":
+        if not timeline_can_reach_gate3(mapping["timeline"]):
             result["stage_status"]["timeline"] = "FAIL"
             raise AcceptanceFailure(
                 "timeline", "TIMELINE", f"Timeline stopped: {mapping['timeline']}"
@@ -450,11 +534,12 @@ def execute_real(args: argparse.Namespace, result: dict[str, Any], settings: Set
                 raise AcceptanceFailure(
                     "human_review", "HUMAN_REVIEW", f"Review HTTP {reviewed.status_code}"
                 )
+            review_payload = reviewed.json()
             result["stage_status"]["human_review"] = "PASS"
             status = client.get(f"/pipeline-runs/{started['analysis_run_id']}").json()
         else:
             result["stage_status"]["human_review"] = "PASS"
-        timeline_id = status.get("approved_timeline_bundle_id")
+        timeline_id = resolved_timeline_bundle_id(status, review_payload)
         if not timeline_id:
             raise AcceptanceFailure(
                 "approved_timeline", "TIMELINE_NOT_APPROVED", "ApprovedTimelineBundleV1 unavailable"
@@ -594,7 +679,11 @@ def execute_real(args: argparse.Namespace, result: dict[str, Any], settings: Set
         scenes = run_stage(
             result,
             "comic_planning",
-            lambda: ComicPlanningService().plan(storybible=frozen, timeline=timeline),
+            lambda: ComicPlanningService().plan(
+                storybible=frozen,
+                timeline=timeline,
+                events=context.approved_events,
+            ),
         )
         panels = run_stage(
             result,
@@ -607,6 +696,85 @@ def execute_real(args: argparse.Namespace, result: dict[str, Any], settings: Set
         result["stage_status"]["scene_validation"] = "PASS"
         result["stage_status"]["panel_validation"] = "PASS"
         result["scene_count"], result["panel_count"] = len(scenes), len(panels)
+        qa_agent = PanelTextQAAgent(
+            app.state.narrative_analyst_provider,
+            provider_model=settings.llm_model,
+        )
+        text_qa = run_stage(
+            result,
+            "text_qa",
+            lambda: qa_agent.run(
+                project_id=project_id,
+                panels=panels,
+                source_chunks=context.source_chunks,
+            ),
+        )
+        Path(result["artifact_paths"]["text_qa"]).write_text(
+            text_qa.model_dump_json(indent=2), encoding="utf-8"
+        )
+        result["provider_calls"]["panel_text_qa"] = qa_agent.provider_request_count
+        result["text_qa"] = {
+            "proposal_id": text_qa.proposal_id,
+            "passed": text_qa.passed,
+            "finding_count": len(text_qa.findings),
+            "blocking_count": sum(
+                str(finding.severity) == "BLOCKING" for finding in text_qa.findings
+            ),
+            "warning_count": sum(
+                str(finding.severity) == "WARNING" for finding in text_qa.findings
+            ),
+            "confidence": text_qa.confidence,
+            "summary": text_qa.summary,
+        }
+        if not text_qa.passed:
+            raise AcceptanceFailure(
+                "text_qa", "PANEL_TEXT_QA_BLOCKED", "Panel text QA found blocking issues"
+            )
+        record_provider_usage(result, app)
+        if args.render_images:
+            if args.character_reference is None and args.scene_reference is None:
+                raise AcceptanceFailure(
+                    "image_production",
+                    "REFERENCE_REQUIRED",
+                    "Image production requires a character or scene reference",
+                )
+            image_result = run_stage(
+                result,
+                "image_production",
+                lambda: AutonomousImagePipeline(
+                    model_path=args.model_path,
+                    offline=args.offline,
+                    width=args.width,
+                    height=args.height,
+                    steps=args.steps,
+                    device=args.device,
+                ).run(
+                    source_path=source,
+                    artifact_dir=Path(result["artifact_paths"]["directory"]),
+                    panels=panels,
+                    storybible=frozen,
+                    character_reference=args.character_reference,
+                    scene_reference=args.scene_reference,
+                ),
+            )
+            image_run_root = Path(image_result.run.run_root or "").resolve()
+            result["artifact_paths"]["image_run_root"] = str(image_run_root)
+            result["image_production"] = {
+                "status": str(image_result.run.status),
+                "run_id": image_result.run.run_id,
+                "reference_bindings": image_result.reference_bindings,
+                "page_artifacts": [
+                    artifact.model_dump(mode="json")
+                    for artifact in image_result.run.page_artifacts
+                ],
+                "performance": (
+                    image_result.run.performance.model_dump(mode="json")
+                    if image_result.run.performance
+                    else None
+                ),
+            }
+        else:
+            result["stage_status"]["image_production"] = "SKIPPED_BY_REQUEST"
         result["result"], result["mock_or_fallback_used"] = "PASS", False
 
 
@@ -616,10 +784,22 @@ def main() -> int:
     parser.add_argument("--auto-approve-review", action="store_true")
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT)
     parser.add_argument("--artifact-root", type=Path, default=DEFAULT_ARTIFACT_ROOT)
+    parser.add_argument("--render-images", action="store_true")
+    parser.add_argument("--character-reference", type=Path)
+    parser.add_argument("--scene-reference", type=Path)
+    parser.add_argument(
+        "--model-path", type=Path, default=Path("models/FLUX.2-klein-4B")
+    )
+    parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--width", type=int, default=768)
+    parser.add_argument("--height", type=int, default=768)
+    parser.add_argument("--steps", type=int, default=4)
+    parser.add_argument("--offline", action="store_true")
     args = parser.parse_args()
     run_dir = args.artifact_root.resolve() / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     run_dir.mkdir(parents=True, exist_ok=False)
     result = initial_result(run_dir)
+    run_started = time.perf_counter()
     settings = get_settings()
     lines = [
         "CURRENT REAL PIPELINE ACCEPTANCE",
@@ -652,6 +832,8 @@ def main() -> int:
         lines.append(f"FAIL stage={stage} category={category} error={result['sanitized_error']}")
         exit_code = 1
     finally:
+        result["duration_seconds"] = round(time.perf_counter() - run_started, 3)
+        result["completed_at"] = datetime.now(UTC).isoformat()
         result_path = run_dir / "result.json"
         result_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
         (run_dir / "run.log").write_text("\n".join(lines) + "\n", encoding="utf-8")

@@ -128,6 +128,7 @@ def test_real_preflight_reuses_the_provider_instance_for_narrative_execution(
     monkeypatch.setattr(
         "comic_agent.api.pipeline.build_openai_compatible_provider", lambda _: provider
     )
+    app.state.timeline_agent = TimelineAgent(provider, provider_model="local-safe-demo")
     session = app.state.session_factory()
     try:
         _require_real_pipeline_opt_in(
@@ -193,13 +194,21 @@ def _client(tmp_path, monkeypatch, *, scenario: str = "success") -> TestClient: 
     return TestClient(create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'pipeline.db'}"))
 
 
-def _real_llm_client(tmp_path, monkeypatch) -> TestClient:  # type: ignore[no-untyped-def]
+def _real_llm_client(
+    tmp_path,
+    monkeypatch,
+    *,
+    timeline_llm_enabled: bool = True,
+) -> TestClient:  # type: ignore[no-untyped-def]
     """Exercise the real-request route with injected, network-free providers."""
 
     monkeypatch.setenv("COMIC_AGENT_ENV", "development")
     monkeypatch.setenv("COMIC_AGENT_FAKE_PIPELINE_DEMO", "false")
     monkeypatch.setenv("ENABLE_REAL_LLM", "true")
     monkeypatch.setenv("LLM_API_KEY", "test-local-key")
+    monkeypatch.setenv(
+        "TIMELINE_LLM_ENABLED", "true" if timeline_llm_enabled else "false"
+    )
     monkeypatch.setenv("INTERNAL_DEMO_REQUIRE_ACCESS_CODE", "false")
     get_settings.cache_clear()
     app = create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'real-pipeline.db'}")
@@ -274,6 +283,24 @@ def test_one_click_pipeline_only_uses_real_provider_after_explicit_opt_in(
     assert narrative_provider.calls == 6
     run_id = started.json()["analysis_run_id"]
     assert client.get(f"/pipeline-runs/{run_id}").json()["gate3"] == "APPROVED"
+
+
+def test_real_pipeline_keeps_timeline_rule_only_without_timeline_opt_in(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    client = _real_llm_client(tmp_path, monkeypatch, timeline_llm_enabled=False)
+    timeline_provider = client.app.state.timeline_agent._provider
+
+    started = client.post(
+        "/projects/real-rule-only/pipeline-runs/import-and-analyze",
+        data={"real_llm_requested": "true"},
+        files={"file": ("official.txt", _OFFICIAL_TEXT.encode("utf-8"), "text/plain")},
+    )
+
+    assert started.status_code == 200
+    run_id = started.json()["analysis_run_id"]
+    assert client.get(f"/pipeline-runs/{run_id}").json()["gate3"] == "NEEDS_HUMAN_REVIEW"
+    assert timeline_provider._timeline_calls == 0
 
 
 def test_one_click_real_pipeline_retries_a_waiting_provider_preflight(

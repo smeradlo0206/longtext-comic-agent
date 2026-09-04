@@ -384,8 +384,6 @@ class _EvidenceGrounder:
             first = chunk.text.find(ref.quote_text)
             if first < 0:
                 raise ValueError("EvidenceRef quote_text does not match source chunk")
-            if chunk.text.find(ref.quote_text, first + 1) >= 0:
-                raise ValueError("EvidenceRef quote_text is ambiguous without offsets")
             return EvidenceRefV1(
                 chunk_id=ref.chunk_id,
                 quote_start=first,

@@ -25,6 +25,10 @@ confidence, and evidence references. It neither owns repositories nor writes can
 story data. Its default configured model is `deepseek-v4-pro`, accessed only through the
 provider interface.
 
+The Curator v1.1 accepts up to eight trusted source chunks in one call. The adapter rejects a
+larger context before claiming Provider execution and never truncates source evidence. This raises
+the whole-document ceiling without changing canonical schemas or requiring a database migration.
+
 `ContextBuilder` is the agent read boundary. It creates bounded, project-scoped context
 from selected source proposals and existing StoryBible resources; it does not expose a
 whole-database read to agents. `StoryBibleRepository` keeps retrieval project-scoped,

@@ -1,0 +1,69 @@
+{
+  "schema_version": "1.0",
+  "document_id": "AUTO",
+  "chapter_ids": [],
+  "planner_mode": "DETERMINISTIC_EXTRACTIVE",
+  "panels_per_page": 6,
+  "max_pages": 1,
+  "comic_style": "完整上色的精致日系校园漫画，清晰细腻线条，柔和赛璐璐阴影，统一的橙金色黄昏色彩，电影感构图",
+  "global_prompt": "六个镜头发生在同一次日落且空间连续；每次只生成当前时刻的一张独立横向分镜；严格保持少女的脸型、橙红色眼睛、超长棕发、宽檐帽花饰、白衬衫、红蝴蝶结、深色百褶裙、白色及膝袜和黑鞋一致；底图不要生成文字、气泡、分格或水印",
+  "quality_constraints": [
+    "每一格只出现同一名少女，不得增加其他人物或复制角色",
+    "少女始终保持黑色宽檐帽、红花、紫色流苏、超长棕发、白衬衫、红蝴蝶结、深色百褶裙、白色及膝袜和黑鞋",
+    "校园天台的围栏、铁门、地面和远处城市天际线保持空间与黄昏光线连续",
+    "纸飞机从第三格开始出现，并在第四至第六格保持为同一件白色道具",
+    "人物动作、手部结构和纸飞机形状必须清楚自然",
+    "画面完整上色，不出现多格拼图、边框、底图文字、水印或签名"
+  ],
+  "selected_assets": [
+    {
+      "slot": "CHAR_ROOFTOP_GIRL",
+      "asset_id": "asset-001",
+      "entity_id": "character.rooftop-girl",
+      "role": "character_identity",
+      "description": "锁定少女的脸型、橙红色眼睛、黑色宽檐帽红花与紫色流苏、超长棕发、白衬衫、红蝴蝶结、深色百褶裙、白色及膝袜和黑鞋",
+      "display_name": "少女"
+    },
+    {
+      "slot": "SCENE_SCHOOL_ROOFTOP",
+      "asset_id": "wechat-014",
+      "entity_id": "location.school-rooftop",
+      "role": "scene",
+      "description": "校园天台空间参考；保留混凝土地面、围栏、铁门、屋顶设备和远处城市建筑的空间关系，但改为温暖日落色彩",
+      "display_name": "校园天台"
+    }
+  ],
+  "reference_policy": {
+    "mode": "APPROVED_LIBRARY",
+    "require_canonical": true
+  },
+  "generation": {
+    "model_id": "black-forest-labs/FLUX.2-klein-4B",
+    "width": 1024,
+    "height": 576,
+    "steps": 4,
+    "guidance_scale": 1.0,
+    "seed": 2026082401,
+    "attempts": 1,
+    "device": "cuda:0",
+    "dtype": "bfloat16"
+  },
+  "visual_qa": {
+    "enabled": true,
+    "latency_budget_seconds": 60.0,
+    "min_dynamic_range": 0.12,
+    "min_edge_energy": 0.015,
+    "min_reference_similarity": 0.01,
+    "max_auto_repairs": 1
+  },
+  "dialogue_layout": {
+    "enabled": true,
+    "font_path": null,
+    "min_font_size": 18,
+    "max_font_size": 32,
+    "bubble_padding": 18,
+    "max_bubble_width_ratio": 0.38
+  },
+  "continuity_enabled": true,
+  "identity_anchor_mode": "AUTO"
+}

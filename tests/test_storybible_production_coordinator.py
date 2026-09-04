@@ -233,7 +233,7 @@ class _AgentRuns:
 
 class _Curator:
     class spec:
-        max_context_chunks = 3
+        max_context_chunks = 8
 
     def __init__(self, result: Any = None) -> None:
         self.result = result or _proposal()
@@ -341,7 +341,7 @@ def test_normalization_failure_is_terminal_and_sanitized() -> None:
 
 
 def test_chunk_budget_fails_before_claim_without_truncation() -> None:
-    coordinator, _, runs, agents, curator = _coordinator(_prepared(4))
+    coordinator, _, runs, agents, curator = _coordinator(_prepared(9))
     with pytest.raises(StoryBibleProductionExecutionError) as caught:
         _run(coordinator)
 
@@ -350,6 +350,22 @@ def test_chunk_budget_fails_before_claim_without_truncation() -> None:
     assert runs.run.provider_request_count == 0
     assert curator.calls == 0
     assert not agents.values
+
+
+def test_curator_accepts_five_trusted_chunks_without_truncation() -> None:
+    coordinator, _, _, agents, curator = _coordinator(_prepared(5))
+
+    result = _run(coordinator)
+
+    assert result.status == StoryBibleProductionRunStatus.SUCCEEDED
+    assert curator.calls == 1
+    assert next(iter(agents.values.values())).input_chunk_ids == [
+        "chunk-1",
+        "chunk-2",
+        "chunk-3",
+        "chunk-4",
+        "chunk-5",
+    ]
 
 
 def test_running_success_and_failure_checkpoints_repair_without_provider() -> None:

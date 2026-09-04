@@ -426,7 +426,6 @@ def test_known_reverse_interval_rejected_but_unknown_interval_is_retained() -> N
         (EvidenceRefV1(chunk_id="chunk-1"), "exact quote or span"),
         (_ref("missing quote"), "does not match"),
         (_ref("wrong", start=0, end=5), "does not match"),
-        (_ref("Alice", start=None, end=None), "ambiguous"),
         (_ref(None, start=0, end=999), "exceeds"),
         (_ref("Alice met Bob.", chunk_id="outside"), "outside trusted"),
     ],
@@ -447,6 +446,15 @@ def test_exact_span_and_unambiguous_quote_are_normalized() -> None:
     span = _raw_proposal()
     span.evidence_refs = [_ref(None, start=0, end=5)]
     normalized = _normalize(span)
+    assert normalized.evidence_refs == [_ref("Alice", start=0, end=5)]
+
+
+def test_repeated_exact_quote_without_offsets_uses_deterministic_first_match() -> None:
+    repeated = _raw_proposal()
+    repeated.evidence_refs = [_ref("Alice", start=None, end=None)]
+
+    normalized = _normalize(repeated)
+
     assert normalized.evidence_refs == [_ref("Alice", start=0, end=5)]
 
 

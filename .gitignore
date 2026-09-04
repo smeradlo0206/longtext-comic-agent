@@ -1,11 +1,14 @@
 .env
+.env.*
+!.env.example
 .worktrees/
 .venv/
 __pycache__/
+*.py[cod]
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
-*.pyc
+*.egg-info/
 *.db
 *.sqlite
 dist/
@@ -13,3 +16,16 @@ build/
 schema_exports/
 .coverage
 htmlcov/
+
+# Generated runs and local model caches
+runs/
+queue/
+.cache/
+
+# Local inputs and generated experiments. Publish an artifact only by explicitly
+# force-adding its reviewed files.
+artifacts/
+inputs/
+*.zip
+/*.png
+/*.txt

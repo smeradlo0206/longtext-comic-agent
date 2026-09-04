@@ -15,6 +15,7 @@ from comic_agent.schemas.narrative import (
     TemporalRelation,
     TemporalRelationProposalV1,
 )
+from comic_agent.schemas.reliability import ProviderExecutionMetadataV1
 from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.schemas.timeline import (
     DuplicateCandidateType,
@@ -32,43 +33,69 @@ from comic_agent.services.id_service import stable_id
 class EventPairSelector:
     """Select a conservative, replaceable set of pairs for LLM evaluation."""
 
+    def __init__(self, *, max_pairs: int = 64) -> None:
+        if max_pairs < 1:
+            raise ValueError("max_pairs must be at least 1")
+        self._max_pairs = max_pairs
+
     def select(
         self,
         events: list[EventProposalV1],
         chunks_by_id: dict[str, SourceChunkV1],
     ) -> list[tuple[EventProposalV1, EventProposalV1]]:
-        """Keep only explicitly requested or locally related event pairs."""
+        """Keep a bounded graph of adjacent and nearest shared-entity pairs."""
 
-        if len(events) == 2:
-            return [(events[0], events[1])]
+        del chunks_by_id  # Kept in the replaceable selector interface for richer policies.
+        if len(events) < 2:
+            return []
+        all_pairs = list(combinations(events, 2))
+        if len(all_pairs) <= self._max_pairs:
+            return all_pairs
 
-        selected: list[tuple[EventProposalV1, EventProposalV1]] = []
-        for first, second in combinations(events, 2):
-            if self._related(first, second, chunks_by_id):
-                selected.append((first, second))
+        adjacent = list(zip(events, events[1:], strict=False))
+        if len(adjacent) >= self._max_pairs:
+            return self._sample_across_story(adjacent, self._max_pairs)
+
+        selected = list(adjacent)
+        selected_ids = {(first.proposal_id, second.proposal_id) for first, second in selected}
+        last_by_participant: dict[str, EventProposalV1] = {}
+        last_by_location: dict[str, EventProposalV1] = {}
+        related: list[tuple[EventProposalV1, EventProposalV1]] = []
+        for event in events:
+            previous_events = [
+                last_by_participant[participant_id]
+                for participant_id in event.participant_ids
+                if participant_id in last_by_participant
+            ]
+            if event.location_id is not None and event.location_id in last_by_location:
+                previous_events.append(last_by_location[event.location_id])
+            for previous in previous_events:
+                key = (previous.proposal_id, event.proposal_id)
+                if key not in selected_ids:
+                    selected_ids.add(key)
+                    related.append((previous, event))
+            for participant_id in event.participant_ids:
+                last_by_participant[participant_id] = event
+            if event.location_id is not None:
+                last_by_location[event.location_id] = event
+
+        remaining = self._max_pairs - len(selected)
+        selected.extend(self._sample_across_story(related, remaining))
         return selected
 
     @staticmethod
-    def _related(
-        first: EventProposalV1,
-        second: EventProposalV1,
-        chunks_by_id: dict[str, SourceChunkV1],
-    ) -> bool:
-        if set(first.participant_ids) & set(second.participant_ids):
-            return True
-        if first.location_id is not None and first.location_id == second.location_id:
-            return True
-        first_chapters = {
-            chunks_by_id[reference.chunk_id].chapter_id
-            for reference in first.evidence_refs
-            if reference.chunk_id in chunks_by_id
-        }
-        second_chapters = {
-            chunks_by_id[reference.chunk_id].chapter_id
-            for reference in second.evidence_refs
-            if reference.chunk_id in chunks_by_id
-        }
-        return bool(first_chapters & second_chapters)
+    def _sample_across_story(
+        pairs: list[tuple[EventProposalV1, EventProposalV1]],
+        limit: int,
+    ) -> list[tuple[EventProposalV1, EventProposalV1]]:
+        if limit <= 0 or not pairs:
+            return []
+        if len(pairs) <= limit:
+            return pairs
+        if limit == 1:
+            return [pairs[0]]
+        indexes = [round(index * (len(pairs) - 1) / (limit - 1)) for index in range(limit)]
+        return [pairs[index] for index in indexes]
 
 
 class TimelineAgent:
@@ -100,12 +127,25 @@ class TimelineAgent:
         self._llm_enabled = llm_enabled
         self._pair_selector = pair_selector or EventPairSelector()
         self._provider_request_count = 0
+        self._execution_history: list[ProviderExecutionMetadataV1] = []
 
     @property
     def provider_request_count(self) -> int:
         """Return the exact number of Provider requests in the latest run."""
 
         return self._provider_request_count
+
+    def execution_history(self) -> list[ProviderExecutionMetadataV1]:
+        """Return allowlisted usage metadata for calls made by the latest run."""
+
+        return list(self._execution_history)
+
+    def provider_execution_history(self) -> list[ProviderExecutionMetadataV1]:
+        """Return all Provider calls, including capability probes, for accounting."""
+
+        getter = getattr(self._provider, "execution_history", None)
+        values = getter() if callable(getter) else []
+        return [value for value in values if isinstance(value, ProviderExecutionMetadataV1)]
 
     @property
     def cache_identity(self) -> dict[str, str]:
@@ -127,6 +167,7 @@ class TimelineAgent:
         """Analyze supplied candidates without database access or canonical writes."""
 
         self._provider_request_count = 0
+        self._execution_history = []
         chunks_by_id = {chunk.chunk_id: chunk for chunk in source_chunks}
         temporal_relations = (
             self._unknown_relations(input_context.event_proposals)
@@ -182,22 +223,15 @@ class TimelineAgent:
             )
             response = self._generate_pair(repair_request)
             self._validate_evidence_indexes(response, evidence_refs)
-        if response.relation not in {
-            TemporalRelation.BEFORE,
-            TemporalRelation.AFTER,
-            TemporalRelation.SIMULTANEOUS,
-            TemporalRelation.OVERLAPS,
-            TemporalRelation.UNKNOWN,
-        }:
-            raise ValueError("TimelineAgent V2 returned an unsupported temporal relation")
+        relation = TemporalRelation(response.relation)
         selected_evidence = [evidence_refs[index] for index in response.evidence_indexes]
         return TemporalRelationProposalV1(
             proposal_id=stable_id(
-                "temporal-v2", first.proposal_id, second.proposal_id, response.relation
+                "temporal-v2", first.proposal_id, second.proposal_id, relation
             ),
             source_event_id=first.proposal_id,
             target_event_id=second.proposal_id,
-            relation=response.relation,
+            relation=relation,
             evidence_refs=selected_evidence,
             confidence=response.confidence,
             reasoning_summary=response.reasoning_summary,
@@ -206,7 +240,13 @@ class TimelineAgent:
     def _generate_pair(self, request: dict[str, object]) -> TimelinePairInferenceV1:
         assert self._provider is not None
         self._provider_request_count += 1
-        return self._provider.structured_generate(request, TimelinePairInferenceV1)
+        try:
+            return self._provider.structured_generate(request, TimelinePairInferenceV1)
+        finally:
+            getter = getattr(self._provider, "last_execution_metadata", None)
+            metadata = getter() if callable(getter) else None
+            if isinstance(metadata, ProviderExecutionMetadataV1):
+                self._execution_history.append(metadata)
 
     @staticmethod
     def _validate_evidence_indexes(
@@ -354,7 +394,7 @@ class TimelineAgent:
             input_context.mode,
             tuple(proposal.proposal_id for proposal in input_context.event_proposals),
             tuple(
-                getattr(proposal, "claim_id", proposal.proposal_id)
+                proposal.proposal_id
                 for proposal in input_context.claim_proposals
             ),
             tuple(proposal.proposal_id for proposal in input_context.state_change_proposals),
@@ -408,22 +448,26 @@ class TimelineAgent:
         conflicts = []
         for first, second in combinations(input_context.claim_proposals, 2):
             if (
-                first.subject_id == second.subject_id
+                first.subject_id is not None
+                and first.predicate is not None
+                and first.subject_id == second.subject_id
                 and first.predicate == second.predicate
                 and first.object_value != second.object_value
                 and first.reality_layer == second.reality_layer
             ):
+                first_id = first.proposal_id
+                second_id = second.proposal_id
                 conflicts.append(
                     TimelineConflictV1(
-                        conflict_id=stable_id("claim-conflict", first.claim_id, second.claim_id),
+                        conflict_id=stable_id("claim-conflict", first_id, second_id),
                         project_id=input_context.project_id,
                         category=TimelineConflictCategory.CONTRADICTORY_CLAIMS,
                         summary=(
-                            f"Claims {first.claim_id} and {second.claim_id} assign "
+                            f"Claims {first_id} and {second_id} assign "
                             "different values "
                             f"to {first.subject_id}.{first.predicate}."
                         ),
-                        affected_proposal_ids=[first.claim_id, second.claim_id],
+                        affected_proposal_ids=[first_id, second_id],
                         evidence_refs=[*first.evidence_refs, *second.evidence_refs],
                     )
                 )
@@ -452,14 +496,16 @@ class TimelineAgent:
                 )
         for first_claim, second_claim in combinations(input_context.claim_proposals, 2):
             if TimelineAgent._claim_key(first_claim) == TimelineAgent._claim_key(second_claim):
+                first_id = first_claim.proposal_id
+                second_id = second_claim.proposal_id
                 duplicates.append(
                     DuplicateCandidateV1(
                         candidate_id=stable_id(
-                            "duplicate-claim", first_claim.claim_id, second_claim.claim_id
+                            "duplicate-claim", first_id, second_id
                         ),
                         project_id=input_context.project_id,
                         candidate_type=DuplicateCandidateType.CLAIM,
-                        proposal_ids=[first_claim.claim_id, second_claim.claim_id],
+                        proposal_ids=[first_id, second_id],
                         reason="Exact subject, predicate, value, source, and reality layer match.",
                         evidence_refs=[*first_claim.evidence_refs, *second_claim.evidence_refs],
                         confidence=1.0,
@@ -479,7 +525,18 @@ class TimelineAgent:
 
     @staticmethod
     def _claim_key(claim: ClaimProposalV1) -> tuple[object, ...]:
+        if claim.subject_id is None or claim.predicate is None:
+            return (
+                "modern",
+                claim.claim_type,
+                claim.claim_text.casefold().strip(),
+                claim.source_type,
+                claim.source_id,
+                claim.target_event_id,
+                claim.reality_layer,
+            )
         return (
+            "legacy",
             claim.subject_id,
             claim.predicate,
             claim.object_value,

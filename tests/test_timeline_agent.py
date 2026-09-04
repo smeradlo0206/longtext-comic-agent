@@ -1,6 +1,6 @@
 import pytest
 
-from comic_agent.agents.timeline_agent import TimelineAgent
+from comic_agent.agents.timeline_agent import EventPairSelector, TimelineAgent
 from comic_agent.providers.mocks import MockLLMProvider
 from comic_agent.providers.openai_compatible import ProviderResponseError
 from comic_agent.schemas.base import EvidenceRefV1, RealityLayer
@@ -36,6 +36,21 @@ def claim(claim_id: str, object_value: str) -> ClaimProposalV1:
         predicate="location",
         object_value=object_value,
         asserted_by_entity_id="chen",
+        evidence_refs=EVIDENCE,
+        confidence=0.8,
+        reality_layer=RealityLayer.PRIMARY,
+    )
+
+
+def modern_claim(proposal_id: str, claim_text: str) -> ClaimProposalV1:
+    return ClaimProposalV1(
+        schema_version="1.2",
+        proposal_id=proposal_id,
+        claim_type="FACTUAL_ASSERTION",
+        claim_text=claim_text,
+        temporal_scope="PRESENT",
+        source_type="NARRATOR",
+        verification_status="SUPPORTED",
         evidence_refs=EVIDENCE,
         confidence=0.8,
         reality_layer=RealityLayer.PRIMARY,
@@ -94,6 +109,35 @@ def test_timeline_agent_marks_exact_claims_as_duplicate_candidates() -> None:
     )
 
     assert analysis.duplicate_candidates[0].candidate_type == DuplicateCandidateType.CLAIM
+
+
+def test_timeline_agent_uses_proposal_ids_for_modern_claim_duplicates() -> None:
+    analysis = TimelineAgent().run(
+        TimelineAnalysisInputV1(
+            project_id="project-1",
+            claim_proposals=[
+                modern_claim("proposal-1", "The welcome desk is open."),
+                modern_claim("proposal-2", "The welcome desk is open."),
+            ],
+        )
+    )
+
+    assert analysis.duplicate_candidates[0].proposal_ids == ["proposal-1", "proposal-2"]
+
+
+def test_timeline_agent_does_not_collapse_distinct_modern_claims_with_null_legacy_fields() -> None:
+    analysis = TimelineAgent().run(
+        TimelineAnalysisInputV1(
+            project_id="project-1",
+            claim_proposals=[
+                modern_claim("proposal-1", "The welcome desk is open."),
+                modern_claim("proposal-2", "New students receive a campus map."),
+            ],
+        )
+    )
+
+    assert analysis.duplicate_candidates == []
+    assert analysis.conflicts == []
 
 
 def source_chunk() -> SourceChunkV1:
@@ -235,3 +279,54 @@ def test_timeline_agent_stops_after_one_schema_repair() -> None:
         )
 
     assert provider.calls == 2
+
+
+def test_timeline_pair_schema_rejects_relations_not_supported_by_agent_v2() -> None:
+    schema = TimelinePairInferenceV1.model_json_schema()
+    relation_schema = schema["$defs"]["TimelinePairRelation"]
+
+    assert relation_schema["enum"] == [
+        "BEFORE",
+        "AFTER",
+        "OVERLAPS",
+        "SIMULTANEOUS",
+        "UNKNOWN",
+    ]
+    with pytest.raises(ValueError):
+        TimelinePairInferenceV1.model_validate(llm_response("DURING"))
+
+
+def test_pair_selector_does_not_expand_one_chapter_into_all_combinations() -> None:
+    events = [event(f"event-{index}") for index in range(20)]
+
+    pairs = EventPairSelector().select(events, {"chunk-1": source_chunk()})
+
+    assert len(pairs) == 19
+    assert [(first.proposal_id, second.proposal_id) for first, second in pairs] == [
+        (f"event-{index}", f"event-{index + 1}") for index in range(19)
+    ]
+
+
+def test_pair_selector_keeps_complete_graph_for_small_event_sets() -> None:
+    events = [event(f"event-{index}") for index in range(4)]
+
+    pairs = EventPairSelector().select(events, {"chunk-1": source_chunk()})
+
+    assert [(first.proposal_id, second.proposal_id) for first, second in pairs] == [
+        ("event-0", "event-1"),
+        ("event-0", "event-2"),
+        ("event-0", "event-3"),
+        ("event-1", "event-2"),
+        ("event-1", "event-3"),
+        ("event-2", "event-3"),
+    ]
+
+
+def test_pair_selector_hard_limit_samples_adjacent_pairs_across_story() -> None:
+    events = [event(f"event-{index}") for index in range(100)]
+
+    pairs = EventPairSelector(max_pairs=10).select(events, {"chunk-1": source_chunk()})
+
+    assert len(pairs) == 10
+    assert pairs[0][0].proposal_id == "event-0"
+    assert pairs[-1][1].proposal_id == "event-99"

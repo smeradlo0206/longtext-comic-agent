@@ -1,0 +1,64 @@
+{
+  "schema_version": "2.0",
+  "job_id": "girl-sofa-scenery",
+  "source_script": "女孩坐在挑高客厅的沙发上，安静地望向落地窗外的风景。",
+  "comic_style": "完整上色的精致日系叙事漫画，清晰线条，柔和细腻的赛璐璐阴影",
+  "global_prompt": "女孩在沙发上坐着看风景。表现安静、明亮且具有空间纵深的室内时刻。",
+  "quality_constraints": [
+    "采用单幅连续画面",
+    "画面只包含一个完整女孩",
+    "人物和室内外环境全部完整上色",
+    "女孩明确坐在沙发上并望向窗外",
+    "落地窗外的花园与远景清晰可见",
+    "人物肢体和手指结构自然",
+    "不复刻场景线稿媒介或人物原站姿",
+    "画面表面纯净，标识区域留白"
+  ],
+  "selected_assets": [
+    {
+      "slot": "SCENE_A",
+      "asset_id": "wechat-015",
+      "entity_id": "scene.grand_lounge",
+      "role": "scene",
+      "description": "挑高客厅、落地窗、沙发布局与室内空间透视"
+    },
+    {
+      "slot": "CHAR_A",
+      "asset_id": "wechat-009",
+      "entity_id": "character.sofa_girl",
+      "role": "character_identity",
+      "description": "女孩的面部、长发、发饰、校服和人物比例"
+    }
+  ],
+  "generation": {
+    "model_id": "black-forest-labs/FLUX.2-klein-4B",
+    "width": 1440,
+    "height": 1024,
+    "steps": 4,
+    "guidance_scale": 1.0,
+    "seed": 2026082105,
+    "attempts": 2,
+    "device": "cuda:0",
+    "dtype": "bfloat16"
+  },
+  "shots": [
+    {
+      "shot_id": "sofa-001",
+      "prompt": "CHAR_A 坐在 SCENE_A 靠近落地窗的沙发上，身体自然侧向窗户，侧脸可见，双手轻松放在膝上，安静望向窗外可见的花园与远景。横向中远景同时清楚展现女孩、沙发、挑高客厅、落地窗和室外景色，柔和午后日光。",
+      "references": [
+        {
+          "slot": "SCENE_A",
+          "asset_id": "wechat-015",
+          "role": "scene",
+          "purpose": "采用挑高客厅、落地窗、沙发陈设与空间透视，按当前分镜生成完整上色的新场景"
+        },
+        {
+          "slot": "CHAR_A",
+          "asset_id": "wechat-009",
+          "role": "character_identity",
+          "purpose": "保持女孩面部、长发、蝴蝶结发饰、校服与人物比例，动作改为坐在沙发上看向窗外"
+        }
+      ]
+    }
+  ]
+}

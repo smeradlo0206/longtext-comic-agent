@@ -270,6 +270,8 @@ class StoryBibleProductionCoordinator:
         source_chunks: list[SourceChunkV1],
     ) -> AgentRunV1:
         now = datetime.now(UTC)
+        metadata_getter = getattr(self._curator, "last_execution_metadata", None)
+        execution_metadata = metadata_getter() if callable(metadata_getter) else None
         provider_result = ProviderResultV1(
             provider_result_id=stable_id("storybible-provider-result", run.run_id),
             provider_name=self._provider_name,
@@ -278,6 +280,7 @@ class StoryBibleProductionCoordinator:
             output_schema="StoryBibleCuratorProposalV1",
             structured_output=proposal.model_dump(mode="json"),
             success=True,
+            execution_metadata=execution_metadata,
             created_at=now,
         )
         return AgentRunV1(

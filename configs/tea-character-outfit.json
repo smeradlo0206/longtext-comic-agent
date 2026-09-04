@@ -1,0 +1,62 @@
+{
+  "schema_version": "2.0",
+  "job_id": "tea-character-outfit",
+  "source_script": "长发男子穿着深蓝金色礼服，在茶桌前端起茶杯饮茶。",
+  "comic_style": "完整上色的精致国风漫画，清晰墨线，细腻赛璐璐阴影",
+  "global_prompt": "表现安静典雅的饮茶场景，角色身份和服装设计在镜头中保持稳定。",
+  "quality_constraints": [
+    "采用单幅连续画面",
+    "画面只包含一个完整人物",
+    "茶杯清晰地位于人物手中并接近嘴边",
+    "双手和手指结构自然",
+    "服装完整穿着在人物身上",
+    "画面表面纯净，标识区域留白"
+  ],
+  "selected_assets": [
+    {
+      "slot": "CHAR_A",
+      "asset_id": "wechat-004",
+      "entity_id": "character.tea_lead",
+      "role": "character_identity",
+      "description": "主要角色的面部、长发造型和人物气质"
+    },
+    {
+      "slot": "OUTFIT_A",
+      "asset_id": "wechat-011",
+      "entity_id": "character.tea_lead",
+      "role": "character_outfit",
+      "description": "主要角色使用的深蓝金色礼服及配饰"
+    }
+  ],
+  "generation": {
+    "model_id": "black-forest-labs/FLUX.2-klein-4B",
+    "width": 1024,
+    "height": 1440,
+    "steps": 4,
+    "guidance_scale": 1.0,
+    "seed": 2026082104,
+    "attempts": 2,
+    "device": "cuda:0",
+    "dtype": "bfloat16"
+  },
+  "shots": [
+    {
+      "shot_id": "tea-001",
+      "prompt": "CHAR_A 穿着 OUTFIT_A，坐在典雅茶桌前，右手自然托起小茶杯贴近唇边，左手放在桌边；桌面摆放茶壶和一只茶盏。单人，半身至膝上竖向构图，柔和室内侧光。",
+      "references": [
+        {
+          "slot": "OUTFIT_A",
+          "asset_id": "wechat-011",
+          "role": "character_outfit",
+          "purpose": "采用深蓝金色长礼服的剪裁、金色刺绣、蓝宝石和配饰，服装自然穿着在角色身上"
+        },
+        {
+          "slot": "CHAR_A",
+          "asset_id": "wechat-004",
+          "role": "character_identity",
+          "purpose": "保持男性面部、五官比例、长发造型和角色气质，采用当前分镜指定的新动作"
+        }
+      ]
+    }
+  ]
+}

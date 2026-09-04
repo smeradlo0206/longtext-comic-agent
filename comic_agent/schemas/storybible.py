@@ -240,7 +240,7 @@ class CommitPlanV1(StrictBaseModel):
 class StoryBibleContextV1(StrictBaseModel):
     """Bounded context supplied to the proposal-only StoryBible curator."""
 
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["1.0", "1.1"] = "1.1"
     project_id: StoryBibleId
     entity_proposals: list[EntityProposalV1] = Field(default_factory=list)
     event_proposals: list[EventProposalV1] = Field(default_factory=list)
@@ -250,7 +250,7 @@ class StoryBibleContextV1(StrictBaseModel):
     states: list[StoryEntityStateV1] = Field(default_factory=list)
     relationships: list[StoryRelationshipV1] = Field(default_factory=list)
     world_rules: list[WorldRuleV1] = Field(default_factory=list)
-    source_chunk_ids: list[StoryBibleId] = Field(default_factory=list, max_length=3)
+    source_chunk_ids: list[StoryBibleId] = Field(default_factory=list, max_length=8)
 
     @field_validator("project_id")
     @classmethod

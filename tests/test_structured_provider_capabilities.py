@@ -8,7 +8,10 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from comic_agent.config import Settings
-from comic_agent.providers.openai_compatible import OpenAICompatibleLLMProvider
+from comic_agent.providers.openai_compatible import (
+    READINESS_PROBE_MAX_TOKENS,
+    OpenAICompatibleLLMProvider,
+)
 from comic_agent.schemas.base import EvidenceRefV1, RealityLayer
 from comic_agent.schemas.narrative import EventProposalV1
 from comic_agent.schemas.reliability import (
@@ -160,6 +163,19 @@ def test_strict_profile_sends_openai_json_schema_and_preserves_execution_metadat
     assert "source must not be copied here" not in metadata.model_dump_json()
 
 
+def test_structured_provider_forwards_explicit_thinking_mode() -> None:
+    client = _Client()
+    provider = OpenAICompatibleLLMProvider(
+        api_key="secret",
+        thinking_mode="disabled",
+        http_client=client,
+    )
+
+    assert provider.structured_generate({}, _Output) == _Output(answer="ok")
+
+    assert client.requests[0]["thinking"] == {"type": "disabled"}
+
+
 def test_schema_specific_capability_overrides_provider_wide_mode() -> None:
     client = _Client()
     provider = OpenAICompatibleLLMProvider(
@@ -261,6 +277,24 @@ def test_auto_probe_falls_back_to_json_object_only_for_explicit_strict_rejection
         "json_object",
     ]
     assert all("source_chunks" not in json.dumps(item) for item in client.requests)
+
+
+def test_readiness_probe_reserves_output_for_reasoning_models() -> None:
+    client = _ProbeClient(
+        [
+            _StatusResponse(
+                200,
+                {"choices": [{"message": {"content": '{"ready":true}'}}]},
+            )
+        ]
+    )
+    provider = OpenAICompatibleLLMProvider(api_key="secret", http_client=client)
+
+    profile = provider.probe_structured_output(StructuredOutputPolicy.JSON_OBJECT_ONLY)
+
+    assert profile.selected_output_mode == StructuredOutputMode.JSON_OBJECT
+    assert client.requests[0]["max_tokens"] == READINESS_PROBE_MAX_TOKENS
+    assert READINESS_PROBE_MAX_TOKENS >= 256
 
 
 def test_require_strict_stops_when_probe_proves_it_unsupported() -> None:

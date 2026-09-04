@@ -160,7 +160,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--tier", choices=("short", "medium", "long"), required=True)
     parser.add_argument(
-        "--output-dir", type=Path, default=Path("output/local-real-provider-acceptance")
+        "--output-dir", type=Path, default=Path("runs/local-real-provider-acceptance")
     )
     parser.add_argument("--run-real", action="store_true")
     args = parser.parse_args()
