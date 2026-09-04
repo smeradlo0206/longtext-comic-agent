@@ -87,7 +87,7 @@ def create_narrative_analysis_run(
     window_size: int = DEFAULT_ANALYSIS_WINDOW_SIZE,
     stride: int = DEFAULT_ANALYSIS_STRIDE,
     batch_max_chunks: int = 20,
-    output_token_budget: int = 8000,
+    output_token_budget: int = 16_000,
     time_budget_seconds: int = 300,
     max_call_attempts: int = 2,
     max_split_depth: int = 3,

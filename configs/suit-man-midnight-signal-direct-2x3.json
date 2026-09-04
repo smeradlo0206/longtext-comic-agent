@@ -1,0 +1,144 @@
+{
+  "schema_version": "2.2",
+  "job_id": "suit-man-midnight-signal-direct-2x3-v2",
+  "source_script": "午夜将近，雨夜高层办公室突然停电。黑发男子发现远处红色信号灯闪烁，随后穿过应急照明下的走廊登上天台。当城市重新亮起时，他确认神秘信号已经收到。",
+  "comic_style": "完整上色的精致日系动画电影定格插画，清晰稳定的线条，克制的赛璐璐阴影，深蓝雨夜与暗红应急灯形成统一电影感照明",
+  "global_prompt": "当前只生成一幅铺满整张画布的连续横向场景。人物始终是同一名成年男性，保持相同脸型、卷曲黑发、黑框眼镜、修长身材、深色西装、白衬衫、黑领带和黑皮鞋。绝对禁止分割画面、并列视图、插入小图、漫画格线、白色隔线、拼贴、文字、气泡、水印或签名。",
+  "quality_constraints": [
+    "每张图片只能是一幅无边框的全幅连续场景",
+    "每张只出现同一名成年男性一次，不得复制人物",
+    "角色的卷曲黑发、黑框眼镜、清瘦脸型、修长比例和整套深色西装保持一致",
+    "办公室、走廊与天台属于同一栋高层建筑，保持同一雨夜和城市天际线",
+    "人物动作、双手、眼镜、脸部和身体结构自然完整",
+    "不生成任何文字、数字、标志、对白框或拟声词"
+  ],
+  "selected_assets": [
+    {
+      "slot": "CHAR_SIGNAL_MAN",
+      "asset_id": "asset-002",
+      "entity_id": "character.black-haired-suit-man",
+      "role": "character_identity",
+      "description": "锁定成年男子的卷曲黑发、黑框眼镜、清瘦脸型、修长比例、深色西装、白衬衫、黑领带和黑皮鞋"
+    }
+  ],
+  "reference_policy": {
+    "mode": "APPROVED_LIBRARY",
+    "require_canonical": true
+  },
+  "generation": {
+    "model_id": "black-forest-labs/FLUX.2-klein-4B",
+    "width": 1024,
+    "height": 576,
+    "steps": 4,
+    "guidance_scale": 1.0,
+    "seed": 2026082612,
+    "attempts": 1,
+    "device": "cuda:0",
+    "dtype": "bfloat16"
+  },
+  "visual_qa": {
+    "enabled": true,
+    "latency_budget_seconds": 60.0,
+    "min_dynamic_range": 0.12,
+    "min_edge_energy": 0.015,
+    "min_reference_similarity": 0.01,
+    "max_auto_repairs": 1
+  },
+  "identity_anchors": [
+    {
+      "anchor_id": "anchor_signal_man_direct_v2",
+      "slot": "CHAR_SIGNAL_MAN",
+      "asset_id": "asset-002",
+      "entity_id": "character.black-haired-suit-man",
+      "description": "同一名成年男性，卷曲黑发、黑框眼镜、清瘦脸型、修长比例、深色合身西装、白衬衫、黑领带和黑皮鞋",
+      "display_name": "黑发男子",
+      "seed": 2026092612,
+      "width": 576,
+      "height": 1024
+    }
+  ],
+  "contact_sheet": {
+    "columns": 3,
+    "filename": "page-001.png"
+  },
+  "shots": [
+    {
+      "shot_id": "01-office-before-blackout",
+      "prompt": "只生成一幅铺满画布的横向全景：午夜将近，雨水沿着高层办公室的落地窗流下，CHAR_SIGNAL_MAN 独自站在窗边俯瞰灯火明亮的城市。角色全身可见，室内深蓝色夜光自然，画面中只有一个时刻和一个人物。不要分割画面，不要并排构图，不要插图或边框。",
+      "references": [
+        {
+          "slot": "CHAR_SIGNAL_MAN",
+          "asset_id": "asset-002",
+          "role": "character_identity",
+          "purpose": "保持同一男子的脸、黑色卷发、黑框眼镜、身材和深色西装，仅改变场景和站姿"
+        }
+      ],
+      "seed": 2026082612
+    },
+    {
+      "shot_id": "02-blackout",
+      "prompt": "只生成一幅铺满画布的横向中景：同一间高层办公室突然停电，窗外大部分城市灯光由近到远熄灭，CHAR_SIGNAL_MAN 在昏暗窗边警觉地抬头。只有一个男子一次，深蓝黑暗中保留清楚轮廓。不要分割画面，不要并列前后两个动作，不要插图或边框。",
+      "references": [
+        {
+          "slot": "CHAR_SIGNAL_MAN",
+          "asset_id": "asset-002",
+          "role": "character_identity",
+          "purpose": "保持同一男子的黑发、眼镜、脸型、体型和整套西装"
+        }
+      ],
+      "seed": 2026082613
+    },
+    {
+      "shot_id": "03-red-signal",
+      "prompt": "只生成一幅铺满画布的横向近景：暗红色应急灯照亮停电后的办公室，CHAR_SIGNAL_MAN 侧身望向窗外，对面楼顶唯一的红色信号灯映在他的黑框眼镜镜片上。画面只出现同一个男子一次，背景保持雨夜城市。不要分割画面，不要额外人脸特写小窗，不要插图或边框。",
+      "references": [
+        {
+          "slot": "CHAR_SIGNAL_MAN",
+          "asset_id": "asset-002",
+          "role": "character_identity",
+          "purpose": "锁定同一男子的清瘦脸型、黑色卷发、黑框眼镜与西装领口"
+        }
+      ],
+      "seed": 2026082614
+    },
+    {
+      "shot_id": "04-emergency-corridor",
+      "prompt": "只生成一幅铺满画布的横向中远景：CHAR_SIGNAL_MAN 独自快步穿过空无一人的办公楼长廊，暗红应急灯把他的修长影子投在墙面，远端通向楼顶的安全门可见。完整自然的行走动作，只出现男子一人一次。不要分割画面，不要重复人物，不要插图或边框。",
+      "references": [
+        {
+          "slot": "CHAR_SIGNAL_MAN",
+          "asset_id": "asset-002",
+          "role": "character_identity",
+          "purpose": "保持同一男子的黑发、眼镜、身材、深色西装和黑皮鞋，动作改为快步行走"
+        }
+      ],
+      "seed": 2026082615
+    },
+    {
+      "shot_id": "05-rooftop-door",
+      "prompt": "只生成一幅铺满画布的横向全景：CHAR_SIGNAL_MAN 推开通往楼顶的金属门走入风雨，卷曲黑发和黑领带被风扬起，身后是暗红应急灯，前方是停电后的黑暗城市。男子只出现一次，动作和双手自然清楚。不要分割画面，不要并列多个姿势，不要插图或边框。",
+      "references": [
+        {
+          "slot": "CHAR_SIGNAL_MAN",
+          "asset_id": "asset-002",
+          "role": "character_identity",
+          "purpose": "保持同一男子的脸、卷曲黑发、黑框眼镜、修长比例和完整西装"
+        }
+      ],
+      "seed": 2026082616
+    },
+    {
+      "shot_id": "06-city-lights-return",
+      "prompt": "只生成一幅铺满画布的横向收束全景：雨势变小，城市灯火像星群般重新亮起，CHAR_SIGNAL_MAN 独自站在高层天台边，身体面向城市并略微回头露出平静微笑，红色信号灯在远处微亮。只有一名男子和一个连续时刻。不要文字或对白，不要分割画面，不要插图或边框。",
+      "references": [
+        {
+          "slot": "CHAR_SIGNAL_MAN",
+          "asset_id": "asset-002",
+          "role": "character_identity",
+          "purpose": "保持同一男子的黑发、眼镜、脸型、修长身材和深色西装，表现平静收束情绪"
+        }
+      ],
+      "seed": 2026082617
+    }
+  ]
+}

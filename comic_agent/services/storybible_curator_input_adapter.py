@@ -24,7 +24,7 @@ class StoryBibleCuratorInputAdapter:
         self,
         production: StoryBibleProductionContextV1,
         *,
-        max_context_chunks: int = 3,
+        max_context_chunks: int = 8,
     ) -> StoryBibleCuratorInput:
         if len(production.source_chunks) > max_context_chunks:
             raise StoryBibleContextBudgetExceededError(

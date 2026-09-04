@@ -15,6 +15,9 @@ from comic_agent.schemas import (
     StoryEntityStateV1,
     TemporalRelationProposalV1,
 )
+from comic_agent.schemas.base import RealityLayer
+from comic_agent.schemas.narrative import EventProposalV1
+from comic_agent.schemas.source import SourceChunkV1
 from comic_agent.services.comic_planning_service import ComicPlanningService
 from comic_agent.services.panel_planning_service import PanelPlanningService
 from scripts import export_json_schemas
@@ -127,6 +130,40 @@ def test_storybible_and_timeline_generate_scene_plans() -> None:
     assert scenes[0].timeline_bundle_id == "timeline-bundle-1"
 
 
+def test_comic_planning_uses_approved_event_summary_and_scoped_evidence() -> None:
+    second_evidence = EvidenceRefV1(chunk_id="chunk-2", quote_text="Lin rests")
+    timeline = timeline_bundle().model_copy(
+        update={"evidence_refs": [EVIDENCE, second_evidence]}
+    )
+    events = [
+        EventProposalV1(
+            proposal_id="event-1",
+            event_type="ACTION",
+            summary="Lin opens the North Gate.",
+            evidence_refs=[EVIDENCE],
+            confidence=1.0,
+            reality_layer=RealityLayer.PRIMARY,
+        ),
+        EventProposalV1(
+            proposal_id="event-2",
+            event_type="ACTION",
+            summary="Lin rests inside.",
+            evidence_refs=[second_evidence],
+            confidence=1.0,
+            reality_layer=RealityLayer.PRIMARY,
+        ),
+    ]
+
+    scenes = ComicPlanningService().plan(
+        storybible=storybible_bundle(), timeline=timeline, events=events
+    )
+
+    assert scenes[0].summary == "Lin opens the North Gate."
+    assert scenes[0].evidence_refs == [EVIDENCE]
+    assert scenes[1].summary == "Lin rests inside."
+    assert scenes[1].evidence_refs == [second_evidence]
+
+
 def test_scene_plan_generates_image_agent_ready_panel_plan() -> None:
     scene = ComicPlanningService().plan(
         storybible=storybible_bundle(), timeline=timeline_bundle()
@@ -149,6 +186,37 @@ def test_scene_plan_generates_image_agent_ready_panel_plan() -> None:
     assert panel.shot_type == "MEDIUM"
     assert panel.camera_angle == "EYE_LEVEL"
     assert panel.caption == scene.summary
+
+
+def test_panel_planning_extracts_only_source_grounded_spoken_chinese_dialogue() -> None:
+    text = "志愿者指向服务台，说：“同学，欢迎来到中国科大！”路牌写着“报到处”。"
+    evidence = EvidenceRefV1(
+        chunk_id="chunk-dialogue",
+        quote_start=0,
+        quote_end=len(text),
+        quote_text=text,
+    )
+    chunk = SourceChunkV1(
+        chunk_id="chunk-dialogue",
+        document_id="document-1",
+        chapter_id="chapter-1",
+        project_id="project-1",
+        order=0,
+        text=text,
+        checksum="checksum-dialogue",
+    )
+    scene = ComicPlanningService().plan(
+        storybible=storybible_bundle(), timeline=timeline_bundle()
+    )[0].model_copy(update={"summary": text, "evidence_refs": [evidence]})
+
+    panel = PanelPlanningService().plan(
+        scene=scene,
+        storybible=storybible_bundle(),
+        source_chunks=[chunk],
+    )
+
+    assert panel.dialogue == ["同学，欢迎来到中国科大！"]
+    assert panel.caption is None
 
 
 def test_unknown_character_state_is_not_generated() -> None:

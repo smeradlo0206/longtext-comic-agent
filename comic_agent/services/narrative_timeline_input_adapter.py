@@ -101,6 +101,7 @@ class NarrativeTimelineInputAdapter:
             raise ValueError("approved event item must contain EventProposalV1")
         participant_ids = list(proposal.participant_ids)
         location_id = proposal.location_id
+        location_mention = proposal.location_mention
         for reference in item.reference_decisions:
             if (
                 str(reference.status) != "RESOLVED"
@@ -113,8 +114,13 @@ class NarrativeTimelineInputAdapter:
                     participant_ids.append(reference.selected_target_proposal_id)
             elif reference.reference_path == "location_mention" and location_id is None:
                 location_id = reference.selected_target_proposal_id
+                location_mention = None
         return proposal.model_copy(
-            update={"participant_ids": participant_ids, "location_id": location_id}
+            update={
+                "participant_ids": participant_ids,
+                "location_id": location_id,
+                "location_mention": location_mention,
+            }
         )
 
     @staticmethod

@@ -1,0 +1,22 @@
+{
+  "schema_version": "2.0",
+  "job_id": "wechat-reference-demo",
+  "script": "主角出现在一个自然、叙事明确的横向中景中。",
+  "comic_style": "精致彩色叙事漫画，清晰线条，柔和赛璐璐阴影",
+  "global_prompt": "保持角色视觉身份稳定，使用自然光影和清晰的空间层次。",
+  "quality_constraints": [
+    "采用单幅连续画面",
+    "画面只包含一个主要角色",
+    "人物肢体结构完整自然",
+    "画面表面纯净，标识区域留白"
+  ],
+  "selected_assets": [
+    {
+      "slot": "CHAR_A",
+      "asset_id": "wechat-001",
+      "entity_id": "character.demo_lead",
+      "role": "character_identity",
+      "description": "主要角色的身份、外观和服装识别特征"
+    }
+  ]
+}

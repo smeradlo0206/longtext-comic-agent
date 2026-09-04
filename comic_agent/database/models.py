@@ -129,6 +129,29 @@ class WorkflowRunModel(Base):
     )
 
 
+class ComicProductionRunModel(Base):
+    """Idempotent long-text comic compilation and image execution record."""
+
+    __tablename__ = "comic_production_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "document_id",
+            "request_hash",
+            name="uq_comic_run_project_document_request",
+        ),
+    )
+
+    run_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    document_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class AgentRunModel(Base):
     """Stored agent run shell."""
 

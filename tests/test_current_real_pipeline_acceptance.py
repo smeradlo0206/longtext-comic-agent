@@ -14,8 +14,11 @@ from scripts.run_current_real_pipeline_acceptance import (
     mark_after_failure,
     preflight,
     record_narrative_diagnostics,
+    resolved_timeline_bundle_id,
     run_stage,
     sanitize,
+    summarize_provider_usage,
+    timeline_can_reach_gate3,
     validate_provider,
 )
 
@@ -53,6 +56,35 @@ def test_first_failure_wins_and_downstream_is_skipped(tmp_path: Path) -> None:
     assert calls == []
     assert result["stage_status"]["narrative"] == "FAIL"
     assert result["stage_status"]["panel_validation"] == "SKIPPED_AFTER_FAILURE"
+
+
+def test_timeline_needing_human_review_continues_to_gate3_resolution() -> None:
+    assert timeline_can_reach_gate3("NEEDS_HUMAN_REVIEW") is True
+    assert timeline_can_reach_gate3("APPROVED") is True
+    assert timeline_can_reach_gate3("FAILED") is False
+
+
+def test_review_response_supplies_bundle_when_pipeline_status_is_stale() -> None:
+    assert resolved_timeline_bundle_id(
+        {"approved_timeline_bundle_id": None},
+        {"approved_timeline_bundle_id": "timeline-bundle-1"},
+    ) == "timeline-bundle-1"
+
+
+def test_provider_usage_sums_only_allowlisted_metadata() -> None:
+    executions = [
+        SimpleNamespace(prompt_tokens=10, completion_tokens=4, total_tokens=14),
+        SimpleNamespace(prompt_tokens=20, completion_tokens=5, total_tokens=25),
+        SimpleNamespace(prompt_tokens=None, completion_tokens=None, total_tokens=None),
+    ]
+
+    assert summarize_provider_usage(executions) == {
+        "calls": 3,
+        "reported_calls": 2,
+        "prompt_tokens": 30,
+        "completion_tokens": 9,
+        "total_tokens": 39,
+    }
 
 
 def test_secrets_are_redacted() -> None:

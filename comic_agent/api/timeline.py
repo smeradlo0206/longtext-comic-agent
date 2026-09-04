@@ -267,16 +267,6 @@ def _safe_bundle_payload(payload: dict[str, object]) -> dict[str, object]:
     return safe
 
 
-@router.get("/projects/{project_id}/agent-runs", response_model=list[AgentRunV1])
-def list_project_agent_runs(
-    project_id: str,
-    repository: RepositoryDep,
-) -> list[AgentRunV1]:
-    """List single-chunk and aggregate agent executions for one project."""
-
-    return repository.list_agent_runs_for_project(project_id)
-
-
 def _resolve_source_chunks(
     analysis_input: TimelineAnalysisInputV1,
     project_id: str,

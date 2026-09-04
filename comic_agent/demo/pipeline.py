@@ -1,6 +1,7 @@
 """Stable end-to-end comic demo orchestration, isolated from production approval."""
 
 import json
+import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -140,6 +141,8 @@ class ComicDemoPipeline:
                 timeline=timeline,
             )
         except (TimeoutError, DemoRecoverableCuratorError, ValidationError, ValueError) as exc:
+            if provider_mode == "real":
+                raise
             storybible_source = "DEMO_FALLBACK"
             fallback_reason = f"{type(exc).__name__}: {exc}"
             storybible = DemoStoryBibleBuilder().build(
@@ -149,13 +152,25 @@ class ComicDemoPipeline:
                 narrative_events=events,
                 timeline=timeline,
             )
-        scenes = ComicPlanningService().plan(storybible=storybible, timeline=timeline)
+        scenes = ComicPlanningService().plan(
+            storybible=storybible,
+            timeline=timeline,
+            events=events,
+        )
+        panel_planner = PanelPlanningService()
         panels = [
-            PanelPlanningService().plan(scene=scene, storybible=storybible) for scene in scenes
+            panel_planner.plan(
+                scene=scene,
+                storybible=storybible,
+                index=index,
+                source_chunks=parsed.chunks,
+            )
+            for index, scene in enumerate(scenes)
         ]
         run_id = stable_id("comic-demo-run", project_id, provider_mode)[:24]
         artifact_dir = output_root / run_id
-        artifact_dir.mkdir(parents=True, exist_ok=True)
+        artifact_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(artifact_dir, 0o700)
         review_findings = {"gate2": gate2, "gate3": gate3}
         summary = {
             "status": "SUCCESS",
@@ -226,6 +241,7 @@ class ComicDemoPipeline:
         else:
             summary["html_status"] = "SUCCESS"
             self._write_json(artifact_dir / "summary.json", summary)
+        self._harden_artifacts(artifact_dir)
         return DemoRunResult(artifact_dir=artifact_dir, summary=summary)
 
     @staticmethod
@@ -291,6 +307,14 @@ class ComicDemoPipeline:
     @staticmethod
     def _write_json(path: Path, value: Any) -> None:
         path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.chmod(path, 0o600)
+
+    @staticmethod
+    def _harden_artifacts(root: Path) -> None:
+        for path in [root, *root.rglob("*")]:
+            if path.is_symlink():
+                raise ValueError(f"demo artifact tree contains a symlink: {path}")
+            os.chmod(path, 0o700 if path.is_dir() else 0o600)
 
     @staticmethod
     def _report(

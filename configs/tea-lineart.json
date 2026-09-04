@@ -1,0 +1,48 @@
+{
+  "schema_version": "2.0",
+  "job_id": "tea-lineart-reference",
+  "source_script": "男生坐在茶桌前喝茶。",
+  "comic_style": "淡金色单色线稿漫画，白色背景，线条细腻干净",
+  "global_prompt": "生成全新的单幅漫画分镜，保持角色设计和统一线稿表现。",
+  "quality_constraints": [
+    "采用单幅连续画面",
+    "画面只包含一个完整人物",
+    "人物清晰端起茶杯",
+    "人物肢体和手指结构自然",
+    "背景保持纯净白色"
+  ],
+  "selected_assets": [
+    {
+      "slot": "CHAR_A",
+      "asset_id": "wechat-004",
+      "entity_id": "character.tea_lead",
+      "role": "character_identity",
+      "description": "主要角色的长发、古装人物设计和身份特征"
+    }
+  ],
+  "generation": {
+    "model_id": "black-forest-labs/FLUX.2-klein-4B",
+    "width": 1024,
+    "height": 1440,
+    "steps": 4,
+    "guidance_scale": 1.0,
+    "seed": 2026082102,
+    "attempts": 2,
+    "device": "cuda:0",
+    "dtype": "bfloat16"
+  },
+  "shots": [
+    {
+      "shot_id": "tea-001",
+      "prompt": "CHAR_A 坐在茶桌前，右手端起茶杯饮茶。",
+      "references": [
+        {
+          "slot": "CHAR_A",
+          "asset_id": "wechat-004",
+          "role": "character_identity",
+          "purpose": "保持角色的长发、古装设计和面部身份特征，动作由当前分镜决定"
+        }
+      ]
+    }
+  ]
+}

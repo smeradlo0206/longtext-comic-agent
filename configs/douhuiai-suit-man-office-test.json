@@ -1,0 +1,60 @@
+{
+  "schema_version": "2.0",
+  "job_id": "douhuiai-suit-man-office-test-v1",
+  "source_script": "夜晚的高层办公室里，戴黑框眼镜的黑发男子坐在窗边喝咖啡。",
+  "comic_style": "精致日系漫画插画，完整上色，清晰稳定的线条，克制的赛璐璐阴影，电影感夜景照明",
+  "global_prompt": "只使用角色参考图锁定人物身份和服装；场景完全根据文字生成，不使用场景参考图。",
+  "quality_constraints": [
+    "只生成一张铺满画布的横向单幅漫画场景",
+    "画面只出现一名成年男性",
+    "严格保持角色凌乱卷曲的黑发、黑框眼镜、清瘦脸型和修长身材",
+    "严格保持深色合身西装、白衬衫、黑色领带和黑色皮鞋",
+    "人物自然坐在窗边扶手椅中，一只手端无文字的咖啡杯",
+    "高层办公室、落地窗和夜晚城市灯光具有清楚空间层次",
+    "不要复刻参考图的灰色设定表背景、并排站姿或多视图排版",
+    "不出现第二个人、分镜格、边框、文字、对白框、水印、签名或标志",
+    "双手、手指、眼镜和面部结构自然完整"
+  ],
+  "selected_assets": [
+    {
+      "slot": "CHAR_SUIT_MAN",
+      "asset_id": "asset-002",
+      "entity_id": "character.black-haired-suit-man",
+      "role": "character_identity",
+      "description": "男性角色的黑色卷发、黑框眼镜、清瘦脸型、修长比例和深色西装造型"
+    }
+  ],
+  "generation": {
+    "model_id": "black-forest-labs/FLUX.2-klein-4B",
+    "width": 1024,
+    "height": 768,
+    "steps": 4,
+    "guidance_scale": 1.0,
+    "seed": 2026082601,
+    "attempts": 2,
+    "device": "cuda:0",
+    "dtype": "bfloat16"
+  },
+  "visual_qa": {
+    "enabled": true,
+    "latency_budget_seconds": 60.0,
+    "min_dynamic_range": 0.12,
+    "min_edge_energy": 0.015,
+    "min_reference_similarity": 0.01,
+    "max_auto_repairs": 1
+  },
+  "shots": [
+    {
+      "shot_id": "01-office-coffee",
+      "prompt": "横向中全景构图：夜晚的现代高层办公室，深蓝色天空与城市灯光透过落地窗映入室内。CHAR_SUIT_MAN 独自坐在窗边的深色扶手椅中，身体略微侧向镜头，一只手自然端着白色无字咖啡杯，另一只手搭在扶手上，平静地望向窗外。角色的头部、上半身、双手和腿部清晰可见，是画面唯一人物。",
+      "references": [
+        {
+          "slot": "CHAR_SUIT_MAN",
+          "asset_id": "asset-002",
+          "role": "character_identity",
+          "purpose": "锁定黑色卷发、黑框眼镜、清瘦脸型、修长身材和深色西装，仅改变姿势与背景"
+        }
+      ]
+    }
+  ]
+}

@@ -138,14 +138,14 @@ def test_settings_load_openai_compatible_provider_environment(
     assert settings.timeline_llm_max_retries == 1
 
 
-def test_llm_output_token_budget_defaults_to_8000_and_honors_environment(
+def test_llm_output_token_budget_defaults_to_16000_and_honors_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("LLM_MAX_OUTPUT_TOKENS", raising=False)
-    assert Settings(_env_file=None).llm_max_output_tokens == 8000
+    assert Settings(_env_file=None).llm_max_output_tokens == 16_000
 
-    monkeypatch.setenv("LLM_MAX_OUTPUT_TOKENS", "8000")
-    assert Settings(_env_file=None).llm_max_output_tokens == 8000
+    monkeypatch.setenv("LLM_MAX_OUTPUT_TOKENS", "16000")
+    assert Settings(_env_file=None).llm_max_output_tokens == 16_000
 
 
 def test_real_provider_sends_configured_8000_output_token_budget() -> None:

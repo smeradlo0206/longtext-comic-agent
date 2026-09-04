@@ -1,6 +1,8 @@
 """Application configuration."""
 
 from functools import lru_cache
+from pathlib import Path
+from typing import Literal
 
 from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -14,6 +16,13 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
 
     app_name: str = "longtext-comic-agent"
+    workspace_root: Path = Field(default=Path("."), validation_alias="WORKSPACE_ROOT")
+    image_queue_root: Path = Field(default=Path("queue"), validation_alias="IMAGE_QUEUE_ROOT")
+    image_run_root: Path = Field(default=Path("runs"), validation_alias="IMAGE_RUN_ROOT")
+    flux_model_path: Path = Field(
+        default=Path("models/FLUX.2-klein-4B"),
+        validation_alias="FLUX_MODEL_PATH",
+    )
     database_url: str = Field(
         default="sqlite+pysqlite:///./comic_agent.db",
         validation_alias="DATABASE_URL",
@@ -126,6 +135,11 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="LLM_RESPONSE_FORMAT",
     )
+    llm_thinking_mode: Literal["enabled", "disabled"] | None = Field(
+        default=None,
+        validation_alias="LLM_THINKING_MODE",
+        description="Optional OpenAI-compatible thinking toggle for structured calls.",
+    )
     narrative_window_min_slice_chars: int = Field(
         default=200,
         ge=16,
@@ -154,7 +168,7 @@ class Settings(BaseSettings):
         validation_alias="PROVIDER_CAPABILITY_TTL_SECONDS",
     )
     llm_max_output_tokens: int = Field(
-        default=8000,
+        default=16_000,
         ge=1,
         le=100_000,
         validation_alias="LLM_MAX_OUTPUT_TOKENS",
@@ -176,7 +190,7 @@ class Settings(BaseSettings):
         validation_alias="INTERNAL_DEMO_MAX_REAL_EVENT_CHUNKS_PER_RUN",
     )
     internal_demo_max_import_chars: int = Field(
-        default=20000,
+        default=120000,
         validation_alias="INTERNAL_DEMO_MAX_IMPORT_CHARS",
     )
 

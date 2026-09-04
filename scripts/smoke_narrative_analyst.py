@@ -225,7 +225,7 @@ def main() -> None:
     parser.add_argument("--mode", required=True)
     parser.add_argument("--project-id", default="narrative-analyst-smoke")
     parser.add_argument("--txt-path", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, default=Path("output/evaluations"))
+    parser.add_argument("--output-dir", type=Path, default=Path("runs/evaluations"))
     parser.add_argument("--chunk-limit", type=int, default=3)
     parser.add_argument("--chunk-offset", type=int, default=0)
     parser.add_argument("--max-chars-per-chunk", type=int, default=DEFAULT_MAX_CHARS_PER_CHUNK)

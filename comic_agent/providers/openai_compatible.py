@@ -5,7 +5,7 @@ import re
 import socket
 import ssl
 from collections.abc import Mapping
-from typing import Any, Protocol, TypeVar
+from typing import Any, Literal, Protocol, TypeVar
 
 import httpx
 from pydantic import BaseModel, SecretStr, ValidationError
@@ -34,6 +34,7 @@ class OpenAICompatibleProvider:
         model: str,
         timeout_seconds: float = 60,
         max_retries: int = 0,
+        thinking_mode: Literal["enabled", "disabled"] | None = None,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self._endpoint = f"{base_url.rstrip('/')}/chat/completions"
@@ -41,7 +42,10 @@ class OpenAICompatibleProvider:
         self._model = model
         self._timeout_seconds = timeout_seconds
         self._max_retries = max_retries
+        self._thinking_mode = thinking_mode
         self._transport = transport
+        self._last_execution_metadata: ProviderExecutionMetadataV1 | None = None
+        self._execution_history: list[ProviderExecutionMetadataV1] = []
 
     def structured_generate(
         self,
@@ -53,12 +57,52 @@ class OpenAICompatibleProvider:
         payload = dict(request)
         payload["model"] = self._model
         payload["response_format"] = {"type": "json_object"}
+        if self._thinking_mode is not None:
+            payload["thinking"] = {"type": self._thinking_mode}
         headers = {
             "Authorization": f"Bearer {self._api_key.get_secret_value()}",
             "Content-Type": "application/json",
         }
         response = self._post_with_retry(headers, payload)
-        return output_model.model_validate_json(self._message_content(response.json()))
+        response_payload = response.json()
+        self._record_execution_metadata(response_payload, output_model)
+        return output_model.model_validate_json(self._message_content(response_payload))
+
+    def last_execution_metadata(self) -> ProviderExecutionMetadataV1 | None:
+        """Return allowlisted usage metadata from the latest call."""
+
+        return self._last_execution_metadata
+
+    def execution_history(self) -> list[ProviderExecutionMetadataV1]:
+        """Return a copy of allowlisted per-call metadata for local accounting."""
+
+        return list(self._execution_history)
+
+    def _record_execution_metadata(
+        self, response_payload: object, output_model: type[BaseModel]
+    ) -> None:
+        payload = response_payload if isinstance(response_payload, dict) else {}
+        choices = payload.get("choices")
+        first = choices[0] if isinstance(choices, list) and choices else {}
+        first_choice = first if isinstance(first, dict) else {}
+        usage = payload.get("usage")
+        usage_payload = usage if isinstance(usage, dict) else {}
+
+        def token(name: str) -> int | None:
+            value = usage_payload.get(name)
+            return value if isinstance(value, int) and value >= 0 else None
+
+        finish_reason = first_choice.get("finish_reason")
+        metadata = ProviderExecutionMetadataV1(
+            selected_output_mode=StructuredOutputMode.JSON_OBJECT,
+            finish_reason=finish_reason if isinstance(finish_reason, str) else None,
+            prompt_tokens=token("prompt_tokens"),
+            completion_tokens=token("completion_tokens"),
+            total_tokens=token("total_tokens"),
+            expected_output_schema=output_model.__name__,
+        )
+        self._last_execution_metadata = metadata
+        self._execution_history.append(metadata)
 
     def _post_with_retry(
         self, headers: dict[str, str], payload: dict[str, object]
@@ -100,6 +144,8 @@ class OpenAICompatibleProvider:
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
 ProviderDiagnostics = dict[str, object]
 MAX_TIMEOUT_ATTEMPTS = 2
+READINESS_PROBE_MAX_TOKENS = 512
+SCHEMA_PROBE_MAX_TOKENS = 2048
 
 
 class ProviderResponseError(ValueError):
@@ -159,7 +205,8 @@ class OpenAICompatibleLLMProvider:
         response_format: str | None = None,
         structured_output_policy: StructuredOutputPolicy = StructuredOutputPolicy.JSON_OBJECT_ONLY,
         timeout_seconds: int = 60,
-        max_output_tokens: int = 8000,
+        max_output_tokens: int = 16_000,
+        thinking_mode: Literal["enabled", "disabled"] | None = None,
         http_client: HttpClient | None = None,
     ) -> None:
         if api_key is None or api_key.strip() == "":
@@ -172,8 +219,10 @@ class OpenAICompatibleLLMProvider:
         self._structured_output_policy = structured_output_policy
         self._capability_profile: ProviderCapabilityProfileV1 | None = None
         self._last_execution_metadata: ProviderExecutionMetadataV1 | None = None
+        self._execution_history: list[ProviderExecutionMetadataV1] = []
         self._timeout_seconds = timeout_seconds
         self._max_output_tokens = max_output_tokens
+        self._thinking_mode = thinking_mode
         self._http_client = http_client or httpx.Client()
 
     def structured_generate(
@@ -193,6 +242,8 @@ class OpenAICompatibleLLMProvider:
         response_format = self._response_format_for(output_mode, output_model)
         if response_format is not None:
             payload["response_format"] = response_format
+        if self._thinking_mode is not None:
+            payload["thinking"] = {"type": self._thinking_mode}
 
         request_attempts = 1
         try:
@@ -239,6 +290,7 @@ class OpenAICompatibleLLMProvider:
             total_tokens=self._diagnostic_int(diagnostics, "usage_total_tokens"),
             expected_output_schema=output_model.__name__,
         )
+        self._execution_history.append(self._last_execution_metadata)
         self._validate_response_content(content, diagnostics)
 
         try:
@@ -281,6 +333,11 @@ class OpenAICompatibleLLMProvider:
         """Return allowlisted metadata from the latest call; never response content."""
 
         return self._last_execution_metadata
+
+    def execution_history(self) -> list[ProviderExecutionMetadataV1]:
+        """Return a copy of allowlisted per-call metadata for local accounting."""
+
+        return list(self._execution_history)
 
     def probe_structured_output(
         self, policy: StructuredOutputPolicy
@@ -426,9 +483,15 @@ class OpenAICompatibleLLMProvider:
                 },
             ],
             "temperature": 0,
-            "max_tokens": 1024 if output_model is not ProviderPreflightResponseV1 else 32,
+            "max_tokens": (
+                SCHEMA_PROBE_MAX_TOKENS
+                if output_model is not ProviderPreflightResponseV1
+                else READINESS_PROBE_MAX_TOKENS
+            ),
             "response_format": self._response_format_for(mode, output_model),
         }
+        if self._thinking_mode is not None:
+            payload["thinking"] = {"type": self._thinking_mode}
         response, attempts = self._post_with_one_timeout_retry(payload)
         try:
             response.raise_for_status()
@@ -450,7 +513,22 @@ class OpenAICompatibleLLMProvider:
                 "structured Provider probe did not return a JSON object",
                 diagnostics={"safe_issue_code": "STRUCTURED_OUTPUT_NOT_OBJECT"},
             )
-        return self._response_diagnostics(response_payload)
+        diagnostics = self._response_diagnostics(response_payload)
+        metadata = ProviderExecutionMetadataV1(
+            selected_output_mode=mode,
+            finish_reason=(
+                diagnostics.get("finish_reason")
+                if isinstance(diagnostics.get("finish_reason"), str)
+                else None
+            ),
+            prompt_tokens=self._diagnostic_int(diagnostics, "usage_prompt_tokens"),
+            completion_tokens=self._diagnostic_int(diagnostics, "usage_completion_tokens"),
+            total_tokens=self._diagnostic_int(diagnostics, "usage_total_tokens"),
+            expected_output_schema=output_model.__name__,
+        )
+        self._last_execution_metadata = metadata
+        self._execution_history.append(metadata)
+        return diagnostics
 
     def _selected_output_mode(self, output_model: type[BaseModel]) -> StructuredOutputMode:
         if self._capability_profile is not None:
@@ -1107,4 +1185,5 @@ def build_openai_compatible_provider(
         structured_output_policy=settings.llm_structured_output_policy,
         timeout_seconds=settings.llm_timeout_seconds,
         max_output_tokens=settings.llm_max_output_tokens,
+        thinking_mode=settings.llm_thinking_mode,
     )

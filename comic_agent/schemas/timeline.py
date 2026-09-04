@@ -71,6 +71,16 @@ class TimelineAnalysisMode(StrEnum):
     LLM = "LLM"
 
 
+class TimelinePairRelation(StrEnum):
+    """Relations exposed by the bounded Timeline pair-inference contract."""
+
+    BEFORE = "BEFORE"
+    AFTER = "AFTER"
+    OVERLAPS = "OVERLAPS"
+    SIMULTANEOUS = "SIMULTANEOUS"
+    UNKNOWN = "UNKNOWN"
+
+
 class TimelinePairInferenceV1(StrictBaseModel):
     """Small Provider-facing contract for one ordered event pair.
 
@@ -78,8 +88,8 @@ class TimelinePairInferenceV1(StrictBaseModel):
     Timeline Agent supplies those deterministically from the approved input.
     """
 
-    schema_version: Literal["1.0"] = Field(default="1.0")
-    relation: TemporalRelation
+    schema_version: Literal["1.0", "1.1"] = Field(default="1.1")
+    relation: TimelinePairRelation
     evidence_indexes: list[int] = Field(default_factory=list, max_length=8)
     confidence: float = Field(ge=0, le=1)
     reasoning_summary: str | None = Field(default=None, min_length=1, max_length=500)
@@ -90,9 +100,9 @@ class TimelinePairInferenceV1(StrictBaseModel):
             raise ValueError("evidence_indexes must be unique")
         if any(index < 0 for index in self.evidence_indexes):
             raise ValueError("evidence_indexes cannot be negative")
-        if self.relation == TemporalRelation.UNKNOWN and self.evidence_indexes:
+        if self.relation == TimelinePairRelation.UNKNOWN and self.evidence_indexes:
             raise ValueError("UNKNOWN relation cannot select evidence")
-        if self.relation != TemporalRelation.UNKNOWN and not self.evidence_indexes:
+        if self.relation != TimelinePairRelation.UNKNOWN and not self.evidence_indexes:
             raise ValueError("known relation requires at least one evidence index")
         return self
 

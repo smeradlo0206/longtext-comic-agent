@@ -1,8 +1,11 @@
 from pathlib import Path
 
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
+from comic_agent import __version__
 from comic_agent.main import create_app
+from flux2_agent import __version__ as flux2_version
 
 
 def test_health_endpoint(tmp_path: Path) -> None:
@@ -12,6 +15,30 @@ def test_health_endpoint(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_app_version_and_routes_have_one_authoritative_registration(
+    tmp_path: Path,
+) -> None:
+    app = create_app(database_url=f"sqlite+pysqlite:///{tmp_path / 'api.db'}")
+    route_keys = [
+        (method, route.path)
+        for route in app.routes
+        if isinstance(route, APIRoute)
+        for method in route.methods
+    ]
+    with TestClient(app) as client:
+        schema = client.get("/openapi.json").json()
+
+    operation_ids = [
+        operation["operationId"]
+        for path_item in schema["paths"].values()
+        for operation in path_item.values()
+    ]
+    assert __version__ == flux2_version == "0.4.0"
+    assert schema["info"]["version"] == __version__
+    assert len(route_keys) == len(set(route_keys))
+    assert len(operation_ids) == len(set(operation_ids))
 
 
 def test_console_legacy_readiness_probe_is_not_a_404(tmp_path: Path) -> None:

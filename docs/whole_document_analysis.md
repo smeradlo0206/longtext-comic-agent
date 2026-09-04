@@ -115,7 +115,7 @@ unsupported structured output, or exhausted persisted budget, the terminal state
 `NEEDS_HUMAN_ACTION`: automatic recovery has stopped and Gate 2/Timeline remain unavailable.
 Length recovery and one schema-format repair have independent persisted budgets for each
 source-bounded child; an earlier length recovery never consumes that child’s schema repair.
-The real-provider output cap defaults to 8000 (`LLM_MAX_OUTPUT_TOKENS`) and is
+The real-provider output cap defaults to 16000 (`LLM_MAX_OUTPUT_TOKENS`) and is
 persisted in each new window's budget snapshot; an explicit environment value
 still overrides it.
 Manual real-LLM validation is allowed only after the mock-based checks pass and never records a

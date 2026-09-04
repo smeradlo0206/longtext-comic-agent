@@ -1,0 +1,197 @@
+{
+  "schema_version": "2.0",
+  "job_id": "morning-tea-storyboard-v11",
+  "source_script": "男生起床走到客厅，女生坐着喝茶，之后男生也坐下来一起喝茶，并且对坐聊天",
+  "comic_style": "完整上色的精致日系动画插画，清晰线条，柔和细腻的赛璐璐阴影",
+  "global_prompt": "当前画面只表现当前分镜指定的一个瞬间，不呈现其他时间点；保持同一清晨、同一住宅和连续动作。",
+  "quality_constraints": [
+    "每张严格只生成一个铺满画布的横向场景",
+    "不出现内嵌小图、漫画格线、边框、多格分镜或拼贴",
+    "人物和室内外环境全部完整上色",
+    "男女角色的面部、发型、服装和体型在整个故事中保持一致",
+    "客厅结构、落地窗、沙发和茶几陈设保持一致",
+    "清晨日光方向与整体色调保持连续",
+    "每个镜头严格采用分镜指定的人物数量",
+    "人物肢体、双手和手指结构自然",
+    "茶杯在饮茶镜头中清晰可见并自然握持",
+    "不复刻参考图的黑白线稿媒介或人物原姿势",
+    "不出现文字、对白框、水印或签名"
+  ],
+  "selected_assets": [
+    {
+      "slot": "SCENE_A",
+      "asset_id": "wechat-015",
+      "entity_id": "scene.shared_residence",
+      "role": "scene",
+      "description": "同一住宅的挑高客厅、落地窗、沙发、茶几和空间透视"
+    },
+    {
+      "slot": "CHAR_M",
+      "asset_id": "wechat-004",
+      "entity_id": "character.morning_man",
+      "role": "character_identity",
+      "description": "男性角色的面部、长发、服装轮廓和人物气质"
+    },
+    {
+      "slot": "CHAR_F",
+      "asset_id": "wechat-009",
+      "entity_id": "character.morning_woman",
+      "role": "character_identity",
+      "description": "女性角色的面部、长发、蝴蝶结发饰、校服和人物比例"
+    }
+  ],
+  "generation": {
+    "model_id": "black-forest-labs/FLUX.2-klein-4B",
+    "width": 1024,
+    "height": 768,
+    "steps": 4,
+    "guidance_scale": 1.0,
+    "seed": 2026082106,
+    "attempts": 2,
+    "device": "cuda:0",
+    "dtype": "bfloat16"
+  },
+  "contact_sheet": {
+    "columns": 3,
+    "filename": "storyboard-2x3.png"
+  },
+  "shots": [
+    {
+      "shot_id": "01-wake",
+      "continuity_from": "02-walk",
+      "continuity_crop": {
+        "left": 0.3,
+        "top": 0.34,
+        "right": 0.48,
+        "bottom": 0.68
+      },
+      "prompt": "单一全幅卧室场景，只表现这一个瞬间：与后续镜头属于同一住宅风格的独立卧室里，清晨，图1中的男性角色刚刚醒来，尚未站起；他在画面前景坐在床沿，臀部明确接触床垫边缘，双脚落地，上身挺起。人体严格只有两条手臂和两只手，双手空着，不拿茶杯或其他物品，一手撑在床垫上，另一手轻揉眼睛。床、枕头和床头柜清楚可见，人物约占画面高度一半。画面只出现男生一人，横向中景，晨光从卧室窗户照入，不出现客厅沙发和茶几。",
+      "references": [],
+      "seed": 2026082107
+    },
+    {
+      "shot_id": "02-walk",
+      "continuity_from": "05-tea-together",
+      "continuity_crop": {
+        "left": 0.05,
+        "top": 0.2,
+        "right": 0.52,
+        "bottom": 1.0
+      },
+      "prompt": "单一全幅场景，只表现这一个瞬间：CHAR_M 从走廊进入 SCENE_A 的挑高客厅，迈步走向沙发和茶几区域。画面只出现男生一人，以宽幅中远景清楚展示他的行走动作、客厅落地窗和前方沙发。",
+      "references": [
+        {
+          "slot": "SCENE_A",
+          "asset_id": "wechat-015",
+          "role": "scene",
+          "purpose": "保持挑高客厅、落地窗、沙发、茶几和空间透视稳定，并生成完整上色的场景"
+        },
+        {
+          "slot": "CHAR_M",
+          "asset_id": "wechat-004",
+          "role": "character_identity",
+          "purpose": "保持男性面部、长发、服装和体型与上一镜头一致，采用自然行走动作"
+        }
+      ]
+    },
+    {
+      "shot_id": "03-girl-tea",
+      "continuity_from": "05-tea-together",
+      "continuity_crop": {
+        "left": 0.48,
+        "top": 0.18,
+        "right": 0.95,
+        "bottom": 1.0
+      },
+      "prompt": "单一全幅场景，只表现这一个瞬间：CHAR_F 独自坐在 SCENE_A 靠近落地窗的沙发上，右手自然端起茶杯靠近嘴边喝茶，茶几上摆着茶壶和另一只空茶杯。画面只出现女生一人，横向中远景，窗外花园清晰可见。",
+      "references": [
+        {
+          "slot": "SCENE_A",
+          "asset_id": "wechat-015",
+          "role": "scene",
+          "purpose": "保持挑高客厅、落地窗、沙发、茶几、花园窗景和晨间光线稳定"
+        },
+        {
+          "slot": "CHAR_F",
+          "asset_id": "wechat-009",
+          "role": "character_identity",
+          "purpose": "保持女性面部、长发、蝴蝶结发饰、校服和人物比例，动作改为坐着喝茶"
+        }
+      ]
+    },
+    {
+      "shot_id": "04-arrive",
+      "continuity_from": "02-walk",
+      "prompt": "单一全幅场景，只表现这一个瞬间：在 SCENE_A 的沙发茶几区域，CHAR_M 刚走到茶几另一侧并弯曲膝盖准备坐下，身体仍离开座垫、尚未落座，双手空着且不拿茶杯；CHAR_F 仍坐在原沙发上，只有女生手持茶杯并抬头看向他。画面严格只出现这两个人，横向双人中景，动作关系清楚。",
+      "references": [
+        {
+          "slot": "SCENE_A",
+          "asset_id": "wechat-015",
+          "role": "scene",
+          "purpose": "保持与前面镜头相同的客厅、沙发、茶几、落地窗和光线"
+        },
+        {
+          "slot": "CHAR_M",
+          "asset_id": "wechat-004",
+          "role": "character_identity",
+          "purpose": "保持男性面部、长发、服装和体型稳定，动作改为走到沙发旁准备坐下"
+        },
+        {
+          "slot": "CHAR_F",
+          "asset_id": "wechat-009",
+          "role": "character_identity",
+          "purpose": "保持女性面部、长发、发饰、校服和体型稳定，仍坐着并看向男生"
+        }
+      ]
+    },
+    {
+      "shot_id": "05-tea-together",
+      "prompt": "单一全幅场景，只表现这一个瞬间：CHAR_M 和 CHAR_F 已经分别坐在 SCENE_A 茶几两侧相对的沙发座位上，两人各自自然端着茶杯一起喝茶，茶壶位于两人之间。画面严格只出现这两个人，横向平衡构图，两张脸和两只茶杯清晰可见。",
+      "references": [
+        {
+          "slot": "SCENE_A",
+          "asset_id": "wechat-015",
+          "role": "scene",
+          "purpose": "保持同一客厅的沙发对坐关系、茶几、茶具、落地窗和晨间光线"
+        },
+        {
+          "slot": "CHAR_M",
+          "asset_id": "wechat-004",
+          "role": "character_identity",
+          "purpose": "保持男性面部、长发、服装和体型稳定，坐下并自然端杯喝茶"
+        },
+        {
+          "slot": "CHAR_F",
+          "asset_id": "wechat-009",
+          "role": "character_identity",
+          "purpose": "保持女性面部、长发、发饰、校服和体型稳定，坐在对面自然端杯喝茶"
+        }
+      ]
+    },
+    {
+      "shot_id": "06-talk",
+      "continuity_from": "05-tea-together",
+      "prompt": "单一全幅场景，只表现这一个瞬间：CHAR_M 和 CHAR_F 继续对坐在 SCENE_A 的茶几两侧聊天，茶杯放在手边；男生微笑着做一个自然手势，女生看着他回应，神情放松。画面严格只出现这两个人，横向双人中景，体现对视和交流。",
+      "references": [
+        {
+          "slot": "SCENE_A",
+          "asset_id": "wechat-015",
+          "role": "scene",
+          "purpose": "保持与上一镜头完全一致的客厅、对坐位置、茶几、茶具、落地窗和光线"
+        },
+        {
+          "slot": "CHAR_M",
+          "asset_id": "wechat-004",
+          "role": "character_identity",
+          "purpose": "保持男性面部、长发、服装和体型稳定，改为微笑交谈与自然手势"
+        },
+        {
+          "slot": "CHAR_F",
+          "asset_id": "wechat-009",
+          "role": "character_identity",
+          "purpose": "保持女性面部、长发、发饰、校服和体型稳定，坐在对面注视男生并回应"
+        }
+      ]
+    }
+  ]
+}

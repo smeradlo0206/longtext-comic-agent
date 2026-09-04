@@ -6,6 +6,20 @@ from comic_agent.schemas.comic_planning import (
     PanelPlanV1,
     ScenePlanV1,
 )
+from comic_agent.schemas.comic_production import (
+    ComicPageArtifactV1,
+    ComicPanelProposalV1,
+    ComicPerformanceV1,
+    ComicPlannerMode,
+    ComicProductionManifestV1,
+    ComicProductionRequestV1,
+    ComicProductionRunV1,
+    ComicRunStatus,
+    ComicStageTimingsV1,
+    ComicStoryboardProposalV1,
+    DialogueLayoutSettingsV1,
+    IdentityAnchorMode,
+)
 from comic_agent.schemas.continuity import CharacterStateV1
 from comic_agent.schemas.evaluation import (
     KnowledgeStateEvaluationCaseBatchV1,
@@ -35,6 +49,17 @@ from comic_agent.schemas.evaluation import (
     KnowledgeStateTextMatchPolicy,
     KnowledgeTemporalAnchorExpectationKind,
     KnowledgeTemporalAnchorExpectationV1,
+)
+from comic_agent.schemas.image_workflow import (
+    GenerationSettings,
+    IdentityAnchorSpec,
+    QueueItem,
+    ReferenceCatalog,
+    ReferenceLibraryPolicy,
+    SelectedAsset,
+    StoryboardRequest,
+    VisualQASettings,
+    WorkflowJob,
 )
 from comic_agent.schemas.narrative import (
     ActorResolutionStatus,
@@ -89,7 +114,17 @@ from comic_agent.schemas.narrative import (
     TemporalRelationProposalV1,
     VerificationStatus,
 )
-from comic_agent.schemas.qa import QAResultV1, RepairPlanV1
+from comic_agent.schemas.production import PromptSpecV1
+from comic_agent.schemas.qa import (
+    PanelTextQAFindingV1,
+    PanelTextQAInferenceFindingV1,
+    PanelTextQAInferenceV1,
+    PanelTextQAIssueCode,
+    PanelTextQAIssueSeverity,
+    PanelTextQAProposalV1,
+    QAResultV1,
+    RepairPlanV1,
+)
 from comic_agent.schemas.recovery import (
     RecoveryAttemptStatus,
     RecoveryAttemptV1,
@@ -225,7 +260,7 @@ from comic_agent.schemas.timeline import (
     TimelineProviderDiagnosticsV1,
     TimelineRecoveryBudgetV1,
 )
-from comic_agent.schemas.visual import PanelSpecV1
+from comic_agent.schemas.visual import PageSpecV1, PanelSpecV1, PanelTextOverlayV1
 from comic_agent.schemas.workflow import (
     AgentInputRefV1,
     AgentOutputRefV1,
@@ -287,6 +322,20 @@ __all__ = [
     "ComicBeatProposalV1",
     "ComicPlanningInputV1",
     "ComicBeatPurpose",
+    "ComicPageArtifactV1",
+    "ComicPanelProposalV1",
+    "ComicPerformanceV1",
+    "ComicPlannerMode",
+    "ComicProductionManifestV1",
+    "ComicProductionRequestV1",
+    "ComicProductionRunV1",
+    "ComicRunStatus",
+    "ComicStoryboardProposalV1",
+    "ComicStageTimingsV1",
+    "DialogueLayoutSettingsV1",
+    "IdentityAnchorMode",
+    "GenerationSettings",
+    "IdentityAnchorSpec",
     "CreatureSubtype",
     "EpistemicStatus",
     "EpistemicBasis",
@@ -349,8 +398,14 @@ __all__ = [
     "NarrativeAnalysisProposalSourceV1",
     "NarrativeAnalysisResultV1",
     "PanelSpecV1",
+    "PanelTextOverlayV1",
+    "PageSpecV1",
+    "PromptSpecV1",
     "ProfileUpdateProposalV1",
     "ProjectSpecV1",
+    "QueueItem",
+    "ReferenceCatalog",
+    "ReferenceLibraryPolicy",
     "ProviderResultV1",
     "ProviderType",
     "ProviderCircuitStateV1",
@@ -365,6 +420,12 @@ __all__ = [
     "StructuredOutputMode",
     "StructuredOutputPolicy",
     "QAResultV1",
+    "PanelTextQAFindingV1",
+    "PanelTextQAInferenceFindingV1",
+    "PanelTextQAInferenceV1",
+    "PanelTextQAIssueCode",
+    "PanelTextQAIssueSeverity",
+    "PanelTextQAProposalV1",
     "RecordStatus",
     "RealityLayer",
     "RepairPlanV1",
@@ -423,6 +484,7 @@ __all__ = [
     "SourceTextAuditSnapshotV1",
     "NarrativeAnalysisReviewRouteV1",
     "SceneSpecV1",
+    "SelectedAsset",
     "ScenePlanV1",
     "PanelPlanV1",
     "SourceChapterV1",
@@ -471,6 +533,7 @@ __all__ = [
     "RelationshipSupportLevel",
     "RelationshipTemporalAnchorV1",
     "StoryBeatV1",
+    "StoryboardRequest",
     "StoryEntityKind",
     "StoryEntityProfileV1",
     "StoryEntityStateV1",
@@ -485,6 +548,8 @@ __all__ = [
     "WorldRuleV1",
     "VerificationStatus",
     "WorkflowRunV1",
+    "WorkflowJob",
+    "VisualQASettings",
     "ApprovedTimelineBundleV1",
     "Gate3HumanReviewInputV1",
     "Gate3HumanReviewRequestV1",

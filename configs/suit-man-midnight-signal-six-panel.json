@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.0",
+  "document_id": "AUTO",
+  "chapter_ids": [],
+  "planner_mode": "DETERMINISTIC_EXTRACTIVE",
+  "panels_per_page": 6,
+  "max_pages": 1,
+  "comic_style": "完整上色的精致日系悬疑漫画，清晰稳定的线条，克制的赛璐璐阴影，深蓝雨夜与暗红应急灯形成统一电影感照明",
+  "global_prompt": "六个镜头发生在同一个雨夜并保持时间与空间连续；每次只生成当前时刻的一张独立横向分镜；严格保持男子的脸型、卷曲黑发、黑框眼镜、修长身材、深色西装、白衬衫、黑领带和黑皮鞋一致；底图不要生成文字、气泡、分格或水印",
+  "quality_constraints": [
+    "每一格只出现同一名成年男子，不得增加其他人物或复制角色",
+    "男子始终保持凌乱卷曲的黑发、黑框眼镜、清瘦脸型、修长比例、深色合身西装、白衬衫、黑领带和黑皮鞋",
+    "办公室、走廊、楼梯出口和天台属于同一栋高层建筑，雨夜城市天际线保持空间与天气连续",
+    "前三格以深蓝夜景为主，停电后以暗红应急灯为辅，第六格城市灯光重新亮起",
+    "人物动作、双手、眼镜、脸部和身体结构必须清楚自然",
+    "严格按照单格剧情表现停电、红灯、走廊、楼顶与复电，不要把多个时刻画进同一格",
+    "画面完整上色，不出现多格拼图、边框、底图文字、乱码、对白框、水印或签名"
+  ],
+  "selected_assets": [
+    {
+      "slot": "CHAR_SIGNAL_MAN",
+      "asset_id": "asset-002",
+      "entity_id": "character.black-haired-suit-man",
+      "role": "character_identity",
+      "description": "锁定成年男子的卷曲黑发、黑框眼镜、清瘦脸型、修长比例、深色西装、白衬衫、黑领带和黑皮鞋",
+      "display_name": "黑发男子"
+    }
+  ],
+  "reference_policy": {
+    "mode": "APPROVED_LIBRARY",
+    "require_canonical": true
+  },
+  "generation": {
+    "model_id": "black-forest-labs/FLUX.2-klein-4B",
+    "width": 1024,
+    "height": 576,
+    "steps": 4,
+    "guidance_scale": 1.0,
+    "seed": 2026082602,
+    "attempts": 1,
+    "device": "cuda:0",
+    "dtype": "bfloat16"
+  },
+  "visual_qa": {
+    "enabled": true,
+    "latency_budget_seconds": 60.0,
+    "min_dynamic_range": 0.12,
+    "min_edge_energy": 0.015,
+    "min_reference_similarity": 0.01,
+    "max_auto_repairs": 1
+  },
+  "dialogue_layout": {
+    "enabled": true,
+    "font_path": null,
+    "min_font_size": 18,
+    "max_font_size": 32,
+    "bubble_padding": 18,
+    "max_bubble_width_ratio": 0.38
+  },
+  "continuity_enabled": true,
+  "identity_anchor_mode": "AUTO"
+}

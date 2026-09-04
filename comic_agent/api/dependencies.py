@@ -7,6 +7,7 @@ from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 
 from comic_agent.repositories.agent_run_repository import AgentRunRepository
+from comic_agent.repositories.comic_production_repository import ComicProductionRepository
 from comic_agent.repositories.narrative_analysis_recovery_repository import (
     NarrativeAnalysisRecoveryRepository,
 )
@@ -40,6 +41,12 @@ def get_agent_run_repository(session: SessionDep) -> AgentRunRepository:
     """Return an AgentRun repository bound to the request session."""
 
     return AgentRunRepository(session)
+
+
+def get_comic_production_repository(session: SessionDep) -> ComicProductionRepository:
+    """Return comic production persistence bound to the request session."""
+
+    return ComicProductionRepository(session)
 
 
 def get_narrative_analysis_repository(session: SessionDep) -> NarrativeAnalysisRepository:

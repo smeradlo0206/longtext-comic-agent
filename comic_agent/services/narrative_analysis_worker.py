@@ -584,12 +584,17 @@ class NarrativeAnalysisWorker:
         ]
         if len(chunks) != len(owned_ids):
             return
+        child_indices = self._child_window_indices(
+            failed_window,
+            count=len(chunks),
+            suffix="split",
+        )
         child_windows = [
             NarrativeAnalysisWindowV1(
                 analysis_window_id=f"{failed_window.analysis_window_id}:split:{index}",
                 analysis_run_id=failed_window.analysis_run_id,
                 mode=failed_window.mode,
-                window_index=(failed_window.window_index + 1) * 100_000 + index,
+                window_index=child_indices[index],
                 chunk_ids=[chunk.chunk_id],
                 owned_chunk_ids=[chunk.chunk_id],
                 status=NarrativeAnalysisWindowStatus.PENDING,
@@ -684,12 +689,17 @@ class NarrativeAnalysisWorker:
             prefer_natural_boundary=failed_window.mode == "event_extraction",
         )
         boundaries = [(start, midpoint), (midpoint, end)]
+        child_indices = self._child_window_indices(
+            failed_window,
+            count=len(boundaries),
+            suffix="slice",
+        )
         child_windows = [
             NarrativeAnalysisWindowV1(
                 analysis_window_id=f"{failed_window.analysis_window_id}:slice:{index}",
                 analysis_run_id=failed_window.analysis_run_id,
                 mode=failed_window.mode,
-                window_index=(failed_window.window_index + 1) * 100_000 + index,
+                window_index=child_indices[index],
                 chunk_ids=[chunk_id],
                 owned_chunk_ids=[chunk_id],
                 status=NarrativeAnalysisWindowStatus.PENDING,
@@ -743,6 +753,36 @@ class NarrativeAnalysisWorker:
         )
         for child in child_windows:
             self._run_window(workflow, run, child, real_llm_requested)
+
+    def _child_window_indices(
+        self,
+        parent: NarrativeAnalysisWindowV1,
+        *,
+        count: int,
+        suffix: str,
+    ) -> list[int]:
+        """Allocate idempotent indices after all planned and recovery windows.
+
+        Planned batches reserve indices in 100000-sized bands. The historical
+        parent-based formula could place a first-batch child at 100000, colliding
+        with the second batch's first planned window. Existing child IDs retain
+        their index after an interrupted split; only missing children consume a
+        new monotonically increasing index.
+        """
+
+        windows = self._analysis_repository.list_windows(parent.analysis_run_id)
+        by_id = {window.analysis_window_id: window.window_index for window in windows}
+        next_index = max((window.window_index for window in windows), default=-1) + 1
+        indices: list[int] = []
+        for index in range(count):
+            child_id = f"{parent.analysis_window_id}:{suffix}:{index}"
+            existing = by_id.get(child_id)
+            if existing is not None:
+                indices.append(existing)
+            else:
+                indices.append(next_index)
+                next_index += 1
+        return indices
 
     @staticmethod
     def _schema_slice_midpoint(

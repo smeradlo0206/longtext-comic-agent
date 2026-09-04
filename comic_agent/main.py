@@ -4,11 +4,14 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import SecretStr
 
+from comic_agent import __version__
 from comic_agent.agents.storybible_curator import StoryBibleCurator
 from comic_agent.agents.timeline_agent import TimelineAgent
 from comic_agent.api.agent_runs import router as agent_runs_router
+from comic_agent.api.comic_production import router as comic_production_router
 from comic_agent.api.documents import router as documents_router
 from comic_agent.api.health import router as health_router
 from comic_agent.api.pipeline import router as pipeline_router
@@ -30,7 +33,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     """Create the FastAPI app with an isolated database binding."""
 
     settings = get_settings()
-    app = FastAPI(title=settings.app_name)
+    app = FastAPI(title=settings.app_name, version=__version__)
     engine = make_engine(database_url or settings.database_url)
     Base.metadata.create_all(engine)
     app.state.engine = engine
@@ -41,6 +44,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
             api_key=settings.llm_api_key or SecretStr(""),
             model=settings.storybible_model,
             timeout_seconds=settings.llm_timeout_seconds,
+            thinking_mode=settings.llm_thinking_mode,
         )
     )
     timeline_model = settings.timeline_model or settings.storybible_model
@@ -68,8 +72,17 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(settings_router)
     app.include_router(timeline_router)
     app.include_router(pipeline_router)
+    app.include_router(comic_production_router)
 
     console_path = Path(__file__).resolve().parents[1] / "web_console" / "index.html"
+    product_path = Path(__file__).resolve().parents[1] / "web_product" / "index.html"
+
+    @app.get("/", include_in_schema=False)
+    @app.get("/product/", include_in_schema=False)
+    def product_page() -> FileResponse:
+        return FileResponse(product_path, media_type="text/html; charset=utf-8")
+
+    app.mount("/product", StaticFiles(directory=product_path.parent, html=True), name="product")
 
     @app.get("/console/", include_in_schema=False)
     @app.get("/console/index.html", include_in_schema=False)

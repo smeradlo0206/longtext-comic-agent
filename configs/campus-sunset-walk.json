@@ -1,0 +1,59 @@
+{
+  "schema_version": "2.0",
+  "job_id": "campus-sunset-walk-v1",
+  "source_script": "校园操场，日落，少女散步",
+  "comic_style": "完整上色的精致日系动画插画，清晰细腻的线条，柔和自然的赛璐璐阴影",
+  "global_prompt": "只表现日落时分校园操场上的一个连续瞬间，气氛温暖安静，人物与环境完整上色。",
+  "quality_constraints": [
+    "只生成一张铺满画布的横向单幅场景",
+    "画面只出现一名少女",
+    "严格保持角色的脸型、橙红色眼睛、棕色超长发和身材比例",
+    "严格保持黑色宽檐帽、红色花饰、紫色流苏、红色蝴蝶结、白衬衫和深色百褶裙",
+    "散步姿态轻松自然，双手和腿部结构正确",
+    "校园跑道、草坪、教学楼和日落天空具有清楚空间层次",
+    "不沿用参考图的白色背景和站立挥手姿势",
+    "不出现多格分镜、边框、文字、对白框、水印或签名"
+  ],
+  "selected_assets": [
+    {
+      "slot": "CHAR_F",
+      "asset_id": "asset-001",
+      "entity_id": "character.sunset_schoolgirl",
+      "role": "character_identity",
+      "description": "少女的面部、棕色超长发、黑色花饰宽檐帽、红蝴蝶结、白衬衫和深色百褶裙"
+    }
+  ],
+  "generation": {
+    "model_id": "black-forest-labs/FLUX.2-klein-4B",
+    "width": 1024,
+    "height": 768,
+    "steps": 4,
+    "guidance_scale": 1.0,
+    "seed": 2026082201,
+    "attempts": 2,
+    "device": "cuda:0",
+    "dtype": "bfloat16"
+  },
+  "visual_qa": {
+    "enabled": true,
+    "latency_budget_seconds": 60.0,
+    "min_dynamic_range": 0.12,
+    "min_edge_energy": 0.015,
+    "min_reference_similarity": 0.01,
+    "max_auto_repairs": 1
+  },
+  "shots": [
+    {
+      "shot_id": "01-campus-sunset-walk",
+      "prompt": "横向全景构图：日落时分的校园操场，橙金色晚霞铺满天空，红色塑胶跑道环绕绿色草坪，远处教学楼和树木被夕阳勾出金色轮廓。CHAR_F 独自在跑道边缓步散步，身体呈自然行走动态，长发和帽饰被微风轻轻带起，她神情轻松地看向夕阳。人物全身清晰可见，是画面唯一角色。",
+      "references": [
+        {
+          "slot": "CHAR_F",
+          "asset_id": "asset-001",
+          "role": "character_identity",
+          "purpose": "锁定少女面部、眼睛、超长棕发、帽子花饰、紫色流苏、红蝴蝶结和校服造型，仅改变背景和行走动作"
+        }
+      ]
+    }
+  ]
+}

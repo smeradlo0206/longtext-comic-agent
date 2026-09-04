@@ -92,4 +92,21 @@ def test_curator_spec_forbids_canonical_writes() -> None:
     assert StoryBibleCurator.spec.can_write_canonical_data is False
     assert StoryBibleCurator.spec.reads == ["StoryBibleContextV1"]
     assert StoryBibleCurator.spec.output_schema == "StoryBibleCuratorProposalV1"
-    assert StoryBibleCurator.spec.max_context_chunks == 3
+    assert StoryBibleCurator.spec.max_context_chunks == 8
+
+
+def test_storybible_context_v11_accepts_eight_chunks_and_reads_v10() -> None:
+    current = StoryBibleContextV1(
+        project_id="project-1",
+        source_chunk_ids=[f"chunk-{index}" for index in range(8)],
+    )
+    historical = StoryBibleContextV1.model_validate(
+        {
+            "schema_version": "1.0",
+            "project_id": "project-1",
+            "source_chunk_ids": ["chunk-1", "chunk-2", "chunk-3"],
+        }
+    )
+
+    assert current.schema_version == "1.1"
+    assert historical.schema_version == "1.0"

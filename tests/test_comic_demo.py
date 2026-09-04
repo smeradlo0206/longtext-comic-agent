@@ -147,12 +147,27 @@ def test_auto_mode_falls_back_without_calling_real_timeline(tmp_path: Path) -> N
     assert runner.timeline_called == 0
 
 
-def test_real_narrative_timeline_and_storybible_fallback(tmp_path: Path) -> None:
+def test_real_mode_refuses_unconfigured_storybible_fallback(tmp_path: Path) -> None:
+    runner = _ProductionRunner(tmp_path)
+    pipeline = ComicDemoPipeline(
+        narrative_adapter=DemoNarrativeAdapter(runner),
+        timeline_adapter=DemoTimelineAdapter(runner),
+    )
+
+    with pytest.raises(DemoRecoverableCuratorError, match="not configured"):
+        pipeline.run(
+            input_path=_source(tmp_path),
+            output_root=tmp_path / "out",
+            provider_mode="real",
+        )
+
+
+def test_auto_mode_may_fallback_when_storybible_is_unconfigured(tmp_path: Path) -> None:
     runner = _ProductionRunner(tmp_path)
     result = ComicDemoPipeline(
         narrative_adapter=DemoNarrativeAdapter(runner),
         timeline_adapter=DemoTimelineAdapter(runner),
-    ).run(input_path=_source(tmp_path), output_root=tmp_path / "out", provider_mode="real")
+    ).run(input_path=_source(tmp_path), output_root=tmp_path / "out", provider_mode="auto")
     assert result.summary["narrative_source"] == "REAL_PROVIDER"
     assert result.summary["timeline_source"] == "REAL_PROVIDER"
     assert result.summary["storybible_source"] == "DEMO_FALLBACK"

@@ -1,0 +1,244 @@
+{
+  "schema_version": "2.2",
+  "job_id": "suit-man-rainy-clocktower-thirty-panel-v1",
+  "source_script": "《零点信号：雨夜钟楼》五章三十格。黑发男子在雨夜停电后追踪红色信号进入老钟楼，修复断开的装置，使城市重新亮起，并在黎明返回办公室。",
+  "comic_style": "完整上色的精致日系动画电影定格插画，清晰稳定线条，克制细腻的赛璐璐阴影，深蓝雨夜、暗红应急灯与黎明晨光构成统一电影感色彩",
+  "global_prompt": "当前只生成一幅铺满整张画布的连续横向场景。全篇只有同一名成年男性，始终保持相同清瘦脸型、卷曲黑发、黑框眼镜、修长身材、深色合身西装、白衬衫、黑领带和黑皮鞋。建筑属于同一座现代城市，时间从午夜雨夜连续推进到黎明。绝对禁止分割画面、并列视图、插入小图、漫画格线、白色隔线、拼贴、重复人物、文字、气泡、水印或签名。",
+  "quality_constraints": [
+    "每张图片只能是一幅无边框的全幅连续场景",
+    "每张只出现同一名成年男性一次，不得出现第二个人或人物复制",
+    "卷曲黑发、黑框眼镜、清瘦脸型、修长比例与整套深色西装在三十格中保持一致",
+    "办公室和办公楼属于同一栋现代高层建筑，钟楼始终为同一座老旧砖石建筑",
+    "第一至二十格保持雨夜，之后雨势减弱，第五页逐渐转为黎明晨光",
+    "红色信号灯、应急灯与信号装置使用一致的暗红光色",
+    "人物动作、双手、眼镜、脸部和身体结构自然完整",
+    "不生成任何文字、数字、标志、对白框、拟声词或水印"
+  ],
+  "selected_assets": [
+    {
+      "slot": "CHAR_CLOCKTOWER_MAN",
+      "asset_id": "asset-002",
+      "entity_id": "character.black-haired-suit-man",
+      "role": "character_identity",
+      "description": "锁定成年男子的卷曲黑发、黑框眼镜、清瘦脸型、修长比例、深色西装、白衬衫、黑领带和黑皮鞋"
+    }
+  ],
+  "reference_policy": {
+    "mode": "APPROVED_LIBRARY",
+    "require_canonical": true
+  },
+  "generation": {
+    "model_id": "black-forest-labs/FLUX.2-klein-4B",
+    "width": 1024,
+    "height": 576,
+    "steps": 4,
+    "guidance_scale": 1.0,
+    "seed": 2026082630,
+    "attempts": 1,
+    "device": "cuda:0",
+    "dtype": "bfloat16"
+  },
+  "visual_qa": {
+    "enabled": true,
+    "latency_budget_seconds": 240.0,
+    "min_dynamic_range": 0.10,
+    "min_edge_energy": 0.012,
+    "min_reference_similarity": 0.01,
+    "max_auto_repairs": 1
+  },
+  "identity_anchors": [
+    {
+      "anchor_id": "anchor_clocktower_man_v1",
+      "slot": "CHAR_CLOCKTOWER_MAN",
+      "asset_id": "asset-002",
+      "entity_id": "character.black-haired-suit-man",
+      "description": "同一名成年男性，卷曲黑发、黑框眼镜、清瘦脸型、修长比例、深色合身西装、白衬衫、黑领带和黑皮鞋",
+      "display_name": "黑发男子",
+      "seed": 2026092630,
+      "width": 576,
+      "height": 1024
+    }
+  ],
+  "shots": [
+    {
+      "shot_id": "p01-office-rain",
+      "prompt": "单一全幅横向场景，绝不分格：午夜将近，雨水沿高层办公室落地窗流下，CHAR_CLOCKTOWER_MAN 独自站在窗边俯瞰灯火明亮的城市，全身与办公室空间清楚可见。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "锁定同一男子的脸、卷曲黑发、黑框眼镜、修长身材和整套深色西装"}],
+      "seed": 2026082630
+    },
+    {
+      "shot_id": "p02-city-blackout",
+      "prompt": "单一全幅横向场景，绝不分格：同一办公室骤然停电，窗外街区由近到远大面积熄灭，CHAR_CLOCKTOWER_MAN 在昏暗窗边警觉抬头，只出现同一个男子一次。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子的黑发、眼镜、脸型、体型和西装"}],
+      "seed": 2026082631
+    },
+    {
+      "shot_id": "p03-red-reflection",
+      "prompt": "单一全幅横向场景，绝不分格：暗红应急灯照亮停电办公室，CHAR_CLOCKTOWER_MAN 侧身望向窗外，远处红色信号灯的微光映在黑框眼镜上，雨夜城市作为连续背景。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "锁定同一男子的清瘦脸型、卷曲黑发、黑框眼镜和西装领口"}],
+      "seed": 2026082632
+    },
+    {
+      "shot_id": "p04-office-corridor",
+      "prompt": "单一全幅横向场景，绝不分格：CHAR_CLOCKTOWER_MAN 独自快步穿过空无一人的办公楼长廊，暗红应急灯把他的修长影子投在墙面，完整自然行走动作。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子的黑发、眼镜、修长比例、西装和黑皮鞋"}],
+      "seed": 2026082633
+    },
+    {
+      "shot_id": "p05-rooftop-door",
+      "prompt": "单一全幅横向场景，绝不分格：CHAR_CLOCKTOWER_MAN 推开通往高层天台的金属门走入风雨，卷曲黑发和黑领带被夜风扬起，身后暗红应急灯发光。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子身份和完整西装，表现推门动作"}],
+      "seed": 2026082634
+    },
+    {
+      "shot_id": "p06-clocktower-sighting",
+      "prompt": "单一全幅横向场景，绝不分格：CHAR_CLOCKTOWER_MAN 独自站在高层天台栏杆边，透过雨幕看见远处黑暗中的老砖石钟楼，钟楼顶端只有一盏红灯规律闪烁。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子身份、西装与雨夜色彩"}],
+      "seed": 2026082635
+    },
+    {
+      "shot_id": "p07-confirm-signal",
+      "prompt": "单一全幅横向场景，绝不分格：风雨中的高层天台，CHAR_CLOCKTOWER_MAN 双手自然扶住栏杆，凝视远处钟楼顶端再次闪烁的红灯，只有一个人物和一个连续时刻。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子的脸、眼镜、发型、身材和西装"}],
+      "seed": 2026082636
+    },
+    {
+      "shot_id": "p08-turn-to-exit",
+      "prompt": "单一全幅横向场景，绝不分格：CHAR_CLOCKTOWER_MAN 在雨夜天台最后回望远处钟楼，随后身体转向金属出口门，神情坚定，领带在风中扬起。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子身份和服装，表现自然转身动作"}],
+      "seed": 2026082637
+    },
+    {
+      "shot_id": "p09-descend-stairs",
+      "prompt": "单一全幅横向场景，绝不分格：CHAR_CLOCKTOWER_MAN 独自沿狭窄混凝土安全楼梯快速下行，暗红应急灯照过每层平台，动态完整，双腿与双手自然。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子黑发眼镜与西装，动作改为下楼"}],
+      "seed": 2026082638
+    },
+    {
+      "shot_id": "p10-dark-lobby",
+      "prompt": "单一全幅横向场景，绝不分格：停电后的现代办公楼大堂里，CHAR_CLOCKTOWER_MAN 独自走向玻璃出口门，门外是被暴雨覆盖的空旷街道。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子身份、西装和修长比例"}],
+      "seed": 2026082639
+    },
+    {
+      "shot_id": "p11-rainy-street",
+      "prompt": "单一全幅横向场景，绝不分格：CHAR_CLOCKTOWER_MAN 独自走在空旷雨夜街道中央，深色西装被雨水打湿，湿润路面映出远处红色信号和少量灯光。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子脸型、眼镜、卷曲黑发与完整西装"}],
+      "seed": 2026082640
+    },
+    {
+      "shot_id": "p12-clocktower-entrance",
+      "prompt": "单一全幅横向场景，绝不分格：老旧砖石钟楼入口前，CHAR_CLOCKTOWER_MAN 独自站在紧闭金属门下抬头看向高处闪烁红灯，暴雨和建筑全景清楚。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子身份与雨湿西装"}],
+      "seed": 2026082641
+    },
+    {
+      "shot_id": "p13-enter-clocktower",
+      "prompt": "单一全幅横向场景，绝不分格：CHAR_CLOCKTOWER_MAN 双手自然推开钟楼沉重金属门进入空无一人的大厅，肩部西装滴着雨水，门外雨夜仍可见。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子身份、西装和自然推门姿态"}],
+      "seed": 2026082642
+    },
+    {
+      "shot_id": "p14-shadowed-machinery",
+      "prompt": "单一全幅横向场景，绝不分格：黑暗钟楼大厅内，CHAR_CLOCKTOWER_MAN 独自观察深处若隐若现的老式齿轮结构，一束暗红光扫过灰尘和砖墙。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子黑发、眼镜、脸型和西装"}],
+      "seed": 2026082643
+    },
+    {
+      "shot_id": "p15-spiral-stairs-up",
+      "prompt": "单一全幅横向场景，绝不分格：钟楼中央螺旋楼梯中，CHAR_CLOCKTOWER_MAN 独自向上攀登，一手自然扶住栏杆，巨大齿轮与狭窄窗户围绕四周。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子身份、修长身材与整套西装"}],
+      "seed": 2026082644
+    },
+    {
+      "shot_id": "p16-gear-dust",
+      "prompt": "单一全幅横向场景，绝不分格：接近钟楼顶层，CHAR_CLOCKTOWER_MAN 独自停在楼梯平台抬头观察沉睡的巨大齿轮，细小灰尘从机械结构落下。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子的脸、眼镜、发型、身材和西装"}],
+      "seed": 2026082645
+    },
+    {
+      "shot_id": "p17-signal-machine-room",
+      "prompt": "单一全幅横向场景，绝不分格：CHAR_CLOCKTOWER_MAN 走进钟楼机械室，巨大齿轮之间只有一台旧式信号装置闪烁红光，男子全身和机械空间同时清楚。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子身份与服装，环境改为钟楼机械室"}],
+      "seed": 2026082646
+    },
+    {
+      "shot_id": "p18-disconnected-cable",
+      "prompt": "单一全幅横向场景，绝不分格：红光机械室里，CHAR_CLOCKTOWER_MAN 独自在旧式信号装置前蹲下，观察一根从金属接口脱落的粗重黑色电缆，手部自然且尚未触碰。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子身份、眼镜、西装和自然蹲姿"}],
+      "seed": 2026082647
+    },
+    {
+      "shot_id": "p19-inspect-connector",
+      "prompt": "单一全幅横向场景，绝不分格：旧式信号装置的暗红脉冲照亮 CHAR_CLOCKTOWER_MAN 专注侧脸，他蹲在装置前仔细观察电缆接头和完好接口。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "锁定同一男子清瘦侧脸、黑发、黑框眼镜和西装"}],
+      "seed": 2026082648
+    },
+    {
+      "shot_id": "p20-reconnect-cable",
+      "prompt": "单一全幅横向场景，绝不分格：CHAR_CLOCKTOWER_MAN 双手稳固握住一个粗大电缆接头，将接头准确推入信号装置的金属接口，只有两只自然完整的手，动作关系清楚。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子身份、西装袖口和身体比例，重点表现正确双手"}],
+      "seed": 2026082649
+    },
+    {
+      "shot_id": "p21-transmitter-lights",
+      "prompt": "单一全幅横向场景，绝不分格：电缆连接完成，旧式信号装置骤然发出明亮红光，CHAR_CLOCKTOWER_MAN 独自半跪在旁边，机械室墙面和眼镜被照亮。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子身份、眼镜、卷曲黑发和深色西装"}],
+      "seed": 2026082650
+    },
+    {
+      "shot_id": "p22-gears-start",
+      "prompt": "单一全幅横向场景，绝不分格：钟楼巨大齿轮重新缓慢转动，飞扬灰尘与机械影子环绕，CHAR_CLOCKTOWER_MAN 独自站起并自然后退一步观察。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子身份、完整西装与自然站立动作"}],
+      "seed": 2026082651
+    },
+    {
+      "shot_id": "p23-city-relights",
+      "prompt": "单一全幅横向场景，绝不分格：透过钟楼高窗，远处城市街区灯火一片接一片重新亮起，CHAR_CLOCKTOWER_MAN 独自站在窗前安静观看，雨势开始减弱。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子脸型、发型、眼镜、身材和西装"}],
+      "seed": 2026082652
+    },
+    {
+      "shot_id": "p24-clocktower-platform",
+      "prompt": "单一全幅横向场景，绝不分格：钟楼外侧高处平台上，CHAR_CLOCKTOWER_MAN 独自站在栏杆边，雨势已经减弱，深蓝云层后出现微弱晨光，城市灯光恢复。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子身份和服装，照明过渡到黎明前蓝色"}],
+      "seed": 2026082653
+    },
+    {
+      "shot_id": "p25-descend-at-dawn",
+      "prompt": "单一全幅横向场景，绝不分格：清冷黎明蓝光照入钟楼，CHAR_CLOCKTOWER_MAN 独自沿螺旋楼梯缓步下行，身后巨大齿轮稳定转动。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子身份、修长比例和深色西装"}],
+      "seed": 2026082654
+    },
+    {
+      "shot_id": "p26-leave-clocktower",
+      "prompt": "单一全幅横向场景，绝不分格：雨已经停止，CHAR_CLOCKTOWER_MAN 独自推开老钟楼大门走回街道，砖墙与屋檐水珠在黎明晨光中闪亮。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子身份和雨后西装，表现自然出门动作"}],
+      "seed": 2026082655
+    },
+    {
+      "shot_id": "p27-wet-street-dawn",
+      "prompt": "单一全幅横向场景，绝不分格：CHAR_CLOCKTOWER_MAN 独自沿安静街道返回，湿润路面映出逐渐变亮的天空和整齐亮起的城市窗口，自然步行动作。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子黑发、眼镜、脸型、身材和整套西装"}],
+      "seed": 2026082656
+    },
+    {
+      "shot_id": "p28-return-lobby",
+      "prompt": "单一全幅横向场景，绝不分格：恢复照明的现代办公楼大堂内，CHAR_CLOCKTOWER_MAN 独自走入玻璃门，清晨第一束阳光落在深色西装上。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子身份和服装，场景回到原办公楼"}],
+      "seed": 2026082657
+    },
+    {
+      "shot_id": "p29-office-return",
+      "prompt": "单一全幅横向场景，绝不分格：回到最初的高层办公室，CHAR_CLOCKTOWER_MAN 独自站在落地窗前，远处老钟楼和城市灯光都恢复正常，室内转为清晨蓝金色。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子身份、黑框眼镜和西装，场景呼应第一格"}],
+      "seed": 2026082658
+    },
+    {
+      "shot_id": "p30-sunrise-ending",
+      "prompt": "单一全幅横向收束场景，绝不分格：太阳从城市天际线后升起，温暖晨光照亮办公室窗边的 CHAR_CLOCKTOWER_MAN，他独自略微侧身并露出平静微笑，远处红色信号已经熄灭。",
+      "references": [{"slot": "CHAR_CLOCKTOWER_MAN", "asset_id": "asset-002", "role": "character_identity", "purpose": "保持同一男子清瘦脸型、卷曲黑发、黑框眼镜、修长身材和深色西装"}],
+      "seed": 2026082659
+    }
+  ]
+}
