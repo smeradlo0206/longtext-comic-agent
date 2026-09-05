@@ -153,8 +153,10 @@ from comic_agent.schemas import (
     WorldRuleUpdateProposalV1,
     WorldRuleV1,
 )
+from comic_agent.schemas.product import ProductGenerationRequestV1
 
 SCHEMAS: list[type[BaseModel]] = [
+    ProductGenerationRequestV1,
     AgentRunV1,
     EvidenceRefV1,
     ProjectSpecV1,

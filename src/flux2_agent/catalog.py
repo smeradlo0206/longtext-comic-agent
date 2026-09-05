@@ -8,12 +8,13 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from fcntl import LOCK_EX, LOCK_UN, flock
 from pathlib import Path
+from tempfile import gettempdir
 from typing import Literal
 
 from PIL import Image
 
+from .locking import exclusive_lock
 from .models import ReferenceCatalog, ReferenceImage, ReferenceRole
 
 IMAGE_MIME_TYPES = {
@@ -27,15 +28,11 @@ IMAGE_MIME_TYPES = {
 @contextmanager
 def _catalog_locked(workspace: Path) -> Iterator[None]:
     lock_id = hashlib.sha256(str(workspace.resolve()).encode()).hexdigest()[:16]
-    lock_path = Path("/tmp") / f"flux2-reference-catalog-{lock_id}.lock"
+    lock_path = Path(gettempdir()) / f"flux2-reference-catalog-{lock_id}.lock"
     lock_path.touch(mode=0o600, exist_ok=True)
     lock_path.chmod(0o600)
-    with lock_path.open("r+") as lock_file:
-        flock(lock_file.fileno(), LOCK_EX)
-        try:
-            yield
-        finally:
-            flock(lock_file.fileno(), LOCK_UN)
+    with exclusive_lock(lock_path):
+        yield
 
 
 def _persist_catalog(workspace: Path, catalog: ReferenceCatalog) -> Path:

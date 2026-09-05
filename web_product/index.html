@@ -16,9 +16,26 @@
     <nav aria-label="主导航">
       <button data-action="home">创作</button>
       <button data-action="library">我的作品</button>
+      <button id="connection-settings">连接设置</button>
     </nav>
   </header>
+  <p id="mode-notice" role="status" style="text-align:center;padding:1rem"></p>
+  <dialog id="connection-dialog" class="card" style="max-width:560px;width:90%">
+    <h2>连接生成服务</h2>
+    <p>演示模式可直接体验页面，不调用生图模型。</p>
+    <form id="connection-form">
+      <label for="api-address">API 地址</label>
+      <input id="api-address" type="url" placeholder="http://127.0.0.1:8000" style="width:100%;padding:12px">
+      <p>本机地址指正在打开浏览器的这台电脑。另一台服务器仅监听它自己的 localhost 时，此页面无法直接连接。</p>
+      <p>连接本地 API 时，浏览器可能要求本地网络访问权限；API 也需允许本站跨域。连接成功仅说明 API 可访问，真实出图还需 GPU worker 运行。</p>
+      <p id="connection-error" role="alert"></p>
+      <button type="submit" class="primary">连接并使用</button>
+      <button type="button" id="use-demo" class="secondary">使用演示模式</button>
+      <button type="button" id="close-connection" class="text-button">关闭</button>
+    </form>
+  </dialog>
   <main id="app" tabindex="-1"></main>
+  <p id="service-status" role="status" style="text-align:center;padding:1rem"></p>
   <div id="modal-root"></div>
   <div id="toast-root" aria-live="polite"></div>
   <label class="demo-switch">Demo Mode <select id="demo-scenario" aria-label="Mock 场景"><option value="success">成功</option><option value="failure">失败</option></select></label>

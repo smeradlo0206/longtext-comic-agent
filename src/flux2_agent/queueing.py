@@ -8,7 +8,6 @@ import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from fcntl import LOCK_EX, LOCK_UN, flock
 from pathlib import Path
 from typing import Literal
 
@@ -16,6 +15,7 @@ from comic_agent.schemas.image_workflow import QueueAttempt, QueueItem, QueueSta
 
 from .backend import Flux2Backend
 from .catalog import load_catalog
+from .locking import exclusive_lock
 from .models import WorkflowJob
 from .planning import build_plan
 from .workflow import run_workflow
@@ -48,12 +48,8 @@ class QueueStore:
 
     @contextmanager
     def _locked(self) -> Iterator[None]:
-        with self.lock_path.open("r+") as lock_file:
-            flock(lock_file.fileno(), LOCK_EX)
-            try:
-                yield
-            finally:
-                flock(lock_file.fileno(), LOCK_UN)
+        with exclusive_lock(self.lock_path):
+            yield
 
     def _path(self, state: QueueStatus, queue_id: str) -> Path:
         return self.root / state / f"{queue_id}.json"

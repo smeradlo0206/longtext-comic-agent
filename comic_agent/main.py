@@ -3,7 +3,8 @@
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import SecretStr
 
@@ -15,6 +16,7 @@ from comic_agent.api.comic_production import router as comic_production_router
 from comic_agent.api.documents import router as documents_router
 from comic_agent.api.health import router as health_router
 from comic_agent.api.pipeline import router as pipeline_router
+from comic_agent.api.product import router as product_router
 from comic_agent.api.projects import router as projects_router
 from comic_agent.api.settings import router as settings_router
 from comic_agent.api.storybible import router as storybible_router
@@ -34,6 +36,10 @@ def create_app(database_url: str | None = None) -> FastAPI:
 
     settings = get_settings()
     app = FastAPI(title=settings.app_name, version=__version__)
+    app.add_middleware(
+        CORSMiddleware, allow_origins=settings.cors_origins,
+        allow_methods=["GET", "POST"], allow_headers=["Content-Type"],
+    )
     engine = make_engine(database_url or settings.database_url)
     Base.metadata.create_all(engine)
     app.state.engine = engine
@@ -73,11 +79,15 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(timeline_router)
     app.include_router(pipeline_router)
     app.include_router(comic_production_router)
+    app.include_router(product_router)
 
     console_path = Path(__file__).resolve().parents[1] / "web_console" / "index.html"
     product_path = Path(__file__).resolve().parents[1] / "web_product" / "index.html"
 
     @app.get("/", include_in_schema=False)
+    def product_home() -> RedirectResponse:
+        return RedirectResponse("/product/")
+
     @app.get("/product/", include_in_schema=False)
     def product_page() -> FileResponse:
         return FileResponse(product_path, media_type="text/html; charset=utf-8")

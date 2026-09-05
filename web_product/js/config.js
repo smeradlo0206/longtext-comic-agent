@@ -1,19 +1,23 @@
-/** Global frontend configuration.
- *
- *  GitHub Pages 只托管静态资源，无法运行 Python 后端。
- *  因此默认 `apiMode` 为 "mock"，全部客户流程由 MockComicGenerationAPI 完成。
- *
- *  未来真实后端上线后，只需改这里（并实现 RealComicGenerationAPI 的请求），
- *  页面 / 状态管理 / 组件无需重写：
- *
- *      export const APP_CONFIG = {
- *        apiMode: "real",
- *        apiBaseUrl: "https://api.example.com",
- *      };
- */
+import { DEPLOY_CONFIG } from './deploy-config.js';
+export const CONNECTION_KEY = 'huijuan.connection:' + new URL('../', import.meta.url).pathname;
+let connection = {};
+try { connection = JSON.parse(localStorage.getItem(CONNECTION_KEY) || '{}'); } catch { /* defaults */ }
+const sameOrigin = location.pathname.startsWith('/product/') ? location.origin : '';
 export const APP_CONFIG = {
-  apiMode: "mock",
-  apiBaseUrl: "",
-  /** localStorage 键名（隔离命名，避免与其它站点冲突） */
-  storageKey: "huijuan.comic.v1",
+  apiMode: connection.apiMode || (sameOrigin ? 'real' : DEPLOY_CONFIG.apiMode || 'mock'),
+  apiBaseUrl: connection.apiBaseUrl || DEPLOY_CONFIG.apiBaseUrl || sameOrigin,
+  storageKey: 'huijuan.comic.v1',
 };
+
+export function saveConnection(mode, address = '') {
+  if (mode === 'real') {
+    const url = new URL(address.trim());
+    const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+    if ((url.protocol !== 'https:' && !(local && url.protocol === 'http:')) ||
+        url.username || url.password || url.search || url.hash) {
+      throw new Error('请填写 HTTPS API 地址，或本机 http://127.0.0.1:8000 地址');
+    }
+    address = url.href.replace(/\/+$/, '');
+  }
+  localStorage.setItem(CONNECTION_KEY, JSON.stringify({ apiMode: mode, apiBaseUrl: address }));
+}

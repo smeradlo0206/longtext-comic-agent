@@ -75,3 +75,14 @@
 
 - Runtime queue state remains under `queue/` and generated artifacts remain under `runs/`.
 - The project never creates or writes a directory named `output`.
+# 2026-09-05 Pages production adapter
+
+Added ProductGenerationRequestV1 (schema_version 1.0) for browser preferences.
+Existing canonical, production and queue schemas are unchanged; no database migration.
+New endpoints: GET /product-capabilities, POST /projects/{id}/comic-runs/from-product,
+GET /comic-runs/{id}/pages/{number}, GET /comic-runs/{id}/download?format=pdf|zip.
+The browser maps existing production status/results to its view models.
+CORS_ORIGINS and PRODUCT_REQUEST_TEMPLATE are new server configuration fields.
+Pages uses COMIC_API_BASE_URL when supplied; without it, deployment defaults to explicit demo mode.
+Browser-local connection settings can opt into a reachable API without redeploying Pages.
+Unix flock semantics remain; Windows uses a process-level byte-range lock.

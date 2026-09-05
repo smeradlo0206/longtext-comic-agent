@@ -62,7 +62,7 @@ def test_pages_bundle_is_relative_and_contains_local_comic_assets() -> None:
 
     assert 'href="./css/app.css"' in index
     assert 'src="./js/app.js"' in index
-    assert "apiMode: \"mock\"" in config
+    assert "DEPLOY_CONFIG.apiMode" in config
     assert "data:image/svg+xml" not in mock
     assert "mock://" not in mock
     assert "localhost" not in mock

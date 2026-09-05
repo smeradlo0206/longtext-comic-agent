@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
 
     app_name: str = "longtext-comic-agent"
+    cors_origins: list[str] = Field(default_factory=list, validation_alias="CORS_ORIGINS")
+    product_request_template: Path | None = Field(
+        default=None, validation_alias="PRODUCT_REQUEST_TEMPLATE"
+    )
     workspace_root: Path = Field(default=Path("."), validation_alias="WORKSPACE_ROOT")
     image_queue_root: Path = Field(default=Path("queue"), validation_alias="IMAGE_QUEUE_ROOT")
     image_run_root: Path = Field(default=Path("runs"), validation_alias="IMAGE_RUN_ROOT")

@@ -1,4 +1,5 @@
 import json
+import os
 import stat
 from pathlib import Path
 
@@ -419,13 +420,15 @@ def test_coordinator_is_idempotent_and_composes_two_pages(tmp_path: Path) -> Non
             "page-002.png",
         ]
         assert (run_root / "production-manifest.json").is_file()
-        assert stat.S_IMODE(run_root.stat().st_mode) == 0o700
+        if os.name != "nt":
+            assert stat.S_IMODE(run_root.stat().st_mode) == 0o700
         for filename in (
             "page-001.png",
             "page-002.png",
             "production-manifest.json",
         ):
-            assert stat.S_IMODE((run_root / filename).stat().st_mode) == 0o600
+            if os.name != "nt":
+                assert stat.S_IMODE((run_root / filename).stat().st_mode) == 0o600
         with Image.open(run_root / "page-001.png") as page:
             assert page.size == (24, 16)
     finally:

@@ -28,6 +28,23 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
+      - name: Configure site mode
+        env:
+          COMIC_API_BASE_URL: ${{ vars.COMIC_API_BASE_URL }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from urllib.parse import urlparse
+          url = os.environ.get('COMIC_API_BASE_URL', '').rstrip('/')
+          parsed = urlparse(url)
+          if url and (parsed.scheme != 'https' or not parsed.netloc or parsed.query or parsed.fragment):
+              raise SystemExit('Set repository variable COMIC_API_BASE_URL to the HTTPS API URL')
+          config = {'apiMode': 'real' if url else 'mock', 'apiBaseUrl': url}
+          Path('web_product/js/deploy-config.js').write_text(
+              'export const DEPLOY_CONFIG = ' + json.dumps(config) + ';\n', encoding='utf-8')
+          PY
+
       - name: Upload static site
         uses: actions/upload-pages-artifact@v3
         with:
